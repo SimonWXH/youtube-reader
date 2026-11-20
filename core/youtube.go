@@ -14,8 +14,16 @@ import (
 const apiBase = "https://www.googleapis.com/youtube/v3"
 
 type YouTube struct {
-	Key    string
-	Client *http.Client
+	Key     string
+	Client  *http.Client
+	BaseURL string
+}
+
+func (y YouTube) baseURL() string {
+	if y.BaseURL != "" {
+		return strings.TrimRight(y.BaseURL, "/")
+	}
+	return apiBase
 }
 
 type ytChannelsResponse struct {
@@ -103,7 +111,7 @@ func (y YouTube) ChannelInfo(ctx context.Context, ids []string) ([]Channel, erro
 		if client == nil {
 			client = http.DefaultClient
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+"/channels?"+q.Encode(), nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, y.baseURL()+"/channels?"+q.Encode(), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -153,7 +161,7 @@ func (y YouTube) PlaylistVideos(ctx context.Context, uploads string, maxPages in
 		if client == nil {
 			client = http.DefaultClient
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+"/playlistItems?"+q.Encode(), nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, y.baseURL()+"/playlistItems?"+q.Encode(), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -216,7 +224,7 @@ func (y YouTube) Hydrate(ctx context.Context, videos []Video) ([]Video, error) {
 		if client == nil {
 			client = http.DefaultClient
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+"/videos?"+q.Encode(), nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, y.baseURL()+"/videos?"+q.Encode(), nil)
 		if err != nil {
 			return nil, err
 		}
