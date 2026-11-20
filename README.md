@@ -49,10 +49,10 @@ See [`.github/release-notes.md`](.github/release-notes.md) for the complete firs
 - Refresh intervals: 15m/30m/1h (default)/2h/4h. Startup refresh when the last successful refresh is older than the interval. Retain at most 30 hours or 400 videos, protecting unread and favorited videos.
 - Offline/failure UX: the last successful data stays visible, with a two-second toast on failure transitions, a "Refresh issue" header state and details in the pinned status item; no top error banner. Quota exhaustion pauses refreshes for 24 hours.
 - Single-file Syncthing sync: one JSON file (`~/Library/Application Support/YouTubeReader/youtube-reader-sync.json` by default, configurable in Settings) holds groups/channel membership, read states (any device read wins) and favorites with optional metadata. Writes are read-before-write, idempotent by stable id, and use a dot-prefixed temp file, fsync, atomic rename and directory fsync. `*.sync-conflict-*` copies are merged on load and app-generated copies are removed. A local flock lives outside the Syncthing folder; Settings has "Force take over sync". SQLite, API key, notification preferences, locks, queues and logs are never synced.
-- Favorites can be exported/imported as a separate JSON file with no API key or read history.
+- Favorites backup: Settings has a configurable full backup path and writes a standalone favorites-only JSON (no API key, read history, video payload or synced state). Export writes the path atomically; Restore is an independent entry that reads a chosen favorites JSON and merges by stable video ID, with newer local favorites winning.
 - Local SQLite store (`videos.sqlite`) uses WAL and a five-second busy timeout. Each refresh commits channels, videos and revision in one transaction; notifications post only after commit.
 - Local system notifications: per-channel toggles default OFF; one-click enable-all for the selected group (All enables all channels). One notification per opted-in channel per refresh with new-video count and newest title. Clicking a notification opens that channel's filtered view. MyGo IDs route app clicks, including a click that launches the app; a private local queue records only helper notifications that were actually posted and is consumed only on an actual notification-click callback. Notification preferences and click records are local only.
-- Background refresh: the standalone helper can be registered as a user LaunchAgent (RunAtLoad + StartInterval) from Settings. It writes an atomic JSON handoff consumed by the app on next launch. The app holds the local flock while open; helper shared-JSON writes are queued in SQLite and drained when the app exits.
+- Background refresh: the standalone helper can be registered as a user LaunchAgent (RunAtLoad + StartInterval) from Settings. It performs the full YouTube Data API refresh, commits results in SQLite, posts notifications, and writes an atomic JSON handoff consumed by the app on next launch. The app holds the local flock while open; helper shared-JSON writes are queued in SQLite and drained when the app exits.
 
 ## Visual design
 
@@ -60,9 +60,9 @@ The three panes share one token set in `ui/theme.go`: warm neutral surfaces (`#f
 
 ## Known limitations
 
-- Click routing depends on macOS delivering a notification click and on notification permission being granted. A helper's AppleScript notification may not deliver a cold-launch click ID; the local queue records only actual posts, is consumed only on a real click callback, and an ordinary dock or Finder launch never routes to it. Physical cold-click verification for helper notifications remains manual.
+- Click routing depends on macOS delivering a notification click and on notification permission being granted. A helper's AppleScript notification may not deliver a cold-launch click ID; the local queue records only actual posts, is consumed only on a real click callback, and an ordinary dock or Finder launch never routes to it. Stable MyGo IDs route app clicks, including a cold launch where delivered. Physical cold-click verification for helper notifications remains manual.
 - Notification permission must be granted in macOS System Settings the first time a notification is posted.
-- The helper performs metadata checks and handoff; full background refresh body can be refined in the next iteration. The LaunchAgent is installed per user and uses absolute paths resolved from the app bundle.
+- The helper implementation has local vet/tests and app-level CI validation; LaunchAgent registration and live notification delivery still need manual verification on the captain's Mac. The LaunchAgent is installed per user and uses absolute paths resolved from the app bundle.
 
 ## Verification
 
