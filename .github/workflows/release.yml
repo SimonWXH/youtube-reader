@@ -47,23 +47,20 @@ jobs:
             exit 1
           fi
 
-      - name: Build helper
-        run: ./Scripts/build-helper.sh
-
       - name: Test
         run: go test ./...
 
       - name: Build app and DMG
-        run: go tool mygo build -platform darwin/arm64 -skip-notarize
+        run: make dmg
 
       # Deliberately always a prerelease; see the policy note at the top.
       - name: Create Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          DMG_FILE=$(find dist/darwin-arm64 -maxdepth 1 -name 'youtube-reader-*-arm64.dmg' -type f -print -quit)
-          if [ -z "${DMG_FILE}" ] || [ ! -f "${DMG_FILE}" ]; then
-            echo "Expected DMG under dist/darwin-arm64 was not found" >&2
+          DMG_FILE="$(make --no-print-directory dmg-path)"
+          if [ ! -f "${DMG_FILE}" ]; then
+            echo "Expected DMG at ${DMG_FILE} was not found" >&2
             exit 1
           fi
 
