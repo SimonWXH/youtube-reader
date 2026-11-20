@@ -1,0 +1,121 @@
+# CI for youtube-reader.
+#
+# The pull-request gate. Every pull request that changes more than documentation
+# verifies, builds, and tests the Go/MyGo app with the toolchain declared in
+# go.mod; this workflow does not add its own compilation or test commands.
+#
+# Triggers: `pull_request`, plus `workflow_dispatch` to validate a branch or
+# `main` on demand. There is deliberately no `push` trigger: every merge here is
+# a squash merge, so the commit that lands on `main` carries exactly the tree of
+# the `pull_request` head that was built and tested, provided the base branch did
+# not move between that run and the merge. A second full macOS job for it would
+# only re-validate identical code. The tradeoff is that `main` is not validated
+# automatically after a merge: after a direct push to `main`, or a merge whose
+# tree differs from the tested pull-request head, including one whose base moved,
+# start this workflow manually with `workflow_dispatch`.
+#
+# Documentation-only pull requests: a change that touches only markdown files
+# still reports the required `verify` check through a classifier step that
+# finishes in seconds, but skips the build and tests. Anything outside that set,
+# including a rename that moves a file across the boundary, runs the full
+# verification. This is a step-level skip, not a workflow-level `paths-ignore`,
+# because `paths-ignore` would leave the required check missing instead of
+# successful.
+#
+# Concurrency: superseded pull-request runs are cancelled to save minutes. Runs
+# are never cancelled on `main`; a `workflow_dispatch` run there is explicit and
+# must be allowed to finish.
+#
+# Runner: `macos-26` (GitHub-hosted, arm64, 3 vCPU).
+#   - MyGo produces the signed macOS app and DMG only on macOS arm64, so this is
+#     a single native arm64 job. An Intel runner would double metered minutes
+#     without adding coverage for this Mac-only app.
+#   - `actions/setup-go` reads the Go version from go.mod, so the `go` and
+#     `mygo` commands use the same toolchain as local builds.
+#
+# Cost: one job, no matrix, no services, and no cache. CopyQmac measured and
+# rejected both matrix builds and dependency caches for this workload; MyGo
+# builds here are equally single-platform, and caching build products would add
+# restore/save time without skipping compilation.
+
+name: CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      # The classifier diffs the pull request's base against its head, so both
+      # commits and their merge base have to be present.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Classify change
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          docs_only=false
+          changed=""
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            if changed="$(git diff --name-only --no-renames "${BASE_SHA}...${HEAD_SHA}")" && [ -n "${changed}" ]; then
+              docs_only=true
+              while IFS= read -r path; do
+                case "${path}" in
+                  *.md) ;;
+                  *)
+                    docs_only=false
+                    break
+                    ;;
+                esac
+              done <<< "${changed}"
+            fi
+          fi
+          if [ "${docs_only}" = "true" ]; then
+            echo "Documentation-only pull request; verification will be skipped:"
+            printf '%s\n' "${changed}"
+          else
+            echo "Running the full verification."
+          fi
+          echo "docs_only=${docs_only}" >> "${GITHUB_OUTPUT}"
+
+      - name: Documentation-only
+        if: steps.classify.outputs.docs_only == 'true'
+        run: echo "Only documentation changed; nothing to build or test."
+
+      - uses: actions/setup-go@v6
+        if: steps.classify.outputs.docs_only != 'true'
+        with:
+          go-version-file: go.mod
+
+      # Build the standalone helper first: the MyGo build embeds it in the app
+      # bundle's Resources directory.
+      - name: Build helper
+        if: steps.classify.outputs.docs_only != 'true'
+        run: ./Scripts/build-helper.sh
+
+      - name: Vet
+        if: steps.classify.outputs.docs_only != 'true'
+        run: go vet ./...
+
+      - name: Test
+        if: steps.classify.outputs.docs_only != 'true'
+        run: go test ./...
+
+      - name: Build app and DMG
+        if: steps.classify.outputs.docs_only != 'true'
+        run: go tool mygo build -platform darwin/arm64 -skip-notarize
