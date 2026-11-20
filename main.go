@@ -126,11 +126,8 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 		p.Fill(ui.Rect{X: r.X + r.W - 1, Y: r.Y, W: 1, H: r.H}, t.Border, 0)
 	})
 	sidebar.Children(func() {
-		ui.Row(c).Height(72).Padding(20, 20, 16).AlignItems(ui.Center).Gap(12).Children(func() {
-			ui.Column(c).Gap(2).Grow(1).Children(func() {
-				ui.Text(c, "MyGo").FontSize(17).Bold().TextColor(t.Text).SingleLine()
-				ui.Text(c, "YouTube Reader").FontSize(13).TextColor(t.Muted).SingleLine()
-			})
+		ui.Row(c).Height(72).Padding(20, 20, 16).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "YouTube Reader").FontSize(17).Bold().TextColor(t.Text).SingleLine()
 		})
 		ui.Scroll(c).Grow(1).Padding(0, 12, 12).Children(func() {
 			sectionHeader(c, t, "Library")
