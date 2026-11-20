@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,24 +34,15 @@ type App struct {
 	SelectedVideoID string
 	Busy            bool
 	Revision        int64
-	LastSyncWrite   time.Time
+
+	LastRefreshMessage string
+	LastNotified       []core.NotificationPlan
+	LastSyncWrite      time.Time
 }
 
-type RefreshOutcome struct {
-	Videos      []core.Video
-	Channels    []core.Channel
-	Failures    []core.RefreshFailure
-	Notified    []NotificationPlan
-	Description string
-	Changed     bool
-}
+type RefreshOutcome = core.RefreshResult
 
-type NotificationPlan struct {
-	ChannelID   string
-	ChannelName string
-	Count       int
-	NewestTitle string
-}
+type NotificationPlan = core.NotificationPlan
 
 func appDir() string {
 	home, _ := os.UserHomeDir()
@@ -283,143 +273,31 @@ func (a *App) ImportFavorites() error {
 }
 
 func (a *App) Refresh(force bool) RefreshOutcome {
-	if a.Settings.APIKey == "" {
-		return RefreshOutcome{Description: "Add a YouTube API key in Settings to refresh."}
-	}
-	if !force && a.Settings.LastRefresh != "" {
-		last, err := time.Parse(time.RFC3339, a.Settings.LastRefresh)
-		if err == nil && time.Since(last) < time.Duration(a.Settings.RefreshMinutes)*time.Minute {
-			return RefreshOutcome{Description: "Up to date"}
-		}
-	}
 	ctx := context.Background()
+	now := time.Now()
 	client := core.YouTube{Key: a.Settings.APIKey}
-	ids := make([]string, 0, len(a.Sync.Channels))
-	for id := range a.Sync.Channels {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	infos, err := client.ChannelInfo(ctx, ids)
-	if err != nil {
-		return a.refreshFailed(err)
-	}
-	byID := map[string]core.Channel{}
-	for _, ch := range infos {
-		byID[ch.ID] = ch
-	}
-	all := []core.Video{}
-	var failures []core.RefreshFailure
-	notifications := []NotificationPlan{}
-	for id, ch := range a.Sync.Channels {
-		uploads := ch.UploadedAt
-		if info, ok := byID[id]; ok {
-			uploads = info.UploadedAt
-			ch.AvatarURL = info.AvatarURL
-			ch.Title = info.Title
-			a.Sync.Channels[id] = ch
-		}
-		if uploads == "" {
-			failures = append(failures, core.RefreshFailure{At: nowRFC3339(), Message: "no uploads playlist for " + ch.Title})
-			continue
-		}
-		videos, err := client.PlaylistVideos(ctx, uploads, 3)
-		if err != nil {
-			if errors.Is(err, core.ErrQuota) {
-				return a.refreshFailed(err)
-			}
-			failures = append(failures, core.RefreshFailure{At: nowRFC3339(), Message: ch.Title + ": " + err.Error()})
-			continue
-		}
-		existing := map[string]bool{}
-		for _, v := range a.Videos {
-			if v.ChannelID == id {
-				existing[v.ID] = true
-			}
-		}
-		newCount := 0
-		newest := ""
-		for _, v := range videos {
-			v.ChannelID = id
-			v.ChannelTitle = ch.Title
-			v.AvatarURL = ch.AvatarURL
-			v.IsShort = core.IsShort(v.Duration, v.Width, v.Height)
-			if !existing[v.ID] {
-				newCount++
-				if newest == "" {
-					newest = v.Title
-				}
-			}
-			all = append(all, v)
-		}
-		if newCount > 0 && a.notificationEnabled(id) {
-			notifications = append(notifications, NotificationPlan{ChannelID: id, ChannelName: ch.Title, Count: newCount, NewestTitle: newest})
-		}
-	}
-	all = core.DedupeVideos(all)
-	missing := []core.Video{}
-	for _, v := range all {
-		if v.Duration == "" {
-			missing = append(missing, v)
-		}
-	}
-	if len(missing) > 0 {
-		hydrated, err := client.Hydrate(ctx, missing)
-		if err != nil {
-			if errors.Is(err, core.ErrQuota) {
-				return a.refreshFailed(err)
-			}
-			failures = append(failures, core.RefreshFailure{At: nowRFC3339(), Message: "hydrate: " + err.Error()})
-		} else {
-			byID := map[string]core.Video{}
-			for _, v := range hydrated {
-				byID[v.ID] = v
-			}
-			for i, v := range all {
-				if hv, ok := byID[v.ID]; ok {
-					hv.ChannelID = v.ChannelID
-					hv.ChannelTitle = v.ChannelTitle
-					hv.AvatarURL = v.AvatarURL
-					if hv.ThumbnailURL == "" {
-						hv.ThumbnailURL = v.ThumbnailURL
-					}
-					all[i] = hv
-				}
-			}
-		}
-	}
-	protected := func(v core.Video) bool { return !a.Sync.IsRead(v.ID) || a.Sync.IsFavorite(v.ID) }
-	all = core.ApplyRetention(all, protected, time.Now(), core.DefaultRetention())
-	channelList := make([]core.Channel, 0, len(a.Sync.Channels))
-	for _, ch := range a.Sync.Channels {
-		channelList = append(channelList, ch)
-	}
-	if err := a.Store.CommitRefresh(ctx, core.RefreshCommit{Channels: channelList, Videos: all, Revision: a.Revision + 1}); err != nil {
-		return a.refreshFailed(err)
-	}
-	now := time.Now().UTC()
+	outcome := core.RefreshYoutube(ctx, client, a.Settings, a.Sync, a.Store, a.Videos, a.Revision, force, now)
 	a.Settings.LastRefresh = core.FormatRFC3339(now)
 	a.Settings.NextRefresh = core.FormatRFC3339(now.Add(time.Duration(a.Settings.RefreshMinutes) * time.Minute))
-	a.Settings.RecentFailures = failures
+	a.Settings.RecentFailures = outcome.Failures
+	if containsQuotaFailure(outcome.Failures) {
+		a.Settings.QuotaPausedUntil = core.FormatRFC3339(now.Add(24 * time.Hour))
+	}
 	_ = a.SaveSettings()
 	_ = a.reload()
-	return RefreshOutcome{Videos: all, Channels: a.Channels, Failures: failures, Notified: notifications, Changed: true, Description: fmt.Sprintf("Refreshed %d videos", len(all))}
+	if outcome.Changed {
+		outcome.Channels = a.Channels
+	}
+	return outcome
 }
 
-func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
-
-func (a *App) refreshFailed(err error) RefreshOutcome {
-	msg := err.Error()
-	if errors.Is(err, core.ErrQuota) {
-		a.Settings.QuotaPausedUntil = time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
-		msg = "quota paused until " + a.Settings.QuotaPausedUntil
+func containsQuotaFailure(failures []core.RefreshFailure) bool {
+	for _, f := range failures {
+		if strings.HasPrefix(f.Message, "quota paused") {
+			return true
+		}
 	}
-	f := core.RefreshFailure{At: nowRFC3339(), Message: msg}
-	a.Settings.RecentFailures = append([]core.RefreshFailure{f}, a.Settings.RecentFailures...)
-	if len(a.Settings.RecentFailures) > 5 {
-		a.Settings.RecentFailures = a.Settings.RecentFailures[:5]
-	}
-	_ = a.SaveSettings()
-	return RefreshOutcome{Failures: a.Settings.RecentFailures, Description: msg}
+	return false
 }
 
 func (a *App) notificationEnabled(channelID string) bool {
@@ -474,13 +352,8 @@ func (a *App) DrainQueuedSyncWrites() error {
 		return err
 	}
 	for _, raw := range items {
-		var payload map[string]any
-		if err := json.Unmarshal(raw, &payload); err != nil {
-			continue
-		}
-		data, _ := json.Marshal(payload["state"])
-		var state core.SyncState
-		if err := json.Unmarshal(data, &state); err != nil {
+		state, err := queueSyncState(raw)
+		if err != nil {
 			continue
 		}
 		a.Sync = core.MergeSync(a.Sync, state)
@@ -501,7 +374,12 @@ func (a *App) ConsumeHandoff() error {
 		return nil
 	}
 	var handoff struct {
-		ID string `json:"id"`
+		ID          string                  `json:"id"`
+		CreatedAt   string                  `json:"createdAt"`
+		Description string                  `json:"description"`
+		Result      *core.RefreshResult     `json:"result"`
+		Notified    []core.NotificationPlan `json:"notified"`
+		Failures    []core.RefreshFailure   `json:"failures"`
 	}
 	if err := json.Unmarshal(data, &handoff); err != nil {
 		return nil
@@ -509,10 +387,22 @@ func (a *App) ConsumeHandoff() error {
 	if handoff.ID != "" && handoff.ID == a.Settings.LastHandoffID {
 		return nil
 	}
+	if handoff.Result != nil || handoff.Description != "" {
+		a.LastRefreshMessage = handoff.Description
+	}
+	if len(handoff.Notified) > 0 {
+		a.LastNotified = handoff.Notified
+	}
+	if len(handoff.Failures) > 0 {
+		a.Settings.RecentFailures = handoff.Failures
+	}
+	if handoff.CreatedAt != "" {
+		a.Settings.LastRefresh = handoff.CreatedAt
+	}
 	a.Settings.LastHandoffID = handoff.ID
 	_ = a.SaveSettings()
 	_ = os.Remove(path)
-	return nil
+	return a.reload()
 }
 
 func (a *App) VisibleVideos() []core.Video {
@@ -566,4 +456,18 @@ func (a *App) VideoByID(id string) (core.Video, bool) {
 		}
 	}
 	return core.Video{}, false
+}
+
+func queueSyncState(raw json.RawMessage) (core.SyncState, error) {
+	var outer string
+	var payload struct {
+		State core.SyncState `json:"state"`
+	}
+	if err := json.Unmarshal(raw, &outer); err == nil {
+		raw = json.RawMessage(outer)
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return core.SyncState{}, err
+	}
+	return payload.State, nil
 }
