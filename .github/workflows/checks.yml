@@ -1,0 +1,17 @@
+name: Checks
+
+on:
+  push:
+    branches: [fm/youtube-reader-mvp-1]
+  pull_request:
+    branches: [main]
+
+jobs:
+  swift:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run pure core checks
+        run: |
+          swift build
+          swift run CoreChecks
