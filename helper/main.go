@@ -21,15 +21,59 @@ import (
 
 const notificationBundleID = "com.simon.youtubereader"
 
+// Injected for tests so HelperRun's notification side effect can be verified
+// without network or a real refresh.
+type refreshFunc func(context.Context, core.YouTube, core.Settings, core.SyncState, *core.Store, []core.Video, int64, bool, time.Time) core.RefreshResult
+
+var refreshForHelper refreshFunc = core.RefreshYoutube
+var networkAvailableForHelper = core.NetworkAvailable
+
 // HelperHandoff is the atomic JSON message the helper leaves for the app.
 type HelperHandoff struct {
-	ID          string                  `json:"id"`
-	CreatedAt   string                  `json:"createdAt"`
-	Description string                  `json:"description"`
-	Result      *core.RefreshResult     `json:"result,omitempty"`
-	Notified    []core.NotificationPlan `json:"notified,omitempty"`
-	Failures    []core.RefreshFailure   `json:"failures,omitempty"`
-	Channels    []core.Channel          `json:"channels,omitempty"`
+	ID          string                   `json:"id"`
+	CreatedAt   string                   `json:"createdAt"`
+	Description string                   `json:"description"`
+	Result      *core.RefreshResult      `json:"result,omitempty"`
+	Notified    []core.NotificationPlan  `json:"notified,omitempty"`
+	Failures    []core.RefreshFailure    `json:"failures,omitempty"`
+	Channels    []core.Channel           `json:"channels,omitempty"`
+	Clicks      []core.NotificationClick `json:"clicks,omitempty"`
+}
+
+// notificationClicksPath is local app state: AppleScript notifications have
+// no click ID, so the helper records their channel and post time here for the
+// launching app to consume. It is never synced or sent to any service.
+func notificationClicksPath(dir string) string {
+	return filepath.Join(dir, "notification-clicks.json")
+}
+
+// queueNotificationClicks appends one entry per posted notification and keeps
+// the file atomic and private. A repeated post at the same second is a
+// duplicate and does not create a second handoff entry.
+func queueNotificationClicks(dir string, plans []core.NotificationPlan, at time.Time) error {
+	path := notificationClicksPath(dir)
+	queue := core.NotificationClicks{}
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &queue)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	known := make(map[string]bool, len(queue.Clicks))
+	for _, click := range queue.Clicks {
+		known[core.NotificationClickKey(click)] = true
+	}
+	for _, click := range core.NewNotificationClicks(plans, at) {
+		key := core.NotificationClickKey(click)
+		if !known[key] {
+			queue.Clicks = append(queue.Clicks, click)
+			known[key] = true
+		}
+	}
+	data, err := json.MarshalIndent(queue, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWriteHelper(path, data)
 }
 
 func loadHelperSettings(dir string) core.Settings {
@@ -56,6 +100,15 @@ func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return handoff, err
 	}
+	recordClicks := func(plans []core.NotificationPlan) {
+		if len(plans) == 0 {
+			return
+		}
+		handoff.Clicks = core.NewNotificationClicks(plans, now)
+		if err := queueNotificationClicks(dir, plans, now); err != nil {
+			log.Printf("notification click handoff: %v", err)
+		}
+	}
 	writeHandoff := func() error {
 		data, err := json.MarshalIndent(handoff, "", "  ")
 		if err != nil {
@@ -72,7 +125,7 @@ func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post
 		handoff.Description = "Add a YouTube API key in Settings to refresh."
 		return handoff, writeHandoff()
 	}
-	if !core.NetworkAvailable(ctx) {
+	if !networkAvailableForHelper(ctx) {
 		handoff.Description = "Offline: YouTube is unreachable"
 		return handoff, writeHandoff()
 	}
@@ -95,7 +148,7 @@ func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post
 		_, _ = fmt.Sscan(raw, &revision)
 	}
 	client := core.YouTube{Key: settings.APIKey, Client: &http.Client{Timeout: 30 * time.Second}}
-	result := core.RefreshYoutube(ctx, client, settings, state, store, existing, revision, false, now)
+	result := refreshForHelper(ctx, client, settings, state, store, existing, revision, false, now)
 	store.Close()
 	handoff.Description = result.Description
 	handoff.Failures = result.Failures
@@ -103,6 +156,7 @@ func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post
 		handoff.Result = &result
 		handoff.Notified = result.Notified
 		handoff.Channels = result.Channels
+		recordClicks(result.Notified)
 	}
 
 	// Persist failures and quota pauses so they are visible in the app on the

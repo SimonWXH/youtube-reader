@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -414,12 +415,13 @@ func (a *App) ConsumeHandoff() error {
 		return nil
 	}
 	var handoff struct {
-		ID          string                  `json:"id"`
-		CreatedAt   string                  `json:"createdAt"`
-		Description string                  `json:"description"`
-		Result      *core.RefreshResult     `json:"result"`
-		Notified    []core.NotificationPlan `json:"notified"`
-		Failures    []core.RefreshFailure   `json:"failures"`
+		ID          string                   `json:"id"`
+		CreatedAt   string                   `json:"createdAt"`
+		Description string                   `json:"description"`
+		Result      *core.RefreshResult      `json:"result"`
+		Notified    []core.NotificationPlan  `json:"notified"`
+		Failures    []core.RefreshFailure    `json:"failures"`
+		Clicks      []core.NotificationClick `json:"clicks"`
 	}
 	if err := json.Unmarshal(data, &handoff); err != nil {
 		return nil
@@ -433,6 +435,11 @@ func (a *App) ConsumeHandoff() error {
 	}
 	if len(handoff.Notified) > 0 {
 		a.LastNotified = handoff.Notified
+	}
+	if len(handoff.Clicks) > 0 {
+		if err := a.RecordNotificationClicks(handoff.Clicks); err != nil {
+			log.Printf("notification click handoff: %v", err)
+		}
 	}
 	if fresh && len(handoff.Failures) > 0 {
 		a.Settings.RecentFailures = handoff.Failures
@@ -457,6 +464,96 @@ func (a *App) ConsumeHandoff() error {
 	_ = a.SaveSettings()
 	_ = os.Remove(path)
 	return a.reload()
+}
+
+// notificationClicksPath is the local, atomic queue of notification posts
+// that may be clicked after a cold launch. It is never synced.
+func (a *App) notificationClicksPath() string {
+	return filepath.Join(a.Dir, "notification-clicks.json")
+}
+
+// RecordNotificationClicks appends notification handoff entries after
+// dropping duplicates and entries older than the last one this app consumed.
+// Stale entries from previous runs must not reroute a later launch.
+func (a *App) RecordNotificationClicks(clicks []core.NotificationClick) error {
+	path := a.notificationClicksPath()
+	queue := core.NotificationClicks{}
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &queue)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	known := make(map[string]bool, len(queue.Clicks))
+	for _, click := range queue.Clicks {
+		known[core.NotificationClickKey(click)] = true
+	}
+	last := a.Settings.LastNotificationClick
+	for _, click := range clicks {
+		key := core.NotificationClickKey(click)
+		if _, ok := core.ChannelFromNotificationID(click.ID); !ok || click.ChannelID == "" || key < last || known[key] {
+			continue
+		}
+		queue.Clicks = append(queue.Clicks, click)
+		known[key] = true
+	}
+	data, err := json.MarshalIndent(queue, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWrite(path, data)
+}
+
+// ConsumeNotificationClick selects the newest locally queued notification and
+// leaves older entries for later clicks. It dedupes by notification ID and
+// post timestamp, and persists the consumed key in local settings so a
+// duplicate handoff cannot route the same notification twice.
+func (a *App) ConsumeNotificationClick() (string, bool) {
+	path := a.notificationClicksPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	var queue core.NotificationClicks
+	if err := json.Unmarshal(data, &queue); err != nil {
+		return "", false
+	}
+	latest, tail := core.LatestNotificationClick(queue)
+	key := core.NotificationClickKey(latest)
+	if _, ok := core.ChannelFromNotificationID(latest.ID); !ok || latest.ChannelID == "" || key <= a.Settings.LastNotificationClick {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			log.Printf("notification click queue: %v", err)
+		}
+		return "", false
+	}
+	a.Settings.LastNotificationClick = key
+	if err := a.SaveSettings(); err != nil {
+		log.Printf("notification click settings: %v", err)
+	}
+	data, err = json.MarshalIndent(tail, "", "  ")
+	if err == nil {
+		if err := atomicWrite(path, data); err != nil {
+			log.Printf("notification click queue: %v", err)
+		}
+	}
+	return latest.ChannelID, true
+}
+
+// SelectChannel routes the UI to a channel's filtered view and clears the
+// transient search/unread filters so the destination is unambiguous.
+func (a *App) SelectChannel(channelID string) bool {
+	if channelID == "" {
+		return false
+	}
+	for _, ch := range a.Channels {
+		if ch.ID == channelID {
+			a.Selected = "channel:" + channelID
+			a.Search = ""
+			a.UnreadOnly = false
+			a.SelectedVideoID = ""
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) VisibleVideos() []core.Video {

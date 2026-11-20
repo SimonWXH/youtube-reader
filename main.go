@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-
 	"strings"
 	"time"
 
@@ -28,6 +27,13 @@ func realMain() {
 	defer app.Close()
 	if err := app.ConsumeHandoff(); err != nil {
 		log.Printf("handoff: %v", err)
+	}
+	// MyGo delivers a notification click from an earlier run before Run once
+	// this listener is registered. Helper notifications are AppleScript based
+	// and carry no ID, so their locally queued channel is the fallback.
+	registerNotificationClick(app)
+	if clickChannelID, ok := app.ConsumeNotificationClick(); ok {
+		selectNotificationChannel(app, clickChannelID)
 	}
 	if err := app.DrainQueuedSyncWrites(); err != nil {
 		log.Printf("sync queue: %v", err)
@@ -94,13 +100,33 @@ func postNotification(plan NotificationPlan) {
 		body += "\n" + plan.NewestTitle
 	}
 	n := mygo.NewNotification(mygo.NotificationOptions{
-		ID:       "ytreader-" + plan.ChannelID,
+		ID:       core.ChannelNotificationID(plan.ChannelID),
 		Title:    plan.ChannelName,
 		Subtitle: "New videos",
 		Body:     body,
 	})
 	if err := n.Show(); err != nil {
 		log.Printf("notification: %v", err)
+	}
+}
+
+func registerNotificationClick(app *App) (off func()) {
+	return mygo.App.OnNotificationClick(notificationClickHandler(app))
+}
+
+func notificationClickHandler(app *App) func(string) {
+	return func(id string) {
+		channelID, ok := core.ChannelFromNotificationID(id)
+		if !ok {
+			return
+		}
+		selectNotificationChannel(app, channelID)
+	}
+}
+
+func selectNotificationChannel(app *App, channelID string) {
+	if !app.SelectChannel(channelID) {
+		log.Printf("notification click: unknown channel %q", channelID)
 	}
 }
 
@@ -517,7 +543,7 @@ func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 					}
 				}
 			})
-			ui.Text(c, "Cold-launch notification click routing is not supported in this MVP.").FontSize(13).TextColor(t.Muted)
+			ui.Text(c, "Notification clicks open the channel's filtered view, including after a cold launch.").FontSize(13).TextColor(t.Muted)
 			ui.Divider(c)
 			ui.Text(c, "Background helper").Bold().FontSize(15)
 			ui.Text(c, "Register the standalone helper with a user LaunchAgent (RunAtLoad + StartInterval) to refresh while the app is closed.").FontSize(13).TextColor(t.Muted)

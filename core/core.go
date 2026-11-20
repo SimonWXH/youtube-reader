@@ -56,18 +56,19 @@ type RefreshFailure struct {
 }
 
 type Settings struct {
-	APIKey           string           `json:"apiKey"`
-	RefreshMinutes   int              `json:"refreshMinutes"`
-	SyncPath         string           `json:"syncPath"`
-	BackupPath       string           `json:"backupPath"`
-	ShowShorts       bool             `json:"showShorts"`
-	NotificationIDs  []string         `json:"notificationChannelIDs"`
-	LastRefresh      string           `json:"lastRefresh,omitempty"`
-	NextRefresh      string           `json:"nextRefresh,omitempty"`
-	RecentFailures   []RefreshFailure `json:"recentFailures"`
-	QuotaPausedUntil string           `json:"quotaPausedUntil,omitempty"`
-	LastHandoffID    string           `json:"lastHandoffID,omitempty"`
-	HelperInstalled  bool             `json:"helperInstalled,omitempty"`
+	APIKey                string           `json:"apiKey"`
+	RefreshMinutes        int              `json:"refreshMinutes"`
+	SyncPath              string           `json:"syncPath"`
+	BackupPath            string           `json:"backupPath"`
+	ShowShorts            bool             `json:"showShorts"`
+	NotificationIDs       []string         `json:"notificationChannelIDs"`
+	LastRefresh           string           `json:"lastRefresh,omitempty"`
+	NextRefresh           string           `json:"nextRefresh,omitempty"`
+	RecentFailures        []RefreshFailure `json:"recentFailures"`
+	QuotaPausedUntil      string           `json:"quotaPausedUntil,omitempty"`
+	LastHandoffID         string           `json:"lastHandoffID,omitempty"`
+	LastNotificationClick string           `json:"lastNotificationClick,omitempty"`
+	HelperInstalled       bool             `json:"helperInstalled,omitempty"`
 }
 
 type FavoriteRecord struct {
