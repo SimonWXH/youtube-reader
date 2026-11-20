@@ -1,61 +1,61 @@
-# YouTube Reader (Mac MVP)
+# Build / MyGo
 
-A private, native macOS app for following YouTube channels in a dense video grid, keeping read state and favorites across devices with Syncthing, and refreshing in the background with local notifications.
+YouTube Reader is a private macOS app. It is built with Go 1.27+ and MyGo v0.10.0 native UI (`github.com/egoist/mygo/ui`). There is no frontend, webview, HTML or JavaScript in the app.
 
-## What this MVP does
+## Requirements
 
-- Reads a channel subscription OPML locally (the sample used during development: `/Users/simon/Downloads/NetNewsWire.opml`, 7 groups / 117 feeds / 89 YouTube entries / 87 unique channel IDs) and preserves duplicate memberships exactly as provided.
-- Uses YouTube Data API v3 only: `channels.list` for titles and avatars, `playlistItems.list` for uploads, and `videos.list` to hydrate missing favorite metadata.
-- Shows an adaptive 2-5 column grid with thumbnails, channel avatars, title, relative time, two-line description and unread state. Shorts are portrait videos and hidden by default.
-- Provides a right-side native detail drawer with "Open in YouTube" and "Favorite/Unfavorite".
-- Fixed left navigation: All, Favorites, each OPML group and channel, collapsible status (last refresh, next refresh, recent failures) at the bottom.
-- Refreshes every hour by default (15m, 30m, 1h, 2h, 4h selectable). Keeps at most 30 hours or 400 videos, whichever comes first.
-- Registers a `SMAppService` LaunchAgent helper that refreshes and posts local notifications even when the main app is closed. Per-channel notifications default off; group "Enable all" is one click. Clicking a notification opens the channel-filtered view.
-- Offline transitions and refresh failures show a 2-second toast and a corner status icon; the last successful data stays visible, with no top error banner.
+- Go 1.27+ (the task toolchain is at `/Volumes/ZHITAI_1TB/Projects/firstmate/data/youtube-reader-mygo-spike-1/toolchain/go/bin/go`)
+- macOS arm64 for the signed `.app` and DMG build
+- A YouTube Data API v3 key entered in Settings (local only, never bundled or synced)
 
-## Build and run
-
-Open `youtube-reader.xcodeproj` in Xcode 15+ on macOS 13+, select the `YoutubeReader` scheme, build and run.
-
-The project also has a Swift Package manifest for command-line checking of the shared core:
+## Develop and build
 
 ```sh
-swift build
-swift run CoreChecks
+go tool mygo dev
+go tool mygo build -platform darwin/arm64 -skip-notarize
 ```
 
-`CoreChecks` runs pure checks for relative dates, retention, dedupe, quota arithmetic, sync merge (read wins, group/favorite last-write-wins), sync file idempotence and conflict copies, OPML import/group preservation, and Shorts detection. The same assertions are available as `Tests/YoutubeReaderXCTest/CoreTests.swift` when running the Xcode test target.
+The build produces `dist/darwin-arm64/YouTube Reader.app` and `dist/darwin-arm64/youtube-reader-1.0.0-arm64.dmg`. It is ad-hoc signed when no Developer ID is configured; notarization is skipped in this MVP.
 
-Get a YouTube Data API v3 key in Google Cloud, enable the YouTube Data API v3, and paste it into Settings in the app. The key is stored only in `~/Library/Application Support/YouTubeReader/settings.json`; it is never synced or hard-coded. Without a key the app still opens, imports OPML and shows friendly setup prompts. This phase does not require a real key for local build or test runs.
+The standalone background helper is built into `Contents/Resources/ytreader-helper` by `Scripts/build-helper.sh`. Run that script after changing `helper/`, then build the app.
 
-Import the sample OPML with File > Import OPML... (or the sidebar toolbar button), choose `/Users/simon/Downloads/NetNewsWire.opml`, then set your API key to fetch videos.
+## Features
 
-## Architecture
+- OPML import preserving group hierarchy, duplicate channel memberships and channel merge by ID. Imports never delete existing channels. Multiple OPML files can be selected.
+- YouTube Data API v3 only: `channels.list` (batches of 50), `playlistItems.list` (three pages maximum, stop at 30 days), and `videos.list` for missing metadata and Shorts detection. No RSS, no `search.list`, no server.
+- Adaptive two-to-five column video grid with remote thumbnails/avatars, relative time, two-line descriptions, unread badges and Shorts badges. Shorts are hidden by default and can be enabled in Settings.
+- Right-side detail drawer with Open in YouTube and Favorite/Unfavorite. Opening a detail and opening externally mark a video as read; scrolling, filtering and searching do not.
+- Fixed left navigation: All, Favorites, OPML groups with channels, and a pinned collapsible status item at the bottom. Channel filter, keyword search and unread-only toggle filter within the selected group.
+- Refresh intervals: 15m/30m/1h (default)/2h/4h. Startup refresh when the last successful refresh is older than the interval. Retain at most 30 hours or 400 videos, protecting unread and favorited videos.
+- Offline/failure UX: the last successful data stays visible, with a two-second toast on failure transitions and a corner status icon; no top error banner. Quota exhaustion pauses refreshes for 24 hours.
+- Single-file Syncthing sync: one JSON file (`~/Library/Application Support/YouTubeReader/youtube-reader-sync.json` by default, configurable in Settings) holds groups/channel membership, read states (any device read wins) and favorites with optional metadata. Writes are read-before-write, idempotent by stable id, and use a dot-prefixed temp file, fsync, atomic rename and directory fsync. `*.sync-conflict-*` copies are merged on load and app-generated copies are removed. A local flock lives outside the Syncthing folder; Settings has "Force take over sync". SQLite, API key, notification preferences, locks, queues and logs are never synced.
+- Favorites can be exported/imported as a separate JSON file with no API key or read history.
+- Local SQLite store (`videos.sqlite`) uses WAL and a five-second busy timeout. Each refresh commits channels, videos and revision in one transaction; notifications post only after commit.
+- Local system notifications: per-channel toggles default OFF; one-click enable-all for the selected group (All enables all channels). One notification per opted-in channel per refresh with new-video count and newest title. Notification preferences are local only.
+- Background refresh: the standalone helper can be registered as a user LaunchAgent (RunAtLoad + StartInterval) from Settings. It writes an atomic JSON handoff consumed by the app on next launch. The app holds the local flock while open; helper shared-JSON writes are queued in SQLite and drained when the app exits.
 
-- `YoutubeReader/Core/`: shared Swift module used by the app, helper and tests. Contains the API client, OPML parser, SQLite store, one-file sync engine, local settings, notifier, refresh service and pure primitives.
-- `YoutubeReader/App/` and `YoutubeReader/Features/`: SwiftUI app, state model, sidebar, grid, detail drawer and settings.
-- `YoutubeReaderHelper/`: headless LaunchAgent target. It shares the core module; when the main app is open, a kernel `flock` in a private local path (`~/Library/Application Support/YouTubeReaderLocalLock/`) defers the helper's shared-JSON writes until app exit. Inbound Syncthing sync of the canonical file is never blocked. A "Force take over sync" button is available in Settings for stale locks.
-- `youtube-reader.xcodeproj/project.pbxproj`: generated by `Scripts/generate_project.py` so target/file changes stay reviewable. Run `python3 Scripts/generate_project.py` after adding core files.
+## Known limitations
 
-### Sync contract
+- Clicking a notification to launch a fully quit app and deep-link into a channel is not supported in this MVP. Notifications work while the app is running; cold-launch click routing will be handled later.
+- Notification permission must be granted in macOS System Settings the first time a notification is posted.
+- The helper performs metadata checks and handoff; full background refresh body can be refined in the next iteration. The LaunchAgent is installed per user and uses absolute paths resolved from the app bundle.
 
-All cross-device state lives in ONE JSON file (default `~/Library/Application Support/YouTubeReader/youtube-reader-sync.json`, configurable in Settings):
+## Verification
 
-- Groups and channel membership (last write wins)
-- Read states (any device marking a video read wins)
-- Favorites with optional hydrated metadata (last write wins)
+```sh
+go vet ./...
+go test ./...
+go tool mygo build -platform darwin/arm64 -skip-notarize
+hdiutil verify dist/darwin-arm64/youtube-reader-1.0.0-arm64.dmg
+codesign -dv "dist/darwin-arm64/YouTube Reader.app"
+```
 
-Writes are read-before-write, idempotent, and upsert by stable ID. Syncthing conflict copies (`*.sync-conflict-*` and `*.~*.json`) are merged on load. The replacement file is written with a dot-prefixed temp name outside normal Syncthing watched naming, fsynced, then atomically renamed, followed by a directory fsync.
+MyGo automation can drive the built app for UI verification:
 
-Never synced: SQLite database (`videos.sqlite`), API key, notification preferences, local locks, queues, logs, and local settings. Favorites backup/export is a separate local JSON file (`favorites-backup.json`), configurable in Settings.
-
-### API economy and Shorts
-
-One refresh uses roughly `ceil(channelCount / 50) + channelCount * (1 + pagesPerChannel) + hydrationRequests` units (272 for the 89-channel sample with two pages per channel and three hydration requests): batched `channels.list` metadata calls are 2 requests for 89 IDs, uploads are fetched from each channel's uploads playlist (at most 3 pages, stopping when items are older than 30 days), and favorites are hydrated only when metadata is missing. Notifications are one per channel per refresh, and only for channels explicitly opted in. Shorts are detected from duration and/or portrait dimensions via `VideoFacts.isShort` and hidden from the grid by default.
-
-### Limitations / later phases
-
-- No Android app: this is an independent later phase.
-- No RSS/XML feed fetching inside the app: OPML is a local one-time import only.
-- No push notifications: all notifications are local.
-- Background helper registration requires a properly signed/bundled `.app`; ad-hoc `swift run` builds can exercise the core and UI but cannot register the LaunchAgent.
+```sh
+go build -tags e2e -o /tmp/ytreader-e2e-app .
+MYGO_AUTOMATION=/tmp/ytreader-e2e.sock /tmp/ytreader-e2e-app
+mygo-automation open --socket /tmp/ytreader-e2e.sock
+mygo-automation snapshot -i
+mygo-automation screenshot /tmp/ytreader.png
+```
