@@ -547,6 +547,7 @@ func (a *App) SelectChannel(channelID string) bool {
 	for _, ch := range a.Channels {
 		if ch.ID == channelID {
 			a.Selected = "channel:" + channelID
+			a.ChannelFilter = ""
 			a.Search = ""
 			a.UnreadOnly = false
 			a.SelectedVideoID = ""

@@ -35,6 +35,8 @@ func TestConsumeNotificationClickRoutesNewestChannel(t *testing.T) {
 	a := newTestApp(t, dir)
 	defer a.Close()
 	a.Channels = []core.Channel{{ID: "ch-1"}, {ID: "ch-2"}}
+	a.Videos = []core.Video{{ID: "v-1", ChannelID: "ch-1"}, {ID: "v-2", ChannelID: "ch-2"}}
+	a.ChannelFilter = "ch-1"
 	old := core.NewNotificationClick(core.NotificationPlan{ChannelID: "ch-1"}, mustTime(t, "2026-03-01T11:00:00Z"))
 	newest := core.NewNotificationClick(core.NotificationPlan{ChannelID: "ch-2"}, mustTime(t, "2026-03-01T12:00:00Z"))
 	writeNotificationClickQueue(t, dir, old, newest)
@@ -46,8 +48,11 @@ func TestConsumeNotificationClickRoutesNewestChannel(t *testing.T) {
 	if !a.SelectChannel(got) || a.Selected != "channel:ch-2" {
 		t.Fatalf("selection = %q", a.Selected)
 	}
-	if a.Search != "" || a.UnreadOnly || a.SelectedVideoID != "" {
+	if a.ChannelFilter != "" || a.Search != "" || a.UnreadOnly || a.SelectedVideoID != "" {
 		t.Fatalf("filters not cleared: %+v", a)
+	}
+	if got := a.VisibleVideos(); len(got) != 1 || got[0].ID != "v-2" {
+		t.Fatalf("routed videos = %+v", got)
 	}
 	if a.Settings.LastNotificationClick != core.NotificationClickKey(newest) {
 		t.Fatalf("dedupe key = %q", a.Settings.LastNotificationClick)
