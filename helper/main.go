@@ -42,19 +42,24 @@ type HelperHandoff struct {
 
 // notificationClicksPath is local app state: AppleScript notifications have
 // no click ID, so the helper records their channel and post time here for the
-// launching app to consume. It is never synced or sent to any service.
+// click callback to consume. It is never synced or sent to any service.
 func notificationClicksPath(dir string) string {
 	return filepath.Join(dir, "notification-clicks.json")
 }
 
-// queueNotificationClicks appends one entry per posted notification and keeps
-// the file atomic and private. A repeated post at the same second is a
-// duplicate and does not create a second handoff entry.
+// queueNotificationClicks appends one entry per notification the helper
+// actually posted and keeps the file atomic and private. A repeated post at
+// the same second is a duplicate and does not create a second record.
 func queueNotificationClicks(dir string, plans []core.NotificationPlan, at time.Time) error {
 	path := notificationClicksPath(dir)
 	queue := core.NotificationClicks{}
 	if data, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(data, &queue)
+		if err := json.Unmarshal(data, &queue); err != nil {
+			return fmt.Errorf("parse notification click queue: %w", err)
+		}
+		if err := queue.Validate(); err != nil {
+			return err
+		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -100,13 +105,13 @@ func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return handoff, err
 	}
-	recordClicks := func(plans []core.NotificationPlan) {
-		if len(plans) == 0 {
+	recordPostedClicks := func(posted []core.NotificationPlan) {
+		if len(posted) == 0 {
 			return
 		}
-		handoff.Clicks = core.NewNotificationClicks(plans, now)
-		if err := queueNotificationClicks(dir, plans, now); err != nil {
-			log.Printf("notification click handoff: %v", err)
+		handoff.Clicks = core.NewNotificationClicks(posted, now)
+		if err := queueNotificationClicks(dir, posted, now); err != nil {
+			log.Printf("notification click queue: %v", err)
 		}
 	}
 	writeHandoff := func() error {
@@ -156,7 +161,6 @@ func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post
 		handoff.Result = &result
 		handoff.Notified = result.Notified
 		handoff.Channels = result.Channels
-		recordClicks(result.Notified)
 	}
 
 	// Persist failures and quota pauses so they are visible in the app on the
@@ -168,14 +172,18 @@ func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post
 	}
 
 	if result.Changed {
+		posted := make([]core.NotificationPlan, 0, len(result.Notified))
 		for _, plan := range result.Notified {
 			if post == nil {
 				continue
 			}
 			if err := post(plan); err != nil {
 				log.Printf("notification: %v", err)
+				continue
 			}
+			posted = append(posted, plan)
 		}
+		recordPostedClicks(posted)
 	}
 	return handoff, writeHandoff()
 }

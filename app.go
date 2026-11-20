@@ -466,37 +466,31 @@ func (a *App) ConsumeHandoff() error {
 	return a.reload()
 }
 
-// notificationClicksPath is the local, atomic queue of notification posts
-// that may be clicked after a cold launch. It is never synced.
+// notificationClicksPath is the local, atomic queue of helper-posted
+// notifications that may produce a click callback. It is never synced.
 func (a *App) notificationClicksPath() string {
 	return filepath.Join(a.Dir, "notification-clicks.json")
 }
 
-// RecordNotificationClicks appends notification handoff entries after
-// dropping duplicates and entries older than the last one this app consumed.
-// Stale entries from previous runs must not reroute a later launch. Watermarks
-// written by older builds sort by ID and are treated as unknown.
-func (a *App) RecordNotificationClicks(clicks []core.NotificationClick) error {
-	path := a.notificationClicksPath()
-	queue := core.NotificationClicks{}
-	if data, err := os.ReadFile(path); err == nil {
-		_ = json.Unmarshal(data, &queue)
-	} else if !os.IsNotExist(err) {
-		return err
+func readNotificationClicks(path string) (core.NotificationClicks, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return core.NotificationClicks{}, nil
 	}
-	known := make(map[string]bool, len(queue.Clicks))
-	for _, click := range queue.Clicks {
-		known[core.NotificationClickKey(click)] = true
+	if err != nil {
+		return core.NotificationClicks{}, err
 	}
-	last := a.Settings.LastNotificationClick
-	for _, click := range clicks {
-		key := core.NotificationClickKey(click)
-		if _, ok := core.ChannelFromNotificationID(click.ID); !ok || click.ChannelID == "" || !core.NotificationClickAfter(click, last) || known[key] {
-			continue
-		}
-		queue.Clicks = append(queue.Clicks, click)
-		known[key] = true
+	var queue core.NotificationClicks
+	if err := json.Unmarshal(data, &queue); err != nil {
+		return core.NotificationClicks{}, fmt.Errorf("parse notification click queue: %w", err)
 	}
+	if err := queue.Validate(); err != nil {
+		return core.NotificationClicks{}, err
+	}
+	return queue, nil
+}
+
+func writeNotificationClicks(path string, queue core.NotificationClicks) error {
 	data, err := json.MarshalIndent(queue, "", "  ")
 	if err != nil {
 		return err
@@ -504,37 +498,55 @@ func (a *App) RecordNotificationClicks(clicks []core.NotificationClick) error {
 	return atomicWrite(path, data)
 }
 
-// ConsumeNotificationClick selects the newest locally queued notification and
-// leaves older entries for later clicks. It dedupes by post timestamp and
-// notification ID, and persists the consumed key in local settings so a
-// duplicate handoff cannot route the same notification twice.
+// RecordNotificationClicks appends helper-posted notification records after
+// dropping duplicates. Older records are kept: consuming a newer click must
+// not suppress a still-pending notification.
+func (a *App) RecordNotificationClicks(clicks []core.NotificationClick) error {
+	path := a.notificationClicksPath()
+	queue, err := readNotificationClicks(path)
+	if err != nil {
+		return err
+	}
+	known := make(map[string]bool, len(queue.Clicks)+len(clicks))
+	for _, click := range queue.Clicks {
+		known[core.NotificationClickKey(click)] = true
+	}
+	for _, click := range clicks {
+		if err := core.ValidateNotificationClick(click); err != nil {
+			return err
+		}
+		key := core.NotificationClickKey(click)
+		if known[key] {
+			continue
+		}
+		queue.Clicks = append(queue.Clicks, click)
+		known[key] = true
+	}
+	return writeNotificationClicks(path, queue)
+}
+
+// ConsumeNotificationClick selects the newest pending helper-posted record and
+// leaves older records for later click callbacks. It must only be called from
+// an actual notification-click handler, never during an ordinary launch.
+// Corrupt state is rejected and left untouched rather than failing open.
 func (a *App) ConsumeNotificationClick() (string, bool) {
 	path := a.notificationClicksPath()
-	data, err := os.ReadFile(path)
+	queue, err := readNotificationClicks(path)
 	if err != nil {
+		log.Printf("notification click queue: %v", err)
 		return "", false
 	}
-	var queue core.NotificationClicks
-	if err := json.Unmarshal(data, &queue); err != nil {
+	if len(queue.Clicks) == 0 {
 		return "", false
 	}
-	latest, tail := core.LatestNotificationClick(queue)
-	key := core.NotificationClickKey(latest)
-	if _, ok := core.ChannelFromNotificationID(latest.ID); !ok || latest.ChannelID == "" || !core.NotificationClickAfter(latest, a.Settings.LastNotificationClick) {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			log.Printf("notification click queue: %v", err)
-		}
+	latest, tail, err := core.LatestNotificationClick(queue)
+	if err != nil {
+		log.Printf("notification click queue: %v", err)
 		return "", false
 	}
-	a.Settings.LastNotificationClick = key
-	if err := a.SaveSettings(); err != nil {
-		log.Printf("notification click settings: %v", err)
-	}
-	data, err = json.MarshalIndent(tail, "", "  ")
-	if err == nil {
-		if err := atomicWrite(path, data); err != nil {
-			log.Printf("notification click queue: %v", err)
-		}
+	if err := writeNotificationClicks(path, tail); err != nil {
+		log.Printf("notification click queue: %v", err)
+		return "", false
 	}
 	return latest.ChannelID, true
 }

@@ -54,9 +54,6 @@ func TestConsumeNotificationClickRoutesNewestChannel(t *testing.T) {
 	if got := a.VisibleVideos(); len(got) != 1 || got[0].ID != "v-2" {
 		t.Fatalf("routed videos = %+v", got)
 	}
-	if a.Settings.LastNotificationClick != core.NotificationClickKey(newest) {
-		t.Fatalf("dedupe key = %q", a.Settings.LastNotificationClick)
-	}
 	data, err := os.ReadFile(filepath.Join(dir, "notification-clicks.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -70,42 +67,70 @@ func TestConsumeNotificationClickRoutesNewestChannel(t *testing.T) {
 	}
 }
 
-func TestConsumeNotificationClickNewerChannelAfterOlderWatermark(t *testing.T) {
+func TestConsumeNotificationClickKeepsOlderRecordsAfterNewerConsumed(t *testing.T) {
 	dir := t.TempDir()
 	a := newTestApp(t, dir)
 	defer a.Close()
-	a.Channels = []core.Channel{{ID: "ch-1"}}
-	older := core.NewNotificationClick(core.NotificationPlan{ChannelID: "ch-2"}, mustTime(t, "2026-03-01T11:00:00Z"))
-	a.Settings.LastNotificationClick = core.NotificationClickKey(older)
-	newer := core.NewNotificationClick(core.NotificationPlan{ChannelID: "ch-1"}, mustTime(t, "2026-03-01T12:00:00Z"))
-	writeNotificationClickQueue(t, dir, newer)
+	a.Channels = []core.Channel{{ID: "ch-1"}, {ID: "ch-2"}}
+	older := core.NewNotificationClick(core.NotificationPlan{ChannelID: "ch-1"}, mustTime(t, "2026-03-01T11:00:00Z"))
+	newer := core.NewNotificationClick(core.NotificationPlan{ChannelID: "ch-2"}, mustTime(t, "2026-03-01T12:00:00Z"))
+	writeNotificationClickQueue(t, dir, older, newer)
 
-	if err := a.RecordNotificationClicks([]core.NotificationClick{newer}); err != nil {
-		t.Fatal(err)
+	if got, ok := a.ConsumeNotificationClick(); !ok || got != "ch-2" {
+		t.Fatalf("consume newer = %q, %v", got, ok)
 	}
-	got, ok := a.ConsumeNotificationClick()
-	if !ok || got != "ch-1" {
-		t.Fatalf("consume newer channel = %q, %v", got, ok)
+	if got, ok := a.ConsumeNotificationClick(); !ok || got != "ch-1" {
+		t.Fatalf("consume retained older = %q, %v", got, ok)
+	}
+	if got, ok := a.ConsumeNotificationClick(); ok {
+		t.Fatalf("empty queue consumed %q", got)
 	}
 }
 
-func TestConsumeNotificationClickSkipsDuplicateAndMalformedEntries(t *testing.T) {
+func TestConsumeNotificationClickOrdersByPostTimeNotChannelID(t *testing.T) {
 	dir := t.TempDir()
 	a := newTestApp(t, dir)
 	defer a.Close()
-	click := core.NewNotificationClick(core.NotificationPlan{ChannelID: "ch-1"}, mustTime(t, "2026-03-01T12:00:00Z"))
-	a.Settings.LastNotificationClick = core.NotificationClickKey(click)
-	writeNotificationClickQueue(t, dir, click)
-	if _, ok := a.ConsumeNotificationClick(); ok {
-		t.Fatal("duplicate click was consumed")
+	a.Channels = []core.Channel{{ID: "ch-z"}, {ID: "ch-a"}}
+	// The lexically larger channel ID is an older post and must not win.
+	older := core.NewNotificationClick(core.NotificationPlan{ChannelID: "ch-z"}, mustTime(t, "2026-03-01T11:00:00Z"))
+	newer := core.NewNotificationClick(core.NotificationPlan{ChannelID: "ch-a"}, mustTime(t, "2026-03-01T12:00:00Z"))
+	writeNotificationClickQueue(t, dir, older, newer)
+	if got, ok := a.ConsumeNotificationClick(); !ok || got != "ch-a" {
+		t.Fatalf("consume by time = %q, %v", got, ok)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "notification-clicks.json")); !os.IsNotExist(err) {
-		t.Fatalf("stale queue was not removed: %v", err)
+	if got, ok := a.ConsumeNotificationClick(); !ok || got != "ch-z" {
+		t.Fatalf("consume older = %q, %v", got, ok)
 	}
+}
 
-	writeNotificationClickQueue(t, dir, core.NotificationClick{ID: "unrelated-id", ChannelID: "ch-1", Timestamp: "2026-03-02T12:00:00Z"})
-	if got, ok := a.ConsumeNotificationClick(); ok {
-		t.Fatalf("malformed click consumed %q", got)
+func TestConsumeNotificationClickRejectsCorruptState(t *testing.T) {
+	for name, data := range map[string]string{
+		"bad JSON":          `{`,
+		"bad ID":            `{"clicks":[{"id":"unrelated","channelID":"ch-1","timestamp":"2026-03-01T12:00:00Z"}]}`,
+		"mismatched ID":     `{"clicks":[{"id":"ytreader-channel-ch-2","channelID":"ch-1","timestamp":"2026-03-01T12:00:00Z"}]}`,
+		"duplicate ID":      `{"clicks":[{"id":"ytreader-channel-ch-1","channelID":"ch-1","timestamp":"2026-03-01T12:00:00Z"},{"id":"ytreader-channel-ch-1","channelID":"ch-1","timestamp":"2026-03-01T12:00:00Z"}]}`,
+		"corrupt timestamp": `{"clicks":[{"id":"ytreader-channel-ch-1","channelID":"ch-1","timestamp":"bad"}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			a := newTestApp(t, dir)
+			defer a.Close()
+			path := filepath.Join(dir, "notification-clicks.json")
+			if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := a.ConsumeNotificationClick(); ok {
+				t.Fatalf("corrupt state consumed %q", got)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || string(after) != data {
+				t.Fatalf("corrupt queue changed: %q, %v", after, err)
+			}
+			if err := a.RecordNotificationClicks([]core.NotificationClick{core.NewNotificationClick(core.NotificationPlan{ChannelID: "ch-1"}, mustTime(t, "2026-03-01T13:00:00Z"))}); err == nil {
+				t.Fatal("corrupt queue accepted a new record")
+			}
+		})
 	}
 }
 
@@ -159,25 +184,15 @@ func TestNotificationClickIDRoutesChannelFromApp(t *testing.T) {
 	}
 }
 
-func TestRecordNotificationClicksRejectsOlderPost(t *testing.T) {
+func TestRecordNotificationClicksRejectsInvalidRecord(t *testing.T) {
 	dir := t.TempDir()
 	a := newTestApp(t, dir)
 	defer a.Close()
-	newer := core.NewNotificationClick(core.NotificationPlan{ChannelID: "ch-2"}, mustTime(t, "2026-03-01T12:00:00Z"))
-	a.Settings.LastNotificationClick = core.NotificationClickKey(newer)
-	older := core.NewNotificationClick(core.NotificationPlan{ChannelID: "ch-1"}, mustTime(t, "2026-03-01T11:00:00Z"))
-	if err := a.RecordNotificationClicks([]core.NotificationClick{older}); err != nil {
-		t.Fatal(err)
+	bad := core.NotificationClick{ID: "unrelated", ChannelID: "ch-1", Timestamp: "2026-03-01T12:00:00Z"}
+	if err := a.RecordNotificationClicks([]core.NotificationClick{bad}); err == nil {
+		t.Fatal("invalid click record was accepted")
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "notification-clicks.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var queue core.NotificationClicks
-	if err := json.Unmarshal(data, &queue); err != nil {
-		t.Fatal(err)
-	}
-	if len(queue.Clicks) != 0 {
-		t.Fatalf("stale click was recorded: %+v", queue.Clicks)
+	if _, err := os.Stat(filepath.Join(dir, "notification-clicks.json")); !os.IsNotExist(err) {
+		t.Fatalf("queue was written for invalid record: %v", err)
 	}
 }
