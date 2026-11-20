@@ -4,8 +4,9 @@
 # "v" plus the version in mygo.json (for example v1.0.0 for version 1.0.0);
 # prerelease-style tags are not accepted until the version in mygo.json includes
 # a prerelease suffix. Every GitHub release created here is deliberately marked
-# prerelease with generated notes. There is no stable-release path in this
-# workflow.
+# prerelease. The release task owns .github/release-notes.md; generated notes
+# are a guarded fallback only when that file is absent. There is no
+# stable-release path in this workflow.
 
 name: Release
 
@@ -65,6 +66,12 @@ jobs:
             echo "Expected DMG under dist/darwin-arm64 was not found" >&2
             exit 1
           fi
+
+          NOTES_FILE=".github/release-notes.md"
+          NOTES_ARGS=(--notes-file "${NOTES_FILE}")
+          if [ ! -f "${NOTES_FILE}" ]; then
+            NOTES_ARGS=(--generate-notes)
+          fi
           gh release create "${GITHUB_REF_NAME}" "${DMG_FILE}" \
-            --generate-notes \
+            "${NOTES_ARGS[@]}" \
             --prerelease
