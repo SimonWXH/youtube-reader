@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/simon/youtube-reader/core"
 )
@@ -142,7 +143,7 @@ func TestConsumeHandoffQuotaFailurePausesRefresh(t *testing.T) {
 		"id":          "handoff-quota",
 		"createdAt":   "2026-03-01T12:00:00Z",
 		"description": "quota paused until 2026-03-02T12:00:00Z",
-		"failures": []core.RefreshFailure{{At: "2026-03-01T12:00:00Z", Message: "quota paused until 2026-03-02T12:00:00Z"}},
+		"failures":    []core.RefreshFailure{{At: "2026-03-01T12:00:00Z", Message: "quota paused until 2026-03-02T12:00:00Z"}},
 	}
 	data, _ := json.Marshal(handoff)
 	if err := os.WriteFile(filepath.Join(dir, "inbox.json"), data, 0o600); err != nil {
