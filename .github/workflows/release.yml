@@ -56,5 +56,5 @@ jobs:
             exit 1
           fi
           gh release create "${GITHUB_REF_NAME}" "${DMG_FILE}" \
-            --notes-file .github/release-notes.md \
+            --generate-notes \
             --prerelease
