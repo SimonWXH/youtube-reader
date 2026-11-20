@@ -7,9 +7,9 @@ import (
 	"github.com/egoist/mygo/ui/netimage"
 )
 
-// ChannelAvatar renders a real channel avatar when one is available and a
-// deterministic monogram otherwise. Every row has the same 32px visual
-// anchor whether or not the image has loaded yet.
+// ChannelAvatar renders a real channel avatar when a URL is supplied and a
+// deterministic monogram otherwise. Callers pass the row's avatar size, so
+// the reserved circular slot stays fixed while the image loads.
 func ChannelAvatar(c *ui.Context, tokens Tokens, url, title string, size float32) {
 	if url != "" {
 		netimage.Image(c, url, netimage.Options{MaxSide: int(size * 2)}).Size(size, size).Radius(size / 2)
