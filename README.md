@@ -29,7 +29,7 @@ The standalone background helper is built into `Contents/Resources/ytreader-help
 
 - OPML import preserving group hierarchy, duplicate channel memberships and channel merge by ID. Imports never delete existing channels. Multiple OPML files can be selected.
 - YouTube Data API v3 only: `channels.list` (batches of 50), `playlistItems.list` (three pages maximum, stop at 30 days), and `videos.list` for missing metadata and Shorts detection. No RSS, no `search.list`, no server.
-- Adaptive two-to-five column video grid with remote thumbnails/avatars, relative time, two-line descriptions, unread badges and Shorts badges. Shorts are hidden by default and can be enabled in Settings.
+- Adaptive one-to-five column video grid with remote thumbnails/avatars, relative time, two-line descriptions, unread badges and Shorts badges. Shorts are hidden by default and can be enabled in Settings.
 - Right-side detail drawer with Open in YouTube and Favorite/Unfavorite. Opening a detail and opening externally mark a video as read; scrolling, filtering and searching do not.
 - Fixed left navigation: All, Favorites, OPML groups with channels, and a pinned collapsible status item at the bottom. Channel filter, keyword search and unread-only toggle filter within the selected group.
 - Refresh intervals: 15m/30m/1h (default)/2h/4h. Startup refresh when the last successful refresh is older than the interval. Retain at most 30 hours or 400 videos, protecting unread and favorited videos.
@@ -39,6 +39,10 @@ The standalone background helper is built into `Contents/Resources/ytreader-help
 - Local SQLite store (`videos.sqlite`) uses WAL and a five-second busy timeout. Each refresh commits channels, videos and revision in one transaction; notifications post only after commit.
 - Local system notifications: per-channel toggles default OFF; one-click enable-all for the selected group (All enables all channels). One notification per opted-in channel per refresh with new-video count and newest title. Notification preferences are local only.
 - Background refresh: the standalone helper can be registered as a user LaunchAgent (RunAtLoad + StartInterval) from Settings. It writes an atomic JSON handoff consumed by the app on next launch. The app holds the local flock while open; helper shared-JSON writes are queued in SQLite and drained when the app exits.
+
+## Visual design
+
+The three panes share one token set in `ui/theme.go`: warm neutral surfaces (`#f7f7f5` / `#ffffff` light, `#191a1c` / `#25272b` dark), a single blue accent, and re-derived dark colors with small elevation steps instead of inverted light values. Spacing uses the 4/8/12/16/20/24/32 scale. The sidebar is 256px wide with 34px navigation rows and 2px gaps; avatars are 22px in the sidebar and 18px in video cards. Body text is 14-15px with fixed 20-22px line heights, pane titles are 28px, and card titles are 14px/20px. Controls expose default, hover, focus, active, disabled, loading, error and success faces, with a visible focus outline and a reduced-motion fallback. Motion is limited to a 180ms color transition through `cubic-bezier(0.22, 1, 0.36, 1)`; there is no `transition: all`, animated width/height/top/left, tracked caps, or gradient chrome. Video cards use remote thumbnails, two-line descriptions, unread dots, relative time and monogram avatars when a channel image is unavailable. The detail drawer repeats the same tokens and actions so the center grid and right pane read as one surface.
 
 ## Known limitations
 
