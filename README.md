@@ -12,12 +12,26 @@ YouTube Reader is a private macOS app. It is built with Go 1.27+ and MyGo v0.10.
 
 ```sh
 go tool mygo dev
-go tool mygo build -platform darwin/arm64 -skip-notarize
+make test
+make build
+make dmg
+make dmg-path
 ```
 
-The build produces `dist/darwin-arm64/YouTube Reader.app` and `dist/darwin-arm64/youtube-reader-1.0.0-arm64.dmg`. It is ad-hoc signed when no Developer ID is configured; notarization is skipped in this MVP.
+`make build` runs `Scripts/build-helper.sh` to build the standalone helper into `resources/darwin`, compiles the app, and signs `dist/darwin-arm64/YouTube Reader.app` ad hoc with `codesign --force --sign -`. `make dmg` packages that signed bundle and an `/Applications` symlink into a compressed UDZO disk image with `hdiutil`, and `make dmg-path` prints the image path. The build is ad hoc signed and not notarized; there is no Developer ID, Team ID, or stapler step.
 
-The standalone background helper is built into `Contents/Resources/ytreader-helper` by `Scripts/build-helper.sh`. Run that script after changing `helper/`, then build the app.
+If `go` is not on `PATH`, point `GO` at the toolchain when running Make:
+
+```sh
+make GO=/Volumes/ZHITAI_1TB/Projects/firstmate/data/youtube-reader-mygo-spike-1/toolchain/go/bin/go build
+```
+
+## Installation
+
+1. Open the disk image and drag **YouTube Reader** into `/Applications`.
+2. On first launch, macOS will block the unnotarized app. Allow it through **System Settings** -> **Privacy & Security** -> **Open Anyway**, or remove the quarantine attribute from the installed bundle with `xattr -d com.apple.quarantine "/Applications/YouTube Reader.app"`.
+
+See [`.github/release-notes.md`](.github/release-notes.md) for the complete first-launch instructions.
 
 ## Continuous integration and releases
 
@@ -49,11 +63,22 @@ The standalone background helper is built into `Contents/Resources/ytreader-help
 ## Verification
 
 ```sh
-go vet ./...
-go test ./...
-go tool mygo build -platform darwin/arm64 -skip-notarize
-hdiutil verify dist/darwin-arm64/youtube-reader-1.0.0-arm64.dmg
-codesign -dv "dist/darwin-arm64/YouTube Reader.app"
+make test
+make build
+make dmg
+hdiutil verify "$(make --no-print-directory dmg-path)"
+codesign -dv --verbose=4 "dist/darwin-arm64/YouTube Reader.app"
+```
+
+To confirm the disk image contains the install shortcut, attach it and check that `Applications` is a symlink to `/Applications`:
+
+```sh
+DMG=$(make --no-print-directory dmg-path)
+MNT=$(mktemp -d)
+hdiutil attach -readonly -nobrowse -mountpoint "$MNT" "$DMG"
+ls -l "$MNT/Applications"
+hdiutil detach "$MNT"
+rmdir "$MNT"
 ```
 
 MyGo automation can drive the built app for UI verification:
