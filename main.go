@@ -318,7 +318,7 @@ func refreshedLabel(stamp string) string {
 	case d < 24*time.Hour:
 		return fmt.Sprintf("Refreshed %d hr ago", int(d.Hours()))
 	default:
-		return "Refreshed at " + t.Local().Format("15:04")
+		return "Refreshed on " + t.Local().Format("Jan 2, 2006 at 15:04")
 	}
 }
 
