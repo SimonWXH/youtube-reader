@@ -1,8 +1,7 @@
 # CI for youtube-reader.
 #
 # The pull-request gate. Every pull request that changes more than documentation
-# verifies, builds, and tests the Go/MyGo app with the toolchain declared in
-# go.mod; this workflow does not add its own compilation or test commands.
+# builds, vets, and tests the Go/MyGo app with the toolchain declared in go.mod.
 #
 # Triggers: `pull_request`, plus `workflow_dispatch` to validate a branch or
 # `main` on demand. There is deliberately no `push` trigger: every merge here is
@@ -33,10 +32,9 @@
 #   - `actions/setup-go` reads the Go version from go.mod, so the `go` and
 #     `mygo` commands use the same toolchain as local builds.
 #
-# Cost: one job, no matrix, no services, and no cache. CopyQmac measured and
-# rejected both matrix builds and dependency caches for this workload; MyGo
-# builds here are equally single-platform, and caching build products would add
-# restore/save time without skipping compilation.
+# Cost: one job, no matrix, and no services. CopyQmac measured and rejected
+# matrix builds for this workload; MyGo builds here are single-platform. The
+# dependency cache is enabled by default in actions/setup-go@v6 and is kept.
 
 name: CI
 
