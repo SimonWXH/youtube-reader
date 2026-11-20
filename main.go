@@ -506,8 +506,11 @@ func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 			ui.Divider(c)
 			ui.Text(c, "OPML import").Bold().FontSize(15)
 			mui.StatefulButton(c, t, "import-opml", "Choose OPML file...", nil, false, mui.Default, func() { w.importOPML(c) }).AlignSelf(ui.Start)
-			ui.Text(c, "Favorites backup").Bold().FontSize(15)
-			ui.TextInput(c.Key("backup-path"), &w.app.Settings.BackupPath).Width(520)
+			ui.Text(c, "Favorites backup (standalone JSON, no API key or history)").Bold().FontSize(15)
+			if ui.TextInput(c.Key("backup-path"), &w.app.Settings.BackupPath).Width(520).Changed() {
+				_ = w.app.SaveSettings()
+			}
+			ui.Text(c, "Export writes the current favorites to the backup path below. Restore reads a chosen favorites JSON file and merges by stable video ID; newer local favorites win.").FontSize(13).TextColor(t.Muted)
 			ui.Row(c).Gap(8).Children(func() {
 				mui.StatefulButton(c, t, "export-fav", "Export favorites", nil, false, mui.Default, func() {
 					if err := w.app.ExportFavorites(); err != nil {
@@ -516,12 +519,8 @@ func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 						w.toast(c, "Favorites exported", false)
 					}
 				})
-				mui.StatefulButton(c, t, "import-fav", "Import favorites", nil, false, mui.Default, func() {
-					if err := w.app.ImportFavorites(); err != nil {
-						w.toast(c, "Import failed: "+err.Error(), true)
-					} else {
-						w.toast(c, "Favorites imported", false)
-					}
+				mui.StatefulButton(c, t, "restore-fav", "Restore favorites from file...", nil, false, mui.Default, func() {
+					w.restoreFavorites(c)
 				})
 			})
 			ui.Text(c, "Sync file (single JSON shared with Syncthing)").Bold().FontSize(15)
@@ -647,4 +646,34 @@ func (w *Window) importOPML(c *ui.Context) {
 		return
 	}
 	w.toast(c, "Imported channels", false)
+}
+
+func (w *Window) restoreFavorites(c *ui.Context) {
+	defaultPath := w.app.Settings.BackupPath
+	if defaultPath == "" {
+		defaultPath = filepath.Join(os.Getenv("HOME"), "Downloads")
+	}
+	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+		Parent:      w.window,
+		Title:       "Restore favorites",
+		DefaultPath: defaultPath,
+		Filters:     []mygo.FileFilter{{Name: "Favorites backup", Extensions: []string{"json"}}},
+	})
+	if err != nil {
+		w.toast(c, "Restore failed: "+err.Error(), true)
+		return
+	}
+	if len(paths) == 0 {
+		return
+	}
+	changed, err := w.app.ImportFavorites(paths[0])
+	if err != nil {
+		w.toast(c, "Restore failed: "+err.Error(), true)
+		return
+	}
+	if changed == 0 {
+		w.toast(c, "No newer favorites to restore", false)
+		return
+	}
+	w.toast(c, fmt.Sprintf("Restored %d favorite%s", changed, plural(changed)), false)
 }

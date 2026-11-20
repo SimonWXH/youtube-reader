@@ -283,32 +283,164 @@ func (a *App) ToggleFavorite(video core.Video) {
 	_ = a.SaveSync()
 }
 
-func (a *App) ExportFavorites() error {
-	favs := a.Sync.FavoritesSorted()
-	data, err := json.MarshalIndent(map[string]any{"schemaVersion": 1, "exportedAt": time.Now().UTC().Format(time.RFC3339), "favorites": favs}, "", "  ")
-	if err != nil {
-		return err
-	}
-	return atomicWrite(a.Settings.BackupPath, data)
+type favoritesBackupVideo struct {
+	VideoID       string `json:"videoID"`
+	ChannelID     string `json:"channelID,omitempty"`
+	ChannelTitle  string `json:"channelTitle,omitempty"`
+	Title         string `json:"title,omitempty"`
+	FavoritedAt   int64  `json:"favoritedAt"`
+	FavoriteTime  string `json:"favoriteTime,omitempty"`
+	FavoriteGroup string `json:"favoriteGroup,omitempty"`
+	UpdatedAt     int64  `json:"updatedAt"`
 }
 
-func (a *App) ImportFavorites() error {
-	data, err := os.ReadFile(a.Settings.BackupPath)
+type favoritesBackup struct {
+	SchemaVersion int                    `json:"schemaVersion"`
+	ExportedAt    string                 `json:"exportedAt,omitempty"`
+	Favorites     []favoritesBackupVideo `json:"favorites"`
+}
+
+func ExportFavorites(state core.SyncState, path string, now time.Time) error {
+	backup := favoritesBackup{
+		SchemaVersion: 1,
+		ExportedAt:    now.UTC().Format(time.RFC3339),
+		Favorites:     make([]favoritesBackupVideo, 0, len(state.Favorites)),
+	}
+	for _, fav := range state.Favorites {
+		entry := favoritesBackupVideo{
+			VideoID:      fav.VideoID,
+			FavoritedAt:  fav.FavoritedAt,
+			FavoriteTime: core.FormatRFC3339(time.UnixMilli(fav.FavoritedAt)),
+			UpdatedAt:    fav.UpdatedAt,
+		}
+		if fav.Video != nil {
+			entry.ChannelID = fav.Video.ChannelID
+			entry.ChannelTitle = fav.Video.ChannelTitle
+			entry.Title = fav.Video.Title
+			entry.FavoriteGroup = fav.Video.FavoriteChannel
+		}
+		backup.Favorites = append(backup.Favorites, entry)
+	}
+	sort.Slice(backup.Favorites, func(i, j int) bool {
+		if backup.Favorites[i].FavoritedAt != backup.Favorites[j].FavoritedAt {
+			return backup.Favorites[i].FavoritedAt > backup.Favorites[j].FavoritedAt
+		}
+		return backup.Favorites[i].VideoID < backup.Favorites[j].VideoID
+	})
+	data, err := json.MarshalIndent(backup, "", "  ")
 	if err != nil {
 		return err
 	}
-	var payload struct {
-		Favorites []core.Video `json:"favorites"`
-	}
+	return atomicWrite(path, data)
+}
+
+func (a *App) ExportFavorites() error {
+	return ExportFavorites(a.Sync, a.Settings.BackupPath, time.Now())
+}
+
+func parseFavoritesBackup(data []byte) (favoritesBackup, error) {
+	var payload favoritesBackup
 	if err := json.Unmarshal(data, &payload); err != nil {
-		return err
+		return favoritesBackup{}, err
+	}
+	if payload.SchemaVersion != 1 {
+		return favoritesBackup{}, fmt.Errorf("unsupported favorites backup version %d", payload.SchemaVersion)
+	}
+	if payload.Favorites == nil {
+		return favoritesBackup{}, fmt.Errorf("favorites backup is missing favorites")
+	}
+	seen := make(map[string]bool, len(payload.Favorites))
+	for i, fav := range payload.Favorites {
+		if fav.VideoID == "" {
+			return favoritesBackup{}, fmt.Errorf("favorites backup entry %d has no videoID", i)
+		}
+		if seen[fav.VideoID] {
+			return favoritesBackup{}, fmt.Errorf("favorites backup has duplicate videoID %q", fav.VideoID)
+		}
+		seen[fav.VideoID] = true
+	}
+	return payload, nil
+}
+
+func ApplyFavoritesBackup(state *core.SyncState, data []byte, now int64) (int, error) {
+	payload, err := parseFavoritesBackup(data)
+	if err != nil {
+		return 0, err
+	}
+	changed := 0
+	for _, fav := range payload.Favorites {
+		updatedAt := fav.UpdatedAt
+		if updatedAt == 0 {
+			updatedAt = now
+		}
+		old, exists := state.Favorites[fav.VideoID]
+		if exists && old.UpdatedAt > updatedAt {
+			continue
+		}
+		favoritedAt := fav.FavoritedAt
+		if favoritedAt == 0 {
+			favoritedAt = fav.FavoriteTimeMillis()
+		}
+		if exists && old.FavoritedAt != 0 {
+			favoritedAt = old.FavoritedAt
+		}
+		if favoritedAt == 0 {
+			favoritedAt = now
+		}
+		video := core.Video{
+			ID:              fav.VideoID,
+			ChannelID:       fav.ChannelID,
+			ChannelTitle:    fav.ChannelTitle,
+			Title:           fav.Title,
+			FavoritedAt:     favoritedAt,
+			FavoriteChannel: fav.FavoriteGroup,
+		}
+		state.Favorites[fav.VideoID] = core.FavoriteRecord{
+			VideoID:     fav.VideoID,
+			FavoritedAt: favoritedAt,
+			Video:       &video,
+			UpdatedAt:   updatedAt,
+		}
+		changed++
+	}
+	if changed > 0 {
+		state.UpdatedAt = now
+	}
+	return changed, nil
+}
+
+// FavoriteTimeMillis parses the optional RFC3339 field for older backups that
+// predated favoritedAt. A bad value is ignored in favor of the numeric field.
+func (f favoritesBackupVideo) FavoriteTimeMillis() int64 {
+	if f.FavoriteTime == "" {
+		return 0
+	}
+	t, err := time.Parse(time.RFC3339, f.FavoriteTime)
+	if err != nil {
+		return 0
+	}
+	return t.UnixMilli()
+}
+
+func (a *App) ImportFavorites(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
 	}
 	now := time.Now().UnixMilli()
-	for _, v := range payload.Favorites {
-		a.Sync.SetFavorite(v, true, now)
+	state := a.Sync
+	changed, err := ApplyFavoritesBackup(&state, data, now)
+	if err != nil {
+		return 0, err
 	}
-	_ = a.SaveSync()
-	return nil
+	if changed == 0 {
+		return 0, nil
+	}
+	a.Sync = state
+	if err := a.SaveSync(); err != nil {
+		return 0, err
+	}
+	return changed, nil
 }
 
 func (a *App) Refresh(force bool) RefreshOutcome {
