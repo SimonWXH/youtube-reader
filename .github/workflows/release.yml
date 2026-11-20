@@ -1,3 +1,12 @@
+# Release for youtube-reader.
+#
+# This workflow mirrors copyqmac's release policy. A release tag must be exactly
+# "v" plus the version in mygo.json (for example v1.0.0 for version 1.0.0);
+# prerelease-style tags are not accepted until the version in mygo.json includes
+# a prerelease suffix. Every GitHub release created here is deliberately marked
+# prerelease with generated notes. There is no stable-release path in this
+# workflow.
+
 name: Release
 
 on:
@@ -46,6 +55,7 @@ jobs:
       - name: Build app and DMG
         run: go tool mygo build -platform darwin/arm64 -skip-notarize
 
+      # Deliberately always a prerelease; see the policy note at the top.
       - name: Create Release
         env:
           GH_TOKEN: ${{ github.token }}
