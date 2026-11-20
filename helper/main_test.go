@@ -53,25 +53,21 @@ func TestHelperRunNoAPIKeyDoesNotCallNetwork(t *testing.T) {
 	}
 }
 
-func TestQueueOrSaveStateWhenAppHoldsLock(t *testing.T) {
+func TestCommitHelperResultQueuesChannelsWhenAppHoldsLock(t *testing.T) {
 	dir := t.TempDir()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	t.Setenv("HOME", t.TempDir())
 	syncPath := filepath.Join(dir, "sync.json")
-	settings := core.Settings{SyncPath: syncPath, RefreshMinutes: 60}
-	state := core.SyncState{
-		SchemaVersion: 1,
-		Channels:      map[string]core.Channel{},
-		ReadStates:    map[string]map[string]core.ReadRecord{},
-		Favorites:     map[string]core.FavoriteRecord{},
+	if err := writeSettings(dir, core.Settings{SyncPath: syncPath, RefreshMinutes: 60}); err != nil {
+		t.Fatal(err)
 	}
-	lockDir := localLockDirFor(syncPath)
-	lock, err := core.AcquireLock(lockDir)
+	lock, err := core.AcquireLock(localLockDirFor(syncPath))
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer lock.Release()
 	ch := core.Channel{ID: "ch-1", Title: "Channel", UpdatedAt: 99}
-	if err := queueOrSaveState(context.Background(), dir, settings, state, []core.Channel{ch}); err != nil {
+	result := core.RefreshResult{Changed: true, Channels: []core.Channel{ch}, Description: "Refreshed 1 videos"}
+	if err := commitHelperResult(context.Background(), dir, result, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(syncPath); !os.IsNotExist(err) {
@@ -98,24 +94,30 @@ func TestQueueOrSaveStateWhenAppHoldsLock(t *testing.T) {
 	if got := payload.State.Channels["ch-1"].Title; got != "Channel" {
 		t.Fatalf("queued channel title = %q", got)
 	}
-	if err := lock.Release(); err != nil {
-		t.Fatal(err)
+	if len(payload.State.ReadStates) != 0 || len(payload.State.Favorites) != 0 {
+		t.Fatalf("queued stale state: %+v", payload.State)
 	}
 }
 
-func TestQueueOrSaveStateWritesSyncWhenUnlocked(t *testing.T) {
+func TestCommitHelperResultMergesFreshSyncState(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
 	syncPath := filepath.Join(dir, "sync.json")
-	settings := core.Settings{SyncPath: syncPath, RefreshMinutes: 60}
-	state := core.SyncState{
-		SchemaVersion: 1,
-		Channels:      map[string]core.Channel{},
-		ReadStates:    map[string]map[string]core.ReadRecord{},
-		Favorites:     map[string]core.FavoriteRecord{},
+	if err := writeSettings(dir, core.Settings{SyncPath: syncPath, RefreshMinutes: 60}); err != nil {
+		t.Fatal(err)
 	}
-	ch := core.Channel{ID: "ch-1", Title: "Channel", UpdatedAt: 99}
-	if err := queueOrSaveState(context.Background(), dir, settings, state, []core.Channel{ch}); err != nil {
+	current := core.SyncState{
+		SchemaVersion: 1,
+		UpdatedAt:     100,
+		Channels:      map[string]core.Channel{"ch-1": {ID: "ch-1", Title: "Old", UpdatedAt: 1}},
+		ReadStates:    map[string]map[string]core.ReadRecord{"v1": {"device": {VideoID: "v1", DeviceID: "device", Read: true, UpdatedAt: 50}}},
+		Favorites:     map[string]core.FavoriteRecord{"v2": {VideoID: "v2", UpdatedAt: 50}},
+	}
+	if err := core.SaveSyncAtomic(syncPath, current); err != nil {
+		t.Fatal(err)
+	}
+	result := core.RefreshResult{Changed: true, Channels: []core.Channel{{ID: "ch-1", Title: "Channel", UpdatedAt: 200}}}
+	if err := commitHelperResult(context.Background(), dir, result, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := core.LoadSyncWithConflicts(syncPath, "device")
@@ -124,5 +126,51 @@ func TestQueueOrSaveStateWritesSyncWhenUnlocked(t *testing.T) {
 	}
 	if got := loaded.Channels["ch-1"].Title; got != "Channel" {
 		t.Fatalf("written channel title = %q", got)
+	}
+	if !loaded.IsRead("v1") {
+		t.Fatal("concurrent read state was lost")
+	}
+	if _, ok := loaded.Favorites["v2"]; !ok {
+		t.Fatal("concurrent favorite was lost")
+	}
+}
+
+func TestCommitHelperResultLeavesRefreshAndHandoffOwnership(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	syncPath := filepath.Join(dir, "sync.json")
+	last := "2026-03-01T10:00:00Z"
+	if err := writeSettings(dir, core.Settings{SyncPath: syncPath, RefreshMinutes: 240, LastRefresh: last, LastHandoffID: "app-owned"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	failure := core.RefreshFailure{At: now.Format(time.RFC3339), Message: "network unavailable"}
+	if err := commitHelperResult(context.Background(), dir, core.RefreshResult{Failures: []core.RefreshFailure{failure}}, now); err != nil {
+		t.Fatal(err)
+	}
+	settings := loadHelperSettings(dir)
+	if settings.LastRefresh != last || settings.LastHandoffID != "app-owned" {
+		t.Fatalf("failed refresh advanced status: %+v", settings)
+	}
+	if len(settings.RecentFailures) != 1 {
+		t.Fatalf("failures not persisted: %+v", settings.RecentFailures)
+	}
+	if err := commitHelperResult(context.Background(), dir, core.RefreshResult{Changed: true}, now); err != nil {
+		t.Fatal(err)
+	}
+	settings = loadHelperSettings(dir)
+	if settings.LastRefresh != now.Format(time.RFC3339) || settings.NextRefresh != now.Add(240*time.Minute).Format(time.RFC3339) {
+		t.Fatalf("successful refresh status: %+v", settings)
+	}
+	if settings.LastHandoffID != "app-owned" {
+		t.Fatalf("helper changed app-owned handoff ID: %+v", settings)
+	}
+}
+
+func TestEscapeAppleScript(t *testing.T) {
+	got := escapeAppleScript("2 new videos\nA \"quote\" \\ path")
+	want := "2 new videos\\nA \\\"quote\\\" \\\\ path"
+	if got != want {
+		t.Fatalf("escaped = %q, want %q", got, want)
 	}
 }

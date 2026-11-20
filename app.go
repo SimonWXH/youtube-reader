@@ -140,14 +140,52 @@ func (a *App) Close() {
 }
 
 func (a *App) SaveSettings() error {
+	path := filepath.Join(a.Dir, "settings.json")
+	if data, err := os.ReadFile(path); err == nil {
+		var disk core.Settings
+		if json.Unmarshal(data, &disk) == nil && settingsStatusTime(disk).After(settingsStatusTime(a.Settings)) {
+			a.Settings.LastRefresh = disk.LastRefresh
+			a.Settings.NextRefresh = disk.NextRefresh
+			a.Settings.RecentFailures = disk.RecentFailures
+			a.Settings.QuotaPausedUntil = disk.QuotaPausedUntil
+		}
+	}
 	data, err := json.MarshalIndent(a.Settings, "", "  ")
 	if err != nil {
 		return err
 	}
-	return atomicWrite(filepath.Join(a.Dir, "settings.json"), data)
+	return atomicWrite(path, data)
+}
+
+func settingsStatusTime(s core.Settings) time.Time {
+	var latest time.Time
+	for _, raw := range []string{s.LastRefresh, s.QuotaPausedUntil} {
+		if t, err := time.Parse(time.RFC3339, raw); err == nil && t.After(latest) {
+			latest = t
+		}
+	}
+	for _, f := range s.RecentFailures {
+		if t, err := time.Parse(time.RFC3339, f.At); err == nil && t.After(latest) {
+			latest = t
+		}
+	}
+	return latest
+}
+
+func handoffStatusTime(createdAt string, failures []core.RefreshFailure) time.Time {
+	latest, _ := time.Parse(time.RFC3339, createdAt)
+	for _, f := range failures {
+		if t, err := time.Parse(time.RFC3339, f.At); err == nil && t.After(latest) {
+			latest = t
+		}
+	}
+	return latest
 }
 
 func (a *App) SaveSync() error {
+	if current, err := core.LoadSyncWithConflicts(a.Settings.SyncPath, a.DeviceID); err == nil && current.UpdatedAt > a.Sync.UpdatedAt {
+		a.Sync = core.MergeSync(current, a.Sync)
+	}
 	now := time.Now().UnixMilli()
 	if a.Sync.UpdatedAt < now {
 		a.Sync.UpdatedAt = now
@@ -277,8 +315,10 @@ func (a *App) Refresh(force bool) RefreshOutcome {
 	now := time.Now()
 	client := core.YouTube{Key: a.Settings.APIKey}
 	outcome := core.RefreshYoutube(ctx, client, a.Settings, a.Sync, a.Store, a.Videos, a.Revision, force, now)
-	a.Settings.LastRefresh = core.FormatRFC3339(now)
-	a.Settings.NextRefresh = core.FormatRFC3339(now.Add(time.Duration(a.Settings.RefreshMinutes) * time.Minute))
+	if outcome.Changed {
+		a.Settings.LastRefresh = core.FormatRFC3339(now)
+		a.Settings.NextRefresh = core.FormatRFC3339(now.Add(time.Duration(a.Settings.RefreshMinutes) * time.Minute))
+	}
 	a.Settings.RecentFailures = outcome.Failures
 	if containsQuotaFailure(outcome.Failures) {
 		a.Settings.QuotaPausedUntil = core.FormatRFC3339(now.Add(24 * time.Hour))
@@ -387,17 +427,31 @@ func (a *App) ConsumeHandoff() error {
 	if handoff.ID != "" && handoff.ID == a.Settings.LastHandoffID {
 		return nil
 	}
+	fresh := handoffStatusTime(handoff.CreatedAt, handoff.Failures).After(settingsStatusTime(a.Settings))
 	if handoff.Result != nil || handoff.Description != "" {
 		a.LastRefreshMessage = handoff.Description
 	}
 	if len(handoff.Notified) > 0 {
 		a.LastNotified = handoff.Notified
 	}
-	if len(handoff.Failures) > 0 {
+	if fresh && len(handoff.Failures) > 0 {
 		a.Settings.RecentFailures = handoff.Failures
+		if containsQuotaFailure(handoff.Failures) {
+			for _, f := range handoff.Failures {
+				if strings.HasPrefix(f.Message, "quota paused") {
+					if at, err := time.Parse(time.RFC3339, f.At); err == nil {
+						a.Settings.QuotaPausedUntil = core.FormatRFC3339(at.Add(24 * time.Hour))
+					}
+					break
+				}
+			}
+		}
 	}
-	if handoff.CreatedAt != "" {
+	if fresh && handoff.Result != nil && handoff.CreatedAt != "" {
 		a.Settings.LastRefresh = handoff.CreatedAt
+		if at, err := time.Parse(time.RFC3339, handoff.CreatedAt); err == nil {
+			a.Settings.NextRefresh = core.FormatRFC3339(at.Add(time.Duration(a.Settings.RefreshMinutes) * time.Minute))
+		}
 	}
 	a.Settings.LastHandoffID = handoff.ID
 	_ = a.SaveSettings()

@@ -85,6 +85,168 @@ func TestConsumeHandoffAppliesRefreshResults(t *testing.T) {
 	}
 }
 
+func TestConsumeHandoffNoopDoesNotAdvanceRefresh(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+	last := "2026-03-01T10:00:00Z"
+	a.Settings.LastRefresh = last
+	handoff := map[string]any{
+		"id":          "handoff-noop",
+		"createdAt":   "2026-03-01T12:00:00Z",
+		"description": "Up to date",
+	}
+	data, _ := json.Marshal(handoff)
+	if err := os.WriteFile(filepath.Join(dir, "inbox.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ConsumeHandoff(); err != nil {
+		t.Fatal(err)
+	}
+	if a.Settings.LastRefresh != last || a.Settings.LastHandoffID != "handoff-noop" {
+		t.Fatalf("settings: %+v", a.Settings)
+	}
+	if a.LastRefreshMessage != "Up to date" {
+		t.Fatalf("status: %q", a.LastRefreshMessage)
+	}
+}
+
+func TestConsumeHandoffDoesNotRewindNewerRefresh(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+	current := "2026-03-01T12:00:00Z"
+	a.Settings.LastRefresh = current
+	handoff := map[string]any{
+		"id":        "handoff-old",
+		"createdAt": "2026-03-01T10:00:00Z",
+		"result":    core.RefreshResult{Changed: true, Description: "Refreshed 1 videos"},
+	}
+	data, _ := json.Marshal(handoff)
+	if err := os.WriteFile(filepath.Join(dir, "inbox.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ConsumeHandoff(); err != nil {
+		t.Fatal(err)
+	}
+	if a.Settings.LastRefresh != current {
+		t.Fatalf("last refresh rewound: %+v", a.Settings)
+	}
+}
+
+func TestConsumeHandoffQuotaFailurePausesRefresh(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+	handoff := map[string]any{
+		"id":          "handoff-quota",
+		"createdAt":   "2026-03-01T12:00:00Z",
+		"description": "quota paused until 2026-03-02T12:00:00Z",
+		"failures": []core.RefreshFailure{{At: "2026-03-01T12:00:00Z", Message: "quota paused until 2026-03-02T12:00:00Z"}},
+	}
+	data, _ := json.Marshal(handoff)
+	if err := os.WriteFile(filepath.Join(dir, "inbox.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ConsumeHandoff(); err != nil {
+		t.Fatal(err)
+	}
+	if a.Settings.QuotaPausedUntil != "2026-03-02T12:00:00Z" {
+		t.Fatalf("quota pause: %+v", a.Settings)
+	}
+}
+
+func TestRefreshNoopDoesNotAdvanceLastRefresh(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+	last := time.Now().UTC().Format(time.RFC3339)
+	a.Settings.APIKey = "local-key"
+	a.Settings.LastRefresh = last
+	a.Settings.RefreshMinutes = 240
+	outcome := a.Refresh(false)
+	if outcome.Changed || outcome.Description != "Up to date" {
+		t.Fatalf("outcome: %+v", outcome)
+	}
+	if a.Settings.LastRefresh != last {
+		t.Fatalf("last refresh advanced on noop: %+v", a.Settings)
+	}
+}
+
+func TestSaveSettingsPreservesNewerOnDiskStatus(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+	a.Settings.APIKey = "local-key"
+	a.Settings.LastRefresh = "2026-03-01T09:00:00Z"
+	disk := core.Settings{
+		APIKey:      "disk-key",
+		SyncPath:    a.Settings.SyncPath,
+		LastRefresh: "2026-03-01T12:00:00Z",
+	}
+	data, _ := json.Marshal(disk)
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SaveSettings(); err != nil {
+		t.Fatal(err)
+	}
+	loaded := loadTestSettings(t, filepath.Join(dir, "settings.json"))
+	if loaded.APIKey != "local-key" || loaded.LastRefresh != "2026-03-01T12:00:00Z" {
+		t.Fatalf("settings: %+v", loaded)
+	}
+}
+
+func TestSaveSyncMergesNewerOnDiskState(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+	a.DeviceID = "device"
+	a.Sync = core.SyncState{
+		SchemaVersion: 1,
+		UpdatedAt:     10,
+		Channels:      map[string]core.Channel{"local": {ID: "local", Title: "Local", UpdatedAt: 10}},
+		ReadStates:    map[string]map[string]core.ReadRecord{},
+		Favorites:     map[string]core.FavoriteRecord{},
+	}
+	remote := core.SyncState{
+		SchemaVersion: 1,
+		UpdatedAt:     100,
+		Channels:      map[string]core.Channel{"remote": {ID: "remote", Title: "Remote", UpdatedAt: 100}},
+		ReadStates:    map[string]map[string]core.ReadRecord{},
+		Favorites:     map[string]core.FavoriteRecord{},
+	}
+	if err := core.SaveSyncAtomic(a.Settings.SyncPath, remote); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SaveSync(); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := core.LoadSyncWithConflicts(a.Settings.SyncPath, a.DeviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := loaded.Channels["remote"]; !ok {
+		t.Fatalf("remote channel lost: %+v", loaded.Channels)
+	}
+	if _, ok := loaded.Channels["local"]; !ok {
+		t.Fatalf("local channel lost: %+v", loaded.Channels)
+	}
+}
+
+func loadTestSettings(t *testing.T, path string) core.Settings {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings core.Settings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	return settings
+}
+
 func TestDrainQueuedSyncWritesAfterHelper(t *testing.T) {
 	dir := t.TempDir()
 	a := newTestApp(t, dir)

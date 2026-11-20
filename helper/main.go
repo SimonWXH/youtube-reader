@@ -32,12 +32,7 @@ type HelperHandoff struct {
 	Channels    []core.Channel          `json:"channels,omitempty"`
 }
 
-// HelperRun is the injectable core of one helper invocation. It reads local
-// settings and shared state, checks the network, performs the same refresh as
-// the app, commits SQLite in one transaction, queues shared JSON writes while
-// the app holds the flock, posts notifications and writes an atomic handoff.
-func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post func(core.NotificationPlan) error) (HelperHandoff, error) {
-	handoff := HelperHandoff{ID: fmt.Sprintf("helper-%d", now.UnixNano()), CreatedAt: core.FormatRFC3339(now)}
+func loadHelperSettings(dir string) core.Settings {
 	var settings core.Settings
 	if data, err := os.ReadFile(filepath.Join(dir, "settings.json")); err == nil {
 		_ = json.Unmarshal(data, &settings)
@@ -48,6 +43,16 @@ func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post
 	if settings.SyncPath == "" {
 		settings.SyncPath = filepath.Join(dir, "youtube-reader-sync.json")
 	}
+	return settings
+}
+
+// HelperRun is the injectable core of one helper invocation. It reads local
+// settings and shared state, checks the network, performs the same refresh as
+// the app, commits SQLite in one transaction, queues shared JSON writes while
+// the app holds the flock, posts notifications and writes an atomic handoff.
+func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post func(core.NotificationPlan) error) (HelperHandoff, error) {
+	handoff := HelperHandoff{ID: fmt.Sprintf("helper-%d", now.UnixNano()), CreatedAt: core.FormatRFC3339(now)}
+	settings := loadHelperSettings(dir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return handoff, err
 	}
@@ -100,23 +105,12 @@ func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post
 		handoff.Channels = result.Channels
 	}
 
-	// Save settings even when the refresh did nothing: failures and quota
-	// pauses must be visible in the app on the next launch.
-	settings.LastRefresh = core.FormatRFC3339(now)
-	settings.NextRefresh = core.FormatRFC3339(now.Add(time.Duration(settings.RefreshMinutes) * time.Minute))
-	settings.RecentFailures = result.Failures
-	settings.LastHandoffID = handoff.ID
-	if containsQuotaFailure(result.Failures) {
-		settings.QuotaPausedUntil = core.FormatRFC3339(now.Add(24 * time.Hour))
-	}
-	if err := writeSettings(dir, settings); err != nil {
-		return handoff, err
-	}
-
-	// Channel metadata is shared state. While the app holds the local flock
-	// it is queued in SQLite and drained on the app's next launch.
-	if err := queueOrSaveState(ctx, dir, settings, state, result.Channels); err != nil {
-		return handoff, err
+	// Persist failures and quota pauses so they are visible in the app on the
+	// next launch.
+	if result.Changed || len(result.Failures) > 0 {
+		if err := commitHelperResult(ctx, dir, result, now); err != nil {
+			return handoff, err
+		}
 	}
 
 	if result.Changed {
@@ -141,6 +135,37 @@ func containsQuotaFailure(failures []core.RefreshFailure) bool {
 	return false
 }
 
+func mergeHelperSettings(settings core.Settings, result core.RefreshResult, now time.Time) core.Settings {
+	if result.Changed {
+		settings.LastRefresh = core.FormatRFC3339(now)
+		settings.NextRefresh = core.FormatRFC3339(now.Add(time.Duration(settings.RefreshMinutes) * time.Minute))
+	}
+	if result.Changed || len(result.Failures) > 0 {
+		settings.RecentFailures = result.Failures
+	}
+	if containsQuotaFailure(result.Failures) {
+		settings.QuotaPausedUntil = core.FormatRFC3339(now.Add(24 * time.Hour))
+	}
+	return settings
+}
+
+func commitHelperResult(ctx context.Context, dir string, result core.RefreshResult, now time.Time) error {
+	settings := loadHelperSettings(dir)
+	lock, lockErr := core.TryLockDir(localLockDirFor(settings.SyncPath))
+	if lockErr != nil {
+		if !errors.Is(lockErr, os.ErrExist) && !isWouldBlock(lockErr) {
+			return lockErr
+		}
+		return queueHelperChannels(ctx, dir, result.Channels, now)
+	}
+	defer lock.Release()
+	settings = loadHelperSettings(dir)
+	if err := writeSettings(dir, mergeHelperSettings(settings, result, now)); err != nil {
+		return err
+	}
+	return saveHelperChannels(settings.SyncPath, result.Channels, now)
+}
+
 func writeSettings(dir string, settings core.Settings) error {
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -149,39 +174,54 @@ func writeSettings(dir string, settings core.Settings) error {
 	return atomicWriteHelper(filepath.Join(dir, "settings.json"), data)
 }
 
-// queueOrSaveState writes fresh channel metadata to the Syncthing JSON only
-// when the app does not hold the local flock. Otherwise it queues the state
-// in SQLite for the app to merge and save at next launch. Force takeover,
-// used from the app UI, keeps working because the app holds the lock itself.
-func queueOrSaveState(ctx context.Context, dir string, settings core.Settings, state core.SyncState, channels []core.Channel) error {
+func mergeHelperChannels(state *core.SyncState, channels []core.Channel) {
+	for _, ch := range channels {
+		if old, ok := state.Channels[ch.ID]; !ok || ch.UpdatedAt > old.UpdatedAt {
+			state.Channels[ch.ID] = ch
+		}
+	}
+}
+
+// saveHelperChannels merges refreshed channel metadata into the current shared
+// JSON under the local flock so concurrent read/favorite changes survive.
+func saveHelperChannels(syncPath string, channels []core.Channel, now time.Time) error {
 	if len(channels) == 0 {
 		return nil
 	}
-	lockDir := localLockDirFor(settings.SyncPath)
-	lock, lockErr := core.TryLockDir(lockDir)
-	mergeChannels := func() {
-		for _, ch := range channels {
-			if old, ok := state.Channels[ch.ID]; !ok || ch.UpdatedAt > old.UpdatedAt {
-				state.Channels[ch.ID] = ch
-			}
-		}
-		state.UpdatedAt = time.Now().UnixMilli()
+	state, err := core.LoadSyncWithConflicts(syncPath, core.StableDeviceID())
+	if err != nil {
+		return err
 	}
-	if lockErr == nil {
-		defer lock.Release()
-		mergeChannels()
-		return core.SaveSyncAtomic(settings.SyncPath, state)
+	mergeHelperChannels(&state, channels)
+	if millis := now.UnixMilli(); millis > state.UpdatedAt {
+		state.UpdatedAt = millis
 	}
-	if !errors.Is(lockErr, os.ErrExist) && !isWouldBlock(lockErr) {
-		return lockErr
+	return core.SaveSyncAtomic(syncPath, state)
+}
+
+func queuedChannelState(channels []core.Channel, now time.Time) core.SyncState {
+	state := core.SyncState{
+		SchemaVersion: 1,
+		DeviceID:      core.StableDeviceID(),
+		UpdatedAt:     now.UnixMilli(),
+		Channels:      map[string]core.Channel{},
+	}
+	mergeHelperChannels(&state, channels)
+	return state
+}
+
+// queueHelperChannels queues only refreshed channel metadata while the app
+// holds the local flock; the app merges it into its own fresh state on drain.
+func queueHelperChannels(ctx context.Context, dir string, channels []core.Channel, now time.Time) error {
+	if len(channels) == 0 {
+		return nil
 	}
 	store, err := core.OpenStore(ctx, filepath.Join(dir, "videos.sqlite"))
 	if err != nil {
 		return err
 	}
 	defer store.Close()
-	mergeChannels()
-	return store.Queue(ctx, map[string]any{"kind": "sync-state", "state": state})
+	return store.Queue(ctx, map[string]any{"kind": "sync-state", "state": queuedChannelState(channels, now)})
 }
 
 // localLockDirFor mirrors the app's lock location, including its default
@@ -211,9 +251,7 @@ func postHelperNotification(plan core.NotificationPlan) error {
 	// attributes notifications to the process. Ask the app bundle to display
 	// them so they appear under the app's notification settings and keep the
 	// same per-channel identity used while the app is running.
-	scriptBody := strings.ReplaceAll(body, "\\", "\\\\")
-	scriptBody = strings.ReplaceAll(scriptBody, "\"", "\\\"")
-	script := fmt.Sprintf("display notification \"%s\" with title \"%s\" subtitle \"New videos\" sound name \"default\"", scriptBody, escapeAppleScript(plan.ChannelName))
+	script := fmt.Sprintf("display notification \"%s\" with title \"%s\" subtitle \"New videos\" sound name \"default\"", escapeAppleScript(body), escapeAppleScript(plan.ChannelName))
 	cmd := exec.Command("osascript", "-e", fmt.Sprintf("tell application id \"%s\" to %s", notificationBundleID, script))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("osascript: %w: %s", err, out)
@@ -223,7 +261,9 @@ func postHelperNotification(plan core.NotificationPlan) error {
 
 func escapeAppleScript(s string) string {
 	s = strings.ReplaceAll(s, "\\", "\\\\")
-	return strings.ReplaceAll(s, "\"", "\\\"")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	s = strings.ReplaceAll(s, "\r", "\\r")
+	return strings.ReplaceAll(s, "\n", "\\n")
 }
 
 func plural(n int) string {
