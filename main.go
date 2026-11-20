@@ -28,13 +28,10 @@ func realMain() {
 	if err := app.ConsumeHandoff(); err != nil {
 		log.Printf("handoff: %v", err)
 	}
-	// MyGo delivers a notification click from an earlier run before Run once
-	// this listener is registered. Helper notifications are AppleScript based
-	// and carry no ID, so their locally queued channel is the fallback.
+	// Register before Run so MyGo can deliver a click from an earlier run.
+	// AppleScript helper notifications carry no ID; the handler uses the
+	// local queue only after an actual click callback, never on launch.
 	registerNotificationClick(app)
-	if clickChannelID, ok := app.ConsumeNotificationClick(); ok {
-		selectNotificationChannel(app, clickChannelID)
-	}
 	if err := app.DrainQueuedSyncWrites(); err != nil {
 		log.Printf("sync queue: %v", err)
 	}
@@ -116,11 +113,18 @@ func registerNotificationClick(app *App) (off func()) {
 
 func notificationClickHandler(app *App) func(string) {
 	return func(id string) {
-		channelID, ok := core.ChannelFromNotificationID(id)
-		if !ok {
+		if channelID, ok := core.ChannelFromNotificationID(id); ok {
+			selectNotificationChannel(app, channelID)
 			return
 		}
-		selectNotificationChannel(app, channelID)
+		if id != "" {
+			return
+		}
+		// A helper's AppleScript notification has no ID. Only a real click
+		// callback reaches here, so consuming one queued post is safe.
+		if channelID, ok := app.ConsumeNotificationClick(); ok {
+			selectNotificationChannel(app, channelID)
+		}
 	}
 }
 

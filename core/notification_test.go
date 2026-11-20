@@ -2,6 +2,7 @@ package core
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -42,47 +43,65 @@ func TestNewNotificationClicksOnePerChannelPlan(t *testing.T) {
 
 func TestLatestNotificationClickPicksNewestAndLeavesOlderEntries(t *testing.T) {
 	queue := NotificationClicks{Clicks: []NotificationClick{
-		{ID: "old", Timestamp: "2026-03-01T11:00:00Z"},
-		{ID: "new", Timestamp: "2026-03-01T12:00:00Z"},
-		{ID: "unknown", Timestamp: "bad"},
+		{ID: "ytreader-channel-ch-1", ChannelID: "ch-1", Timestamp: "2026-03-01T11:00:00Z"},
+		{ID: "ytreader-channel-ch-2", ChannelID: "ch-2", Timestamp: "2026-03-01T12:00:00Z"},
 	}}
-	latest, tail := LatestNotificationClick(queue)
-	if latest.ID != "new" {
+	latest, tail, err := LatestNotificationClick(queue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.ID != "ytreader-channel-ch-2" {
 		t.Fatalf("latest = %+v", latest)
 	}
-	if len(tail.Clicks) != 2 || tail.Clicks[0].ID != "old" || tail.Clicks[1].ID != "unknown" {
+	if len(tail.Clicks) != 1 || tail.Clicks[0].ID != "ytreader-channel-ch-1" {
 		t.Fatalf("tail = %+v", tail)
 	}
-	if len(queue.Clicks) != 3 {
-		t.Fatalf("input queue was modified: %+v", queue.Clicks)
+	empty, tail, err := LatestNotificationClick(NotificationClicks{})
+	if err != nil {
+		t.Fatal(err)
 	}
-	empty, tail := LatestNotificationClick(NotificationClicks{})
 	if empty.ID != "" || len(tail.Clicks) != 0 {
 		t.Fatalf("empty queue = %+v, %+v", empty, tail)
 	}
 }
 
-func TestNotificationClickAfterComparesTimestampBeforeID(t *testing.T) {
-	older := NotificationClick{ID: "ytreader-channel-ch-2", Timestamp: "2026-03-01T11:00:00Z"}
-	newer := NotificationClick{ID: "ytreader-channel-ch-1", Timestamp: "2026-03-01T12:00:00Z"}
-	watermark := NotificationClickKey(older)
-	if !NotificationClickAfter(newer, watermark) {
-		t.Fatal("newer post from lexically lower channel was rejected")
+func TestNotificationClickKeyComparesTimestampBeforeID(t *testing.T) {
+	older := NotificationClick{ID: "ytreader-channel-ch-2", ChannelID: "ch-2", Timestamp: "2026-03-01T11:00:00Z"}
+	newer := NotificationClick{ID: "ytreader-channel-ch-1", ChannelID: "ch-1", Timestamp: "2026-03-01T12:00:00Z"}
+	key := NotificationClickKey(older)
+	if !strings.HasPrefix(key, older.Timestamp) {
+		t.Fatalf("key %q does not begin with timestamp", key)
 	}
-	if NotificationClickAfter(older, watermark) {
-		t.Fatal("previous post was not deduped")
+	if NotificationClickKey(newer) <= key {
+		t.Fatal("timestamp ordering is not lexical")
 	}
-	sameTimeNewerID := NotificationClick{ID: "ytreader-channel-ch-3", Timestamp: "2026-03-01T11:00:00Z"}
-	if !NotificationClickAfter(sameTimeNewerID, watermark) {
-		t.Fatal("same-time tie was not broken by ID")
+	queue := NotificationClicks{Clicks: []NotificationClick{newer, older}}
+	latest, tail, err := LatestNotificationClick(queue)
+	if err != nil {
+		t.Fatal(err)
 	}
-	sameTimeOlderID := NotificationClick{ID: "ytreader-channel-ch-1", Timestamp: "2026-03-01T11:00:00Z"}
-	if NotificationClickAfter(sameTimeOlderID, watermark) {
-		t.Fatal("same-time lower ID was accepted")
-	}
-	queue := NotificationClicks{Clicks: []NotificationClick{older, newer}}
-	latest, _ := LatestNotificationClick(queue)
 	if latest.ID != newer.ID {
 		t.Fatalf("latest = %+v", latest)
+	}
+	if len(tail.Clicks) != 1 || tail.Clicks[0].ID != older.ID {
+		t.Fatalf("tail = %+v", tail.Clicks)
+	}
+}
+
+func TestNotificationClicksRejectCorruptQueue(t *testing.T) {
+	for name, queue := range map[string]NotificationClicks{
+		"bad ID":   {Clicks: []NotificationClick{{ID: "unrelated", ChannelID: "ch-1", Timestamp: "2026-03-01T12:00:00Z"}}},
+		"mismatch": {Clicks: []NotificationClick{{ID: "ytreader-channel-ch-2", ChannelID: "ch-1", Timestamp: "2026-03-01T12:00:00Z"}}},
+		"bad time": {Clicks: []NotificationClick{{ID: "ytreader-channel-ch-1", ChannelID: "ch-1", Timestamp: "bad"}}},
+		"duplicate": {Clicks: []NotificationClick{
+			{ID: "ytreader-channel-ch-1", ChannelID: "ch-1", Timestamp: "2026-03-01T12:00:00Z"},
+			{ID: "ytreader-channel-ch-1", ChannelID: "ch-1", Timestamp: "2026-03-01T12:00:00Z"},
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := LatestNotificationClick(queue); err == nil {
+				t.Fatal("corrupt queue was accepted")
+			}
+		})
 	}
 }

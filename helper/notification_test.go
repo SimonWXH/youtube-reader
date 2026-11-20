@@ -84,7 +84,7 @@ func TestHelperRunRecordsClickHandoffWhenNotified(t *testing.T) {
 	}
 	h, err := HelperRun(context.Background(), dir, false, now, func(plan core.NotificationPlan) error {
 		postCalls++
-		return queueNotificationClicks(dir, []core.NotificationPlan{plan}, now)
+		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
