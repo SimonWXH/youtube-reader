@@ -474,7 +474,8 @@ func (a *App) notificationClicksPath() string {
 
 // RecordNotificationClicks appends notification handoff entries after
 // dropping duplicates and entries older than the last one this app consumed.
-// Stale entries from previous runs must not reroute a later launch.
+// Stale entries from previous runs must not reroute a later launch. Watermarks
+// written by older builds sort by ID and are treated as unknown.
 func (a *App) RecordNotificationClicks(clicks []core.NotificationClick) error {
 	path := a.notificationClicksPath()
 	queue := core.NotificationClicks{}
@@ -490,7 +491,7 @@ func (a *App) RecordNotificationClicks(clicks []core.NotificationClick) error {
 	last := a.Settings.LastNotificationClick
 	for _, click := range clicks {
 		key := core.NotificationClickKey(click)
-		if _, ok := core.ChannelFromNotificationID(click.ID); !ok || click.ChannelID == "" || key < last || known[key] {
+		if _, ok := core.ChannelFromNotificationID(click.ID); !ok || click.ChannelID == "" || !core.NotificationClickAfter(click, last) || known[key] {
 			continue
 		}
 		queue.Clicks = append(queue.Clicks, click)
@@ -504,8 +505,8 @@ func (a *App) RecordNotificationClicks(clicks []core.NotificationClick) error {
 }
 
 // ConsumeNotificationClick selects the newest locally queued notification and
-// leaves older entries for later clicks. It dedupes by notification ID and
-// post timestamp, and persists the consumed key in local settings so a
+// leaves older entries for later clicks. It dedupes by post timestamp and
+// notification ID, and persists the consumed key in local settings so a
 // duplicate handoff cannot route the same notification twice.
 func (a *App) ConsumeNotificationClick() (string, bool) {
 	path := a.notificationClicksPath()
@@ -519,7 +520,7 @@ func (a *App) ConsumeNotificationClick() (string, bool) {
 	}
 	latest, tail := core.LatestNotificationClick(queue)
 	key := core.NotificationClickKey(latest)
-	if _, ok := core.ChannelFromNotificationID(latest.ID); !ok || latest.ChannelID == "" || key <= a.Settings.LastNotificationClick {
+	if _, ok := core.ChannelFromNotificationID(latest.ID); !ok || latest.ChannelID == "" || !core.NotificationClickAfter(latest, a.Settings.LastNotificationClick) {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			log.Printf("notification click queue: %v", err)
 		}

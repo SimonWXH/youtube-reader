@@ -70,6 +70,25 @@ func TestConsumeNotificationClickRoutesNewestChannel(t *testing.T) {
 	}
 }
 
+func TestConsumeNotificationClickNewerChannelAfterOlderWatermark(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+	a.Channels = []core.Channel{{ID: "ch-1"}}
+	older := core.NewNotificationClick(core.NotificationPlan{ChannelID: "ch-2"}, mustTime(t, "2026-03-01T11:00:00Z"))
+	a.Settings.LastNotificationClick = core.NotificationClickKey(older)
+	newer := core.NewNotificationClick(core.NotificationPlan{ChannelID: "ch-1"}, mustTime(t, "2026-03-01T12:00:00Z"))
+	writeNotificationClickQueue(t, dir, newer)
+
+	if err := a.RecordNotificationClicks([]core.NotificationClick{newer}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := a.ConsumeNotificationClick()
+	if !ok || got != "ch-1" {
+		t.Fatalf("consume newer channel = %q, %v", got, ok)
+	}
+}
+
 func TestConsumeNotificationClickSkipsDuplicateAndMalformedEntries(t *testing.T) {
 	dir := t.TempDir()
 	a := newTestApp(t, dir)
@@ -137,5 +156,28 @@ func TestNotificationClickIDRoutesChannelFromApp(t *testing.T) {
 	channelID, ok := core.ChannelFromNotificationID(core.ChannelNotificationID("ch-1"))
 	if !ok || !a.SelectChannel(channelID) || a.Selected != "channel:ch-1" {
 		t.Fatalf("id route: %q %v %q", channelID, ok, a.Selected)
+	}
+}
+
+func TestRecordNotificationClicksRejectsOlderPost(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+	newer := core.NewNotificationClick(core.NotificationPlan{ChannelID: "ch-2"}, mustTime(t, "2026-03-01T12:00:00Z"))
+	a.Settings.LastNotificationClick = core.NotificationClickKey(newer)
+	older := core.NewNotificationClick(core.NotificationPlan{ChannelID: "ch-1"}, mustTime(t, "2026-03-01T11:00:00Z"))
+	if err := a.RecordNotificationClicks([]core.NotificationClick{older}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "notification-clicks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var queue core.NotificationClicks
+	if err := json.Unmarshal(data, &queue); err != nil {
+		t.Fatal(err)
+	}
+	if len(queue.Clicks) != 0 {
+		t.Fatalf("stale click was recorded: %+v", queue.Clicks)
 	}
 }

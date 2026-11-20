@@ -66,19 +66,17 @@ func NewNotificationClicks(plans []NotificationPlan, at time.Time) []Notificatio
 }
 
 // LatestNotificationClick returns the most recent queued click and the queue
-// containing every older entry. Ties keep the last queued entry. Entries with
-// unparsable timestamps sort before valid ones so they cannot override a newer
-// click, but remain in the returned tail for dedupe.
+// containing every older entry. Ties use notification ID order. Entries with
+// unparsable timestamps are ignored for selection, but remain in the returned
+// tail for dedupe.
 func LatestNotificationClick(queue NotificationClicks) (NotificationClick, NotificationClicks) {
 	if len(queue.Clicks) == 0 {
 		return NotificationClick{}, NotificationClicks{}
 	}
 	best := 0
-	bestTime := time.Time{}
-	for i, click := range queue.Clicks {
-		at, err := time.Parse(time.RFC3339, click.Timestamp)
-		if err == nil && (bestTime.IsZero() || !at.Before(bestTime)) {
-			best, bestTime = i, at
+	for i := 1; i < len(queue.Clicks); i++ {
+		if NotificationClickAfter(queue.Clicks[i], NotificationClickKey(queue.Clicks[best])) {
+			best = i
 		}
 	}
 	tail := NotificationClicks{Clicks: make([]NotificationClick, 0, len(queue.Clicks)-1)}
@@ -88,6 +86,33 @@ func LatestNotificationClick(queue NotificationClicks) (NotificationClick, Notif
 }
 
 // NotificationClickKey is the local dedupe key for one posted notification.
+// It starts with the RFC3339 timestamp so lexically ordered keys are also
+// chronologically ordered.
 func NotificationClickKey(click NotificationClick) string {
-	return click.ID + "\x00" + click.Timestamp
+	return click.Timestamp + "\x00" + click.ID
+}
+
+// NotificationClickAfter reports whether a click is newer than a persisted
+// dedupe key. Legacy ID-first watermarks from earlier builds sort by ID and
+// cannot be interpreted chronologically, so they are treated as unknown.
+func NotificationClickAfter(click NotificationClick, watermark string) bool {
+	at, err := time.Parse(time.RFC3339, click.Timestamp)
+	if err != nil {
+		return false
+	}
+	if watermark == "" {
+		return true
+	}
+	timestamp, _, ok := strings.Cut(watermark, "\x00")
+	if !ok {
+		return true
+	}
+	lastAt, err := time.Parse(time.RFC3339, timestamp)
+	if err != nil {
+		return true
+	}
+	if !at.Equal(lastAt) {
+		return at.After(lastAt)
+	}
+	return NotificationClickKey(click) > watermark
 }

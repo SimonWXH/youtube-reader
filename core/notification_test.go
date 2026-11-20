@@ -61,3 +61,28 @@ func TestLatestNotificationClickPicksNewestAndLeavesOlderEntries(t *testing.T) {
 		t.Fatalf("empty queue = %+v, %+v", empty, tail)
 	}
 }
+
+func TestNotificationClickAfterComparesTimestampBeforeID(t *testing.T) {
+	older := NotificationClick{ID: "ytreader-channel-ch-2", Timestamp: "2026-03-01T11:00:00Z"}
+	newer := NotificationClick{ID: "ytreader-channel-ch-1", Timestamp: "2026-03-01T12:00:00Z"}
+	watermark := NotificationClickKey(older)
+	if !NotificationClickAfter(newer, watermark) {
+		t.Fatal("newer post from lexically lower channel was rejected")
+	}
+	if NotificationClickAfter(older, watermark) {
+		t.Fatal("previous post was not deduped")
+	}
+	sameTimeNewerID := NotificationClick{ID: "ytreader-channel-ch-3", Timestamp: "2026-03-01T11:00:00Z"}
+	if !NotificationClickAfter(sameTimeNewerID, watermark) {
+		t.Fatal("same-time tie was not broken by ID")
+	}
+	sameTimeOlderID := NotificationClick{ID: "ytreader-channel-ch-1", Timestamp: "2026-03-01T11:00:00Z"}
+	if NotificationClickAfter(sameTimeOlderID, watermark) {
+		t.Fatal("same-time lower ID was accepted")
+	}
+	queue := NotificationClicks{Clicks: []NotificationClick{older, newer}}
+	latest, _ := LatestNotificationClick(queue)
+	if latest.ID != newer.ID {
+		t.Fatalf("latest = %+v", latest)
+	}
+}
