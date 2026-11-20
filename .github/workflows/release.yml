@@ -1,0 +1,77 @@
+# Release for youtube-reader.
+#
+# This workflow mirrors copyqmac's release policy. A release tag must be exactly
+# "v" plus the version in mygo.json (for example v1.0.0 for version 1.0.0);
+# prerelease-style tags are not accepted until the version in mygo.json includes
+# a prerelease suffix. Every GitHub release created here is deliberately marked
+# prerelease. The release task owns .github/release-notes.md; generated notes
+# are a guarded fallback only when that file is absent. There is no
+# stable-release path in this workflow.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Check tag matches version in mygo.json
+        env:
+          VERSION_FILE: mygo.json
+        run: |
+          VERSION=$(jq -r '.version' "${VERSION_FILE}")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "${VERSION}" ] || [ "${VERSION}" = "null" ]; then
+            echo "No version in ${VERSION_FILE}" >&2
+            exit 1
+          fi
+          if [ "${TAG_VERSION}" != "${VERSION}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match ${VERSION_FILE} version ${VERSION}" >&2
+            exit 1
+          fi
+
+      - name: Build helper
+        run: ./Scripts/build-helper.sh
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build app and DMG
+        run: go tool mygo build -platform darwin/arm64 -skip-notarize
+
+      # Deliberately always a prerelease; see the policy note at the top.
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DMG_FILE=$(find dist/darwin-arm64 -maxdepth 1 -name 'youtube-reader-*-arm64.dmg' -type f -print -quit)
+          if [ -z "${DMG_FILE}" ] || [ ! -f "${DMG_FILE}" ]; then
+            echo "Expected DMG under dist/darwin-arm64 was not found" >&2
+            exit 1
+          fi
+
+          NOTES_FILE=".github/release-notes.md"
+          NOTES_ARGS=(--notes-file "${NOTES_FILE}")
+          if [ ! -f "${NOTES_FILE}" ]; then
+            NOTES_ARGS=(--generate-notes)
+          fi
+          gh release create "${GITHUB_REF_NAME}" "${DMG_FILE}" \
+            "${NOTES_ARGS[@]}" \
+            --prerelease

@@ -19,6 +19,12 @@ The build produces `dist/darwin-arm64/YouTube Reader.app` and `dist/darwin-arm64
 
 The standalone background helper is built into `Contents/Resources/ytreader-helper` by `Scripts/build-helper.sh`. Run that script after changing `helper/`, then build the app.
 
+## Continuous integration and releases
+
+`.github/workflows/ci.yml` is the pull-request gate: it builds, vets, tests and builds the app and DMG on a macOS arm64 runner using the Go version from `go.mod`. Pull requests that change only Markdown files still report the required `verify` check, but skip the build and tests. There is no `push` trigger; after a direct push to `main` or a merge whose tree differs from the tested pull-request head, start CI manually with `workflow_dispatch`.
+
+`.github/workflows/release.yml` runs on pushed `v*` tags. The tag must be exactly `v` plus the `version` in `mygo.json` (for example `v1.0.0` for version `1.0.0`), so prerelease-style tags are not supported while `mygo.json` holds a stable version. Releases follow copyqmac's deliberate prerelease-only policy: the workflow attaches the arm64 DMG and release notes from `.github/release-notes.md` (falling back to GitHub-generated notes only when that file is absent) to a GitHub prerelease. There is no stable-release path. Release builds use the same `go tool mygo build` command described above.
+
 ## Features
 
 - OPML import preserving group hierarchy, duplicate channel memberships and channel merge by ID. Imports never delete existing channels. Multiple OPML files can be selected.
