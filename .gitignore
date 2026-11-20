@@ -3,3 +3,8 @@
 *.xcodeproj/xcuserdata/
 *.xcodeproj/project.xcworkspace/xcuserdata/
 DerivedData/
+
+# MyGo
+dist/
+.mygo/
+resources/darwin/ytreader-helper
