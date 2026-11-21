@@ -50,7 +50,7 @@ type Tokens struct {
 	BorderSoft ui.Color // BorderSoft is the lighter card outline and in-group rule.
 	Text       ui.Color // Text is body copy and titles.
 	Muted      ui.Color // Muted is secondary copy and metadata.
-	Faint      ui.Color // Faint is third-level text on the card surface only; never on the sidebar or app background.
+	Faint      ui.Color // Faint is third-level text on the card surface only, plus the disabled-state label; never on the sidebar or app background.
 	Accent     ui.Color // Accent is the only highlight: primary fill, selection, links, the unwatched dot.
 	AccentText ui.Color // AccentText sits on an Accent fill.
 	AccentSoft ui.Color // AccentSoft is the selected-row and segmented-control fill.
@@ -106,24 +106,14 @@ func NewTokens(base *ui.Theme, prefersDark bool) Tokens {
 	}
 }
 
-// Space maps to the app's 4 pt baseline grid.
+// Space maps to the app's 4 pt baseline grid: 4 inline, 8 tight, 12 item,
+// 16 panel, 20 section, 24 block, 32 margin, 40 large, 48 wide. New work uses
+// only these steps; the existing Gap(5) in grid.go and Gap(2) in toolbar.go are
+// kept for now.
 func Space(n float32) float32 { return 4 * n }
 
-// Spacing steps. Every gap, padding, and margin sits on this 4 pt ladder; the
-// role names say where each step belongs.
-const (
-	SpaceInline  float32 = 4  // icon to label, and within a tightly bound pair
-	SpaceTight   float32 = 8  // between buttons, toolbar icons, and form fields
-	SpaceItem    float32 = 12 // between items inside one group or panel
-	SpacePanel   float32 = 16 // panel padding and the gap between groups
-	SpaceSection float32 = 20 // between blocks in the detail pane
-	SpaceBlock   float32 = 24 // between settings groups
-	SpaceMargin  float32 = 32 // window and empty-state margins
-	SpaceLarge   float32 = 40 // a large block, used sparingly
-	SpaceWide    float32 = 48 // the widest rhythm step
-)
-
-// Radii. Corners never leave these five values; avatars alone use a 50% circle.
+// Radii. New work keeps corners to these five values. The 50% circles in the
+// tree are avatars and the unwatched dot, and are the only exceptions.
 const (
 	RadiusCheck   float32 = 3  // check boxes and tiny marks
 	RadiusControl float32 = 6  // buttons, inputs, selects, and sidebar rows
