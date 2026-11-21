@@ -1,8 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"testing"
+	"time"
+
+	"github.com/egoist/mygo/ui"
+	"github.com/simon/youtube-reader/core"
 )
 
 func TestFitPaneWidths(t *testing.T) {
@@ -202,4 +207,158 @@ func abs(v float32) float32 {
 		return -v
 	}
 	return v
+}
+
+// TestGridFocusScroll pins when the grid brings the card under the keyboard
+// ring into view: whenever the grid takes the keyboard focus, and when the
+// card under the ring changes while the grid keeps it. The user's own wheel
+// scroll moves neither, so it is not undone.
+func TestGridFocusScroll(t *testing.T) {
+	cases := []struct {
+		name                string
+		focused, wasFocused bool
+		focusIndex, last    int
+		want                bool
+	}{
+		{"focus arrives on the first card", true, false, 0, 0, true},
+		{"focus arrives on a chosen card", true, false, 42, 42, true},
+		{"focus arrives after the user scrolled away", true, false, 0, 42, true},
+		{"focus kept, a wheel scroll leaves the card", true, true, 42, 42, false},
+		{"focus kept, a filter moved the chosen card", true, true, 12, 42, true},
+		{"focus kept, the selection was cleared", true, true, 0, 42, true},
+		{"focus lost", false, true, 42, 42, false},
+		{"unfocused, the target moved", false, false, 0, 42, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := gridFocusScroll(tc.focused, tc.wasFocused, tc.focusIndex, tc.last)
+			if got != tc.want {
+				t.Fatalf("gridFocusScroll(focused %v, was %v, index %d, last %d) = %v; want %v",
+					tc.focused, tc.wasFocused, tc.focusIndex, tc.last, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestGridTabRevealsFirstCard scrolls the grid away from its first card and
+// checks that tabbing to the grid, with nothing chosen, brings that card back:
+// it is where the keyboard ring lands, and the ring must be visible.
+func TestGridTabRevealsFirstCard(t *testing.T) {
+	videos := make([]core.Video, 120)
+	for i := range videos {
+		videos[i] = core.Video{
+			ID:           fmt.Sprintf("video-%d", i),
+			Title:        fmt.Sprintf("Video %d", i),
+			ChannelID:    "ch-1",
+			ChannelTitle: "Channel",
+			PublishedAt:  time.Now().Add(-time.Duration(i) * time.Hour).UTC().Format(time.RFC3339),
+		}
+	}
+	a := &App{
+		Dir:      t.TempDir(),
+		Selected: "all",
+		Settings: core.Settings{
+			APIKey:         "test-key",
+			ExpandedGroups: map[string]bool{},
+			MaxGridColumns: defaultMaxGridColumns,
+			RefreshMinutes: 60,
+		},
+		Sync: core.SyncState{
+			Favorites:  map[string]core.FavoriteRecord{},
+			ReadStates: map[string]map[string]core.ReadRecord{},
+			Groups:     map[string]core.ChannelGroup{},
+			Channels:   map[string]core.Channel{"ch-1": {ID: "ch-1", Title: "Channel"}},
+		},
+		Channels: []core.Channel{{ID: "ch-1", Title: "Channel"}},
+		Videos:   videos,
+	}
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 840)
+	tt.Frame()
+	first, ok := tt.Find("Video 0")
+	if !ok {
+		t.Fatalf("the grid does not show its first card: %q", tt.Texts())
+	}
+	x, y := first.X+first.W/2, first.Y+first.H/2
+	for range 15 {
+		tt.Wheel(x, y, 0, 100)
+		tt.Advance(200 * time.Millisecond)
+	}
+	if _, ok := tt.Find("Video 0"); ok {
+		t.Fatal("the wheel did not scroll the first card away")
+	}
+	for range 60 {
+		tt.Key(0, ui.KeyTab)
+		if _, ok := tt.Find("Video 0"); ok {
+			return
+		}
+	}
+	t.Fatal("tabbing to the grid did not bring the first card into view")
+}
+
+// TestGridFocusFollowsMovedSelection keeps the grid's keyboard focus on a
+// chosen video, then reverses the list so that video moves to the first card
+// while the grid still shows the end. The ring follows the video, so the grid
+// must scroll back to the card it now marks.
+func TestGridFocusFollowsMovedSelection(t *testing.T) {
+	videos := make([]core.Video, 120)
+	for i := range videos {
+		videos[i] = core.Video{
+			ID:           fmt.Sprintf("video-%d", i),
+			Title:        fmt.Sprintf("Video %d", i),
+			ChannelID:    "ch-1",
+			ChannelTitle: "Channel",
+			PublishedAt:  time.Now().Add(-time.Duration(i) * time.Hour).UTC().Format(time.RFC3339),
+		}
+	}
+	a := &App{
+		Dir:      t.TempDir(),
+		Selected: "all",
+		Settings: core.Settings{
+			APIKey:         "test-key",
+			ExpandedGroups: map[string]bool{},
+			MaxGridColumns: defaultMaxGridColumns,
+			RefreshMinutes: 60,
+		},
+		Sync: core.SyncState{
+			Favorites:  map[string]core.FavoriteRecord{},
+			ReadStates: map[string]map[string]core.ReadRecord{},
+			Groups:     map[string]core.ChannelGroup{},
+			Channels:   map[string]core.Channel{"ch-1": {ID: "ch-1", Title: "Channel"}},
+		},
+		Channels: []core.Channel{{ID: "ch-1", Title: "Channel"}},
+		Videos:   videos,
+	}
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 840)
+	tt.Frame()
+	if err := tt.Click("Video 3"); err != nil {
+		t.Fatalf("click a card: %v", err)
+	}
+	if a.SelectedVideoID != videos[3].ID {
+		t.Fatalf("the click chose %q; want %q", a.SelectedVideoID, videos[3].ID)
+	}
+	for range 60 {
+		tt.Key(0, ui.KeyTab)
+		if w.gridKeyboardFocus {
+			break
+		}
+	}
+	if !w.gridKeyboardFocus {
+		t.Fatal("Tab did not reach the grid")
+	}
+	tt.Key(0, ui.KeyEnd)
+	if want := videos[len(videos)-1].ID; a.SelectedVideoID != want {
+		t.Fatalf("End on the grid chose %q; want %q", a.SelectedVideoID, want)
+	}
+	if !w.gridKeyboardFocus {
+		t.Fatal("the grid lost the keyboard focus")
+	}
+	for i, j := 0, len(a.Videos)-1; i < j; i, j = i+1, j-1 {
+		a.Videos[i], a.Videos[j] = a.Videos[j], a.Videos[i]
+	}
+	tt.Frame()
+	if _, ok := tt.Find("Video 116"); !ok {
+		t.Fatalf("the grid did not follow the chosen card to its new place: %q", tt.Texts())
+	}
 }

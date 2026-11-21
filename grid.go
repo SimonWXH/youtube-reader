@@ -97,19 +97,20 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 				w.app.SelectedVideoID = ""
 			}
 		}
+		lastIndex := 0
+		if w.grid.Selected != nil {
+			lastIndex = max(*w.grid.Selected, 0)
+		}
 		w.selectedIndex = &target
 		w.grid.Selected = w.selectedIndex
 		metrics := gridCardMetrics(w.gridContentWidth(padding), gap, w.app.settingsSnapshot().MaxGridColumns)
-		focusIndex := target
-		if focusIndex < 0 {
-			focusIndex = 0
-		}
+		focusIndex := max(target, 0)
 		// The ring belongs to the chosen card, or to the first card while the
 		// grid has the keyboard focus and nothing is chosen yet.
 		grid := ui.GridView(c, &w.grid, len(videos), metrics.gridMinWidth(gap), metrics.Height, func(i int) {
 			w.videoCard(c, t, i, focusIndex, videos[i], metrics)
 		}).Padding(gridDecorInset).FocusRing(false).Grow(1)
-		w.trackGridFocus(c, grid)
+		w.trackGridFocus(c, grid, focusIndex, lastIndex)
 		if grid.Changed() {
 			if w.grid.Selected != nil && *w.grid.Selected < len(videos) {
 				w.app.SelectedVideoID = videos[*w.grid.Selected].ID
@@ -119,15 +120,27 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 }
 
 // trackGridFocus keeps whether the grid shows the keyboard focus, which the
-// cards read while they build, before the grid itself exists in the pass. A
-// change asks for the pass that paints it.
-func (w *Window) trackGridFocus(c *ui.Context, grid ui.Element) {
+// cards read while they build, before the grid itself exists in the pass, and
+// brings the ring's card into view when the grid takes the focus or the card
+// under the ring changes. A change asks for the pass that paints it.
+func (w *Window) trackGridFocus(c *ui.Context, grid ui.Element, focusIndex, lastIndex int) {
 	focused := grid.FocusVisible()
+	if gridFocusScroll(focused, w.gridKeyboardFocus, focusIndex, lastIndex) {
+		w.grid.ScrollIntoView(focusIndex)
+	}
 	if focused == w.gridKeyboardFocus {
 		return
 	}
 	w.gridKeyboardFocus = focused
 	c.AnimationFrame()
+}
+
+// gridFocusScroll reports whether the ring's card must be scrolled into view:
+// when the grid takes the keyboard focus, and when the card under the ring
+// changes as it keeps it, as a filter moves the chosen card. Neither moves for
+// the user's own scrolling, which the ring leaves alone.
+func gridFocusScroll(focused, wasFocused bool, focusIndex, lastIndex int) bool {
+	return focused && (!wasFocused || focusIndex != lastIndex)
 }
 
 // gridContentWidth is the width the cards have to fill: the grid pane on this

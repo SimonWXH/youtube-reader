@@ -38,7 +38,7 @@ func Thumbnail(c *ui.Context, tokens Tokens, url string, w, h float32) {
 	if url != "" {
 		src, err := netimage.Load(c, url, netimage.Options{MaxSide: thumbMaxSide(w)})
 		if src != nil {
-			thumbnailFrame(ui.Image(c, src).Fit(ui.Cover).Role(ui.RoleImage), w, h)
+			thumbnailFrame(netimage.Image(c, url, netimage.Options{MaxSide: thumbMaxSide(w)}), w, h)
 			return
 		}
 		if err != nil {
