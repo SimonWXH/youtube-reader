@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/simon/youtube-reader/core"
@@ -82,6 +83,8 @@ func TestDetailErrorRetryReloadsTheStore(t *testing.T) {
 	a := newTestApp(t, t.TempDir())
 	defer a.Close()
 	a.Selected = "all"
+	a.Settings.APIKey = "test-key"
+	a.Sync.Channels["ch-1"] = core.Channel{ID: "ch-1", Title: "Channel"}
 	video := core.Video{ID: "v-gone", ChannelID: "ch-1", ChannelTitle: "Channel", Title: "A video that vanishes"}
 
 	if err := a.Store.CommitRefresh(ctx, core.RefreshCommit{Videos: []core.Video{video}}); err != nil {
@@ -106,6 +109,11 @@ func TestDetailErrorRetryReloadsTheStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
+	if a.SelectedVideoID != "" {
+		t.Fatalf("the grid did not clear the removed selection: %q", a.SelectedVideoID)
+	}
+	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
 	tt.Frame()
 	if !tt.HasText("Couldn't load this video") {
 		t.Fatalf("a selection missing from the list shows no error: %q", tt.Texts())
