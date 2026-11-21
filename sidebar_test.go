@@ -109,6 +109,62 @@ func absDiff(a, b int) int {
 	return b - a
 }
 
+// TestSidebarCountsMatchTheirDestination pins the invariant the sidebar
+// comment states: each row's count equals the videos its destination shows.
+// The scenarios cover a favorite that is only in the sync file, a favorited
+// Short while Shorts are hidden, and the channel, unread and search filters.
+func TestSidebarCountsMatchTheirDestination(t *testing.T) {
+	favorite := core.Video{ID: "fav", ChannelID: "ch-a", Title: "Favourite"}
+	plain := core.Video{ID: "plain", ChannelID: "ch-b", Title: "Plain"}
+	shortFavorite := core.Video{ID: "short-fav", ChannelID: "ch-a", Title: "Short favourite", IsShort: true}
+	readFavorite := core.Video{ID: "read-fav", ChannelID: "ch-b", Title: "Read favourite"}
+	a := &App{
+		Dir:      t.TempDir(),
+		Selected: "favorites",
+		Settings: core.Settings{ExpandedGroups: map[string]bool{}},
+		Sync: core.SyncState{
+			Favorites: map[string]core.FavoriteRecord{
+				favorite.ID:      {VideoID: favorite.ID},
+				shortFavorite.ID: {VideoID: shortFavorite.ID},
+				readFavorite.ID:  {VideoID: readFavorite.ID},
+				"backup-only":    {VideoID: "backup-only"},
+			},
+			ReadStates: map[string]map[string]core.ReadRecord{
+				readFavorite.ID: {"device": {Read: true}},
+			},
+		},
+		Videos: []core.Video{favorite, plain, shortFavorite, readFavorite},
+	}
+	w := &Window{app: a, selectedIndex: new(int)}
+	check := func(name string, total, favorites, chA, chB int) {
+		t.Helper()
+		got := w.sidebarCounts()
+		if got.total != total || got.favorites != favorites || got.perChannel["ch-a"] != chA || got.perChannel["ch-b"] != chB {
+			t.Fatalf("%s: counts = total %d, favorites %d, ch-a %d, ch-b %d; want %d, %d, %d, %d",
+				name, got.total, got.favorites, got.perChannel["ch-a"], got.perChannel["ch-b"], total, favorites, chA, chB)
+		}
+	}
+
+	check("shorts hidden", 3, 2, 1, 2)
+
+	a.Settings.ShowShorts = true
+	check("shorts shown", 4, 3, 2, 2)
+
+	a.Settings.ShowShorts = false
+	a.UnreadOnly = true
+	check("unread only", 2, 1, 1, 1)
+
+	a.UnreadOnly = false
+	a.Settings.ShowShorts = true
+	a.Search = "short"
+	check("search", 1, 1, 1, 0)
+
+	a.Search = ""
+	a.Settings.ShowShorts = false
+	a.ChannelFilter = "ch-b"
+	check("channel filter", 2, 1, 0, 2)
+}
+
 // TestSidebarWidthMatchesDesign checks the agreed 220 to 320 pt range that
 // the drag handle enforces and that settings remember.
 func TestSidebarWidthMatchesDesign(t *testing.T) {

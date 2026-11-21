@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/simon/youtube-reader/core"
@@ -169,8 +170,8 @@ func sectionHeader(c *ui.Context, t mui.Tokens, title string) {
 
 // sidebarCounts is the trailing count of every sidebar row: videos per
 // channel, the total for All videos, favorites for Favorites, and the sum
-// of a group's channels for the group row. Shorts hidden from the grid are
-// not counted, so a count matches the videos its destination shows.
+// of a group's channels for the group row. Every count runs the grid's
+// visibility rule, so a count matches the videos its destination shows.
 type sidebarCounts struct {
 	total      int
 	favorites  int
@@ -179,15 +180,18 @@ type sidebarCounts struct {
 
 func (w *Window) sidebarCounts() sidebarCounts {
 	showShorts := w.app.settingsSnapshot().ShowShorts
+	q := strings.ToLower(w.app.Search)
 	counts := sidebarCounts{perChannel: make(map[string]int, len(w.app.Channels))}
 	for _, v := range w.app.Videos {
-		if !showShorts && v.IsShort {
+		if !w.app.videoVisible(v, nil, showShorts, q) {
 			continue
 		}
 		counts.total++
 		counts.perChannel[v.ChannelID]++
+		if _, ok := w.app.Sync.Favorites[v.ID]; ok {
+			counts.favorites++
+		}
 	}
-	counts.favorites = len(w.app.Sync.Favorites)
 	return counts
 }
 

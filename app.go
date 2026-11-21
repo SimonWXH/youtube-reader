@@ -847,27 +847,34 @@ func (a *App) VisibleVideos() []core.Video {
 	showShorts := a.Settings.ShowShorts
 	a.settingsMu.RUnlock()
 	for _, v := range a.Videos {
-		if !showShorts && v.IsShort {
-			continue
+		if a.videoVisible(v, allowed, showShorts, q) {
+			out = append(out, v)
 		}
-		if allowed != nil && !allowed[v.ID] && !allowed[v.ChannelID] {
-			continue
-		}
-		if a.ChannelFilter != "" && v.ChannelID != a.ChannelFilter {
-			continue
-		}
-		if a.UnreadOnly && a.Sync.IsRead(v.ID) {
-			continue
-		}
-		if q != "" && !strings.Contains(strings.ToLower(v.Title), q) && !strings.Contains(strings.ToLower(v.Description), q) {
-			continue
-		}
-		out = append(out, v)
 	}
 	if selected == "favorites" {
 		sort.Slice(out, func(i, j int) bool { return out[i].FavoritedAt > out[j].FavoritedAt })
 	}
 	return out
+}
+
+// videoVisible is the one visibility rule shared by the grid and the sidebar
+// counts, so a row's count always equals the videos its destination shows.
+func (a *App) videoVisible(v core.Video, allowed map[string]bool, showShorts bool, q string) bool {
+	if !showShorts && v.IsShort {
+		return false
+	}
+	if allowed != nil && !allowed[v.ID] && !allowed[v.ChannelID] {
+		return false
+	}
+	if a.ChannelFilter != "" && v.ChannelID != a.ChannelFilter {
+		return false
+	}
+	if a.UnreadOnly && a.Sync.IsRead(v.ID) {
+		return false
+	}
+	return q == "" ||
+		strings.Contains(strings.ToLower(v.Title), q) ||
+		strings.Contains(strings.ToLower(v.Description), q)
 }
 
 func (a *App) HasSelection() bool {
