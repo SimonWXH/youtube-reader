@@ -60,9 +60,9 @@ func TestFitPaneWidths(t *testing.T) {
 	})
 
 	t.Run("persists chosen widths", func(t *testing.T) {
-		sidebar, details := fitPaneWidths(300, 500, true, false, 1280)
-		if sidebar != 300 || details != 500 {
-			t.Fatalf("fitPaneWidths = %v, %v; want 300, 500", sidebar, details)
+		sidebar, details := fitPaneWidths(300, 460, true, false, 1280)
+		if sidebar != 300 || details != 460 {
+			t.Fatalf("fitPaneWidths = %v, %v; want 300, 460", sidebar, details)
 		}
 	})
 
@@ -70,6 +70,9 @@ func TestFitPaneWidths(t *testing.T) {
 		sidebar, details := fitPaneWidths(10000, -1, true, false, 1280)
 		if sidebar != maxSidebarWidth || details != defaultDetailsWidth {
 			t.Fatalf("fitPaneWidths = %v, %v; want %v, %v", sidebar, details, maxSidebarWidth, defaultDetailsWidth)
+		}
+		if _, details := fitPaneWidths(256, 600, true, false, 1280); details != maxDetailsWidth {
+			t.Fatalf("details = %v; want the %v maximum", details, maxDetailsWidth)
 		}
 	})
 
@@ -117,26 +120,75 @@ func TestBoundedSidebarWidth(t *testing.T) {
 	}
 }
 
-func TestPersistedDetailsWidth(t *testing.T) {
-	const total float32 = 1280
-	shown, hidden := splitDividerWidth(), float32(0)
+func TestDetailPaneWidthBounds(t *testing.T) {
+	if got := defaultDetailsWidth; got != 340 {
+		t.Fatalf("defaultDetailsWidth = %v, want the board's 340", got)
+	}
+	if got := clampDetailsWidth(0); got != minDetailsWidth {
+		t.Fatalf("clampDetailsWidth(0) = %v, want %v", got, minDetailsWidth)
+	}
+	if got := clampDetailsWidth(1000); got != maxDetailsWidth {
+		t.Fatalf("clampDetailsWidth(1000) = %v, want %v", got, maxDetailsWidth)
+	}
+	if got := initialDetailsWidth(0); got != defaultDetailsWidth {
+		t.Fatalf("initialDetailsWidth(0) = %v, want %v", got, defaultDetailsWidth)
+	}
+	if got := initialDetailsWidth(560); got != maxDetailsWidth {
+		t.Fatalf("initialDetailsWidth(560) = %v, want %v", got, maxDetailsWidth)
+	}
+	if got := initialDetailsWidth(200); got != minDetailsWidth {
+		t.Fatalf("initialDetailsWidth(200) = %v, want %v", got, minDetailsWidth)
+	}
+}
 
-	if _, ok := persistedDetailsWidth(total, 400, 850, shown, false, true); ok {
-		t.Fatal("details width must not be written when there is no details pane")
+func TestDetailDividerKeys(t *testing.T) {
+	// The divider sits left of the pane, so Left widens it by the board's
+	// 8 pt and Right narrows it by the same step.
+	if got, ok := detailsWidthForKey(340, ui.KeyLeft); !ok || got != 348 {
+		t.Fatalf("Left = %v, %v; want 348, true", got, ok)
 	}
-	if _, ok := persistedDetailsWidth(total, 400, 850, shown, true, false); ok {
-		t.Fatal("details width must not be written when the inner split did not change")
+	if got, ok := detailsWidthForKey(340, ui.KeyRight); !ok || got != 332 {
+		t.Fatalf("Right = %v, %v; want 332, true", got, ok)
 	}
-	got, ok := persistedDetailsWidth(total, 400, 550, shown, true, true)
-	if !ok || got != 328 {
-		t.Fatalf("persistedDetailsWidth = %v, %v; want 328, true", got, ok)
+	// A key keeps the width within the 280-480 bounds.
+	if got, _ := detailsWidthForKey(minDetailsWidth, ui.KeyRight); got != minDetailsWidth {
+		t.Fatalf("Right at the minimum = %v, want %v", got, minDetailsWidth)
 	}
-	got, ok = persistedDetailsWidth(total, 0, 719, hidden, true, true)
-	if !ok || got != maxDetailsWidth {
-		t.Fatalf("persistedDetailsWidth with the sidebar hidden = %v, %v; want %v, true", got, ok, maxDetailsWidth)
+	if got, _ := detailsWidthForKey(maxDetailsWidth, ui.KeyLeft); got != maxDetailsWidth {
+		t.Fatalf("Left at the maximum = %v, want %v", got, maxDetailsWidth)
 	}
-	if got, ok := persistedDetailsWidth(total, 400, 990, shown, true, true); ok || got != 0 {
-		t.Fatalf("persistedDetailsWidth with too-small details = %v, %v; want 0, false", got, ok)
+	// Home and End jump to the bounds from anywhere.
+	if got, _ := detailsWidthForKey(360, ui.KeyHome); got != minDetailsWidth {
+		t.Fatalf("Home = %v, want %v", got, minDetailsWidth)
+	}
+	if got, _ := detailsWidthForKey(360, ui.KeyEnd); got != maxDetailsWidth {
+		t.Fatalf("End = %v, want %v", got, maxDetailsWidth)
+	}
+	// The double-click reset is the board's default.
+	if got, _ := detailsWidthForKey(defaultDetailsWidth, ui.KeyHome); got != minDetailsWidth {
+		t.Fatalf("Home after reset = %v, want %v", got, minDetailsWidth)
+	}
+	if defaultDetailsWidth < minDetailsWidth || defaultDetailsWidth > maxDetailsWidth {
+		t.Fatalf("reset width %v is outside %v-%v", defaultDetailsWidth, minDetailsWidth, maxDetailsWidth)
+	}
+}
+
+func TestDetailWidthForRoom(t *testing.T) {
+	// 1280: sidebar 256 + 1 pt divider leaves 1023; the pane may use 480
+	// and still leave the grid its 320 minimum.
+	if got := detailWidthForRoom(480, 1023); got != 480 {
+		t.Fatalf("detailWidthForRoom(480, 1023) = %v, want 480", got)
+	}
+	// 960 at the 180 pt sidebar minimum leaves 779: at most 458 for the
+	// pane before the grid drops below 320.
+	if got := detailWidthForRoom(480, 779); got != 458 {
+		t.Fatalf("detailWidthForRoom(480, 779) = %v, want 458", got)
+	}
+	if got := detailWidthForRoom(280, 779); got != minDetailsWidth {
+		t.Fatalf("detailWidthForRoom(280, 779) = %v, want %v", got, minDetailsWidth)
+	}
+	if got := detailWidthForRoom(100, 779); got != minDetailsWidth {
+		t.Fatalf("detailWidthForRoom(100, 779) = %v, want %v", got, minDetailsWidth)
 	}
 }
 
