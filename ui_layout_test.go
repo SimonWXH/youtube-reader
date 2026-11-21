@@ -335,7 +335,7 @@ func TestGridCardWidthBounds(t *testing.T) {
 }
 
 // TestGridCardCapKeepsCeiling pins both hard limits against the agreed design
-// geometry (sidebar 260, details 340) and a 1200 pt window with the detail pane
+// geometry (sidebar 260, details 340) and a 1220 pt window with the detail pane
 // open. Where the setting's maximum columns binds, the cards stay exactly
 // 280 pt wide and the pane's leftover width is trailing margin.
 func TestGridCardCapKeepsCeiling(t *testing.T) {
@@ -343,7 +343,7 @@ func TestGridCardCapKeepsCeiling(t *testing.T) {
 	const padding float32 = 16
 	const designClosedContent float32 = 1280 - 260 - 2 - 2*padding
 	const designOpenContent float32 = 1280 - 260 - 340 - 2 - 2*padding
-	detailOpen1200Content := float32(1200) - defaultSidebarWidth - 2*splitDividerWidth() - defaultDetailsWidth - 2*splitDividerWidth() - 2*padding
+	detailOpen1220Content := float32(1220) - defaultSidebarWidth - 2*splitDividerWidth() - defaultDetailsWidth - 2*splitDividerWidth() - 2*padding
 	cases := []struct {
 		name     string
 		content  float32
@@ -356,7 +356,7 @@ func TestGridCardCapKeepsCeiling(t *testing.T) {
 		{"design 1280 detail closed, cap 3", designClosedContent, 3, 3, 280, designClosedContent - 856},
 		{"design 1280 detail open, cap 2", designOpenContent, 2, 2, 280, designOpenContent - 568},
 		{"design 1280 detail open, cap 3", designOpenContent, 3, 3, 210, 0},
-		{"1200 detail open, cap 2", detailOpen1200Content, 2, 2, 280, detailOpen1200Content - 568},
+		{"1220 detail open, cap 2", detailOpen1220Content, 2, 2, 280, detailOpen1220Content - 568},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -612,8 +612,10 @@ func TestGridFocusFollowsMovedSelection(t *testing.T) {
 		t.Fatalf("the click chose %q; want %q", a.SelectedVideoID, videos[3].ID)
 	}
 	// Choosing a card opens the detail pane, which rebuilds the grid under
-	// the split and leaves no element with the pointer focus. Tab from the
-	// top reaches the grid and shows its ring, as a keyboard user arrives.
+	// the split; the rebuilt pass leaves no element with the pointer focus.
+	// Let the 240 ms width transition finish, then Tab from the top reaches
+	// the grid and shows its ring, as a keyboard user arrives.
+	tt.Advance(300 * time.Millisecond)
 	for range 60 {
 		tt.Key(0, ui.KeyTab)
 		if w.gridKeyboardFocus {
