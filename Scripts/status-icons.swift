@@ -1,5 +1,5 @@
-// Draws the menu bar status item's four template images with SF Symbols, at
-// 18 pt with the Regular weight, as 2x PNGs (36 x 36 pixels) of black ink on a
+// Draws the menu bar status item's template images with SF Symbols, at 18 pt
+// with the Regular weight, as 2x PNGs (36 x 36 pixels) of black ink on a
 // transparent background. macOS tints a template image for the menu bar, so
 // one file serves both appearances. Run it from the repository root:
 //
@@ -47,12 +47,14 @@ func render(_ symbolName: String, pointSize: CGFloat, side: Int, to path: String
 
 let outDir = "assets/status"
 try FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
-// The four states' shapes, the SF Symbols the design board names.
+// The states' shapes, the SF Symbols the status surface names.
 let icons: [(symbol: String, file: String)] = [
     ("checkmark.circle", "up-to-date.png"),
     ("arrow.triangle.2.circlepath", "refreshing.png"),
     ("wifi.slash", "offline.png"),
     ("exclamationmark.triangle", "failed.png"),
+    ("key.fill", "setup.png"),
+    ("arrow.clockwise", "not-refreshed.png"),
 ]
 for icon in icons {
     let path = "\(outDir)/\(icon.file)"

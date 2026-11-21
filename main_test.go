@@ -15,33 +15,6 @@ import (
 	mui "github.com/simon/youtube-reader/ui"
 )
 
-func TestRefreshedLabel(t *testing.T) {
-	old := time.Now().Add(-72 * time.Hour).Truncate(time.Second)
-	tests := []struct {
-		name  string
-		stamp string
-		want  string
-	}{
-		{"empty", "", ""},
-		{"invalid", "not-a-time", "Last refresh not-a-time"},
-		{"just now", time.Now().UTC().Format(time.RFC3339), "Last refresh just now"},
-		{"minutes", time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339), "Last refresh 5 min ago"},
-		{"hours", time.Now().Add(-3 * time.Hour).UTC().Format(time.RFC3339), "Last refresh 3 hr ago"},
-		{"older than a day", old.UTC().Format(time.RFC3339), "Last refresh on " + old.Local().Format("Jan 2, 2006 at 15:04")},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := refreshedLabel(tt.stamp)
-			if got != tt.want {
-				t.Fatalf("refreshedLabel(%q) = %q, want %q", tt.stamp, got, tt.want)
-			}
-			if tt.name == "older than a day" && !strings.Contains(got, old.Local().Format("2006")) {
-				t.Fatalf("older refresh label omits the year: %q", got)
-			}
-		})
-	}
-}
-
 func TestRegisterNotificationClickRoutesChannelID(t *testing.T) {
 	dir := t.TempDir()
 	a := newTestApp(t, dir)
@@ -508,25 +481,29 @@ func TestToolbarSidebarToggleFoldsSidebar(t *testing.T) {
 	}
 }
 
-// TestOverflowMenuMirrorsToolbarCommands checks the overflow menu's items,
-// that the status row is dimmed rather than hidden, and that Escape closes
-// the menu.
+// TestOverflowMenuMirrorsToolbarCommands checks the overflow menu's items and
+// that Escape closes the menu. Refresh status belongs to the menu bar item, so
+// the menu carries commands only.
 func TestOverflowMenuMirrorsToolbarCommands(t *testing.T) {
 	w := chromeWindow(t)
 	tt := ui.NewTester(w.shell, 1280, 808)
+	a := w.app
+	a.Settings.LastRefresh = time.Now().Add(-5 * time.Minute).Format(time.RFC3339)
+	a.Settings.RecentFailures = []core.RefreshFailure{{At: time.Now().Format(time.RFC3339), Message: "boom"}}
 	tt.Frame()
 	if err := tt.Click("More"); err != nil {
 		t.Fatalf("open overflow menu: %v", err)
 	}
 	items := tt.Menu()
-	for _, want := range []string{"Last refresh 5 min ago", "Refresh", "Settings…", "Import OPML…", "Export Favorites…", "Restore Favorites…"} {
+	for _, want := range []string{"Refresh", "Settings…", "Import OPML…", "Export Favorites…", "Restore Favorites…"} {
 		if !slices.Contains(items, want) {
 			t.Fatalf("overflow menu %q has no %q", items, want)
 		}
 	}
-	err := tt.ChooseMenuItem("Last refresh 5 min ago")
-	if err == nil || !strings.Contains(err.Error(), "disabled") {
-		t.Fatalf("the status row is choosable: %v", err)
+	for _, unwanted := range []string{"Refresh issue", "Last refresh 5 min ago", "Not refreshed yet"} {
+		if slices.Contains(items, unwanted) {
+			t.Fatalf("overflow menu still carries status copy %q: %q", unwanted, items)
+		}
 	}
 	tt.Key(0, ui.KeyEscape)
 	if items := tt.Menu(); items != nil {

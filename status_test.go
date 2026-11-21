@@ -21,9 +21,9 @@ import (
 // screenshot harness paints a panel over so its edge and arrow read.
 var statusShotBackdrop = color.RGBA{R: 0xe5, G: 0xe3, B: 0xdd, A: 0xff}
 
-// statusFixtures are the four states as the app derives them, one clock for
-// them all so the copy in a failure names one instant. The data is realistic:
-// 42 channels, a refresh two minutes old, and a stored failure that carries the
+// statusFixtures are the states as the app derives them, one clock for them
+// all so the copy in a failure names one instant. The data is realistic: 42
+// channels, a refresh two minutes old, and a stored failure that carries the
 // API's own words.
 func statusFixtures(now time.Time) map[statusState]status {
 	published := now.Add(-3 * time.Hour).Format(time.RFC3339)
@@ -59,11 +59,18 @@ func statusFixtures(now time.Time) map[statusState]status {
 		Message: "Alpha: Get \"https://www.googleapis.com/youtube/v3/playlistItems\": dial tcp: no route to host",
 	}}
 
+	notConfigured := base
+	notConfigured.Settings.APIKey = ""
+	notConfigured.Channels = 0
+	notConfigured.Videos = nil
+
 	return map[statusState]status{
-		statusUpToDate:   deriveStatus(upToDate),
-		statusRefreshing: deriveStatus(refreshing),
-		statusOffline:    deriveStatus(offline),
-		statusFailed:     deriveStatus(failed),
+		statusUpToDate:      deriveStatus(upToDate),
+		statusRefreshing:    deriveStatus(refreshing),
+		statusOffline:       deriveStatus(offline),
+		statusFailed:        deriveStatus(failed),
+		statusNotConfigured: deriveStatus(notConfigured),
+		statusNotRefreshed:  deriveStatus(base),
 	}
 }
 
@@ -124,11 +131,11 @@ func TestRemainingTime(t *testing.T) {
 	}
 }
 
-// TestDeriveStatusCopy pins the four states' copy and actions to the design
-// board, and the cases around them: offline wins over a refresh in flight, a
-// missing key is never reported as up to date, and a quota pause is held out of
-// the popover as a warning while its resume time still shows in the next
-// refresh row.
+// TestDeriveStatusCopy pins the states' copy and actions to the design board,
+// and the cases around them: a refresh in flight wins over offline, a missing
+// key and a never-refreshed reader are setup states rather than healthy or
+// failed ones, a recorded failure quotes its own message, and a quota pause is
+// held out of the popover as a warning while its resume time still shows.
 func TestDeriveStatusCopy(t *testing.T) {
 	now := time.Date(2026, 3, 1, 14, 32, 0, 0, time.Local)
 	fixtures := statusFixtures(now)
@@ -162,11 +169,11 @@ func TestDeriveStatusCopy(t *testing.T) {
 			name: "never refreshed",
 			in: statusInput{Now: now, Online: true, Channels: 0,
 				Settings: core.Settings{APIKey: "key"}},
-			state:   statusUpToDate,
-			title:   "Up to date",
-			body:    "Waiting for the first refresh",
+			state:   statusNotRefreshed,
+			title:   "Not refreshed yet",
+			body:    "Refresh to fetch your subscriptions and videos.",
 			primary: statusRefreshNow, secondary: statusOpenSettings,
-			details: []string{"Channels: 0", "New videos today: 0"},
+			details: []string{"Channels: 0"},
 		},
 		{
 			name: "refreshing",
@@ -197,15 +204,15 @@ func TestDeriveStatusCopy(t *testing.T) {
 			details: []string{"Channels: 42"},
 		},
 		{
-			// Offline wins: a refresh cannot finish without a connection.
+			// The attempt the user started is what the surface reports.
 			name: "offline during a refresh",
 			in: statusInput{Now: now, Online: false, Refreshing: true, Started: now,
 				Settings: settings, Channels: 42},
-			state:   statusOffline,
-			title:   "Offline",
-			body:    "Showing cached videos from 14:30",
-			primary: statusRetry, secondary: statusOpenSettings,
-			details: []string{"Last refresh: 2 min ago", "Channels: 42"},
+			state:   statusRefreshing,
+			title:   "Refreshing",
+			body:    "42 channels",
+			primary: statusRefreshNow, secondary: statusNoAction,
+			details: []string{"Started: 14:32", "Channels: 42"},
 		},
 		{
 			name: "failed",
@@ -219,7 +226,7 @@ func TestDeriveStatusCopy(t *testing.T) {
 			}},
 			state:   statusFailed,
 			title:   "Couldn't refresh subscriptions",
-			body:    "Check your connection, then try again.",
+			body:    "Get \"https://www.googleapis.com/youtube/v3/channels\": dial tcp: no route to host",
 			primary: statusRetry, secondary: statusOpenSettings,
 			details: []string{"Failed: 4 min ago", "Channels: 42"},
 		},
@@ -243,9 +250,9 @@ func TestDeriveStatusCopy(t *testing.T) {
 			name: "missing key",
 			in: statusInput{Now: now, Online: true, Channels: 3,
 				Settings: core.Settings{}},
-			state:   statusFailed,
-			title:   "Couldn't refresh subscriptions",
-			body:    "Add a YouTube Data API key in Settings, then try again.",
+			state:   statusNotConfigured,
+			title:   "Set up YouTube Reader",
+			body:    "Add a YouTube Data API key in Settings to get started.",
 			primary: statusNoAction, secondary: statusOpenSettings,
 			details: []string{"Channels: 3"},
 		},
@@ -264,6 +271,20 @@ func TestDeriveStatusCopy(t *testing.T) {
 			details: []string{"Next refresh: Paused until 2 Mar, 14:32", "Channels: 42", "New videos today: 0"},
 		},
 		{
+			name: "refreshing while paused",
+			in: statusInput{Now: now, Online: true, Refreshing: true, Started: now.Add(-25 * time.Second),
+				Channels: 42, Settings: core.Settings{
+					APIKey:           "key",
+					LastRefresh:      now.Add(-2 * time.Minute).Format(time.RFC3339),
+					QuotaPausedUntil: now.Add(24 * time.Hour).Format(time.RFC3339),
+				}},
+			state:   statusRefreshing,
+			title:   "Refreshing",
+			body:    "42 channels",
+			primary: statusRefreshNow, secondary: statusNoAction,
+			details: []string{"Started: 14:31", "Channels: 42"},
+		},
+		{
 			name: "quota failure",
 			in: statusInput{Now: now, Online: true, Channels: 42, Settings: core.Settings{
 				APIKey:      "key",
@@ -278,6 +299,23 @@ func TestDeriveStatusCopy(t *testing.T) {
 			title:   "Couldn't refresh subscriptions",
 			body:    "YouTube API quota reached. Refresh resumes on 2 Mar, 14:32.",
 			primary: statusNoAction, secondary: statusOpenSettings,
+			details: []string{"Failed: 4 min ago", "Channels: 42"},
+		},
+		{
+			name: "quota failure after the pause",
+			in: statusInput{Now: now, Online: true, Channels: 42, Settings: core.Settings{
+				APIKey:      "key",
+				LastRefresh: now.Add(-2 * time.Minute).Format(time.RFC3339),
+				RecentFailures: []core.RefreshFailure{{
+					At:      now.Add(-4 * time.Minute).Format(time.RFC3339),
+					Message: "quota paused until 2026-03-01T00:00:00Z",
+				}},
+				QuotaPausedUntil: now.Add(-time.Hour).Format(time.RFC3339),
+			}},
+			state:   statusFailed,
+			title:   "Couldn't refresh subscriptions",
+			body:    "YouTube API quota reached. Retry to refresh again.",
+			primary: statusRetry, secondary: statusOpenSettings,
 			details: []string{"Failed: 4 min ago", "Channels: 42"},
 		},
 	}
@@ -300,7 +338,7 @@ func TestDeriveStatusCopy(t *testing.T) {
 			if strings.Join(details, " · ") != strings.Join(tt.details, " · ") {
 				t.Fatalf("details = %q, want %q", details, tt.details)
 			}
-			wantPaused := tt.name == "quota paused" || tt.name == "quota failure"
+			wantPaused := tt.name == "quota paused" || tt.name == "quota failure" || tt.name == "refreshing while paused"
 			if paused := !got.PausedUntil.IsZero(); paused != wantPaused {
 				t.Fatalf("paused = %v, want %v", paused, wantPaused)
 			}
@@ -313,13 +351,19 @@ func TestDeriveStatusCopy(t *testing.T) {
 			}
 		})
 	}
-	// The item's own title keeps offline and failure legible without colour,
-	// and says nothing while the reader works.
+	// The item's own title keeps offline, failure and setup legible without
+	// colour, and says nothing while the reader works.
 	if got := statusItemTitle(fixtures[statusOffline].State); got != "Offline" {
 		t.Fatalf("offline item title = %q", got)
 	}
 	if got := statusItemTitle(fixtures[statusFailed].State); got != "Refresh failed" {
 		t.Fatalf("failed item title = %q", got)
+	}
+	if got := statusItemTitle(fixtures[statusNotConfigured].State); got != "Set up" {
+		t.Fatalf("not-configured item title = %q", got)
+	}
+	if got := statusItemTitle(fixtures[statusNotRefreshed].State); got != "Not refreshed" {
+		t.Fatalf("not-refreshed item title = %q", got)
 	}
 	for _, state := range []statusState{statusUpToDate, statusRefreshing} {
 		if got := statusItemTitle(state); got != "" {
@@ -332,6 +376,9 @@ func TestDeriveStatusCopy(t *testing.T) {
 	}
 	if got := statusActionLabel(statusOpenSettings, statusFailed); got != "Open Settings…" {
 		t.Fatalf("failed settings label = %q", got)
+	}
+	if got := statusActionLabel(statusOpenSettings, statusNotConfigured); got != "Open Settings…" {
+		t.Fatalf("not-configured settings label = %q", got)
 	}
 	if got := statusActionLabel(statusOpenSettings, statusUpToDate); got != "Settings…" {
 		t.Fatalf("healthy settings label = %q", got)
@@ -376,8 +423,12 @@ func TestStatusPopoverCap(t *testing.T) {
 // TestStatusItemIconSet proves the menu bar ships one template image per state,
 // each a 2x drawing for the 18 pt item and never full-colour art.
 func TestStatusItemIconSet(t *testing.T) {
+	states := []statusState{
+		statusUpToDate, statusRefreshing, statusOffline, statusFailed,
+		statusNotConfigured, statusNotRefreshed,
+	}
 	seen := map[string]statusState{}
-	for _, state := range []statusState{statusUpToDate, statusRefreshing, statusOffline, statusFailed} {
+	for _, state := range states {
 		data := statusIcon(state)
 		img, err := png.Decode(bytes.NewReader(data))
 		if err != nil {
@@ -414,8 +465,8 @@ func TestStatusItemIconSet(t *testing.T) {
 		}
 		seen[string(data)] = state
 	}
-	if len(seen) != 4 {
-		t.Fatalf("the four states share %d images, want four distinct shapes", len(seen))
+	if len(seen) != len(states) {
+		t.Fatalf("the %d states share %d images, want one distinct shape each", len(states), len(seen))
 	}
 }
 
@@ -433,10 +484,12 @@ func TestStatusScreenshots(t *testing.T) {
 	now := time.Date(2026, 3, 1, 14, 32, 0, 0, time.Local)
 	fixtures := statusFixtures(now)
 	names := map[statusState]string{
-		statusUpToDate:   "up-to-date",
-		statusRefreshing: "refreshing",
-		statusOffline:    "offline",
-		statusFailed:     "failed",
+		statusUpToDate:      "up-to-date",
+		statusRefreshing:    "refreshing",
+		statusOffline:       "offline",
+		statusFailed:        "failed",
+		statusNotConfigured: "not-configured",
+		statusNotRefreshed:  "not-refreshed",
 	}
 	for _, dark := range []bool{false, true} {
 		appearance := "light"

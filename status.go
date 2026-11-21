@@ -15,9 +15,9 @@ import (
 
 // The status surface: one menu bar item and one popover, replacing the status
 // copy the window used to repeat in its header and the foot of the sidebar.
-// The item carries the four states' shapes, and the popover carries the copy
-// and the two actions a state offers. Refresh feedback lives here alone, so
-// the window shows no status text and no toast for a refresh.
+// The item carries each state's shape, and the popover carries the copy and
+// the two actions a state offers. Refresh feedback lives here alone, so the
+// window shows no status text and no toast for a refresh.
 
 // The popover's fixed width and the height its content may grow to before the
 // rows scroll: the design board's 320 pt and 420 pt. The arrow is a 12 pt
@@ -35,12 +35,11 @@ const (
 // true. A minute's copy never needs more than one look a minute.
 const statusClockPeriod = 30 * time.Second
 
-// The menu bar item's template images: the design board's four SF Symbols
-// drawn at 18 pt Regular by Scripts/status-icons.swift into 36 px (2x) PNGs of
-// black ink on transparency. MyGo's TrayOptions.Icon takes PNG bytes and
-// IconIsTemplate and has no SF Symbol API, so the shapes ship as files; macOS
-// tints a template image for the menu bar itself, so one file per state serves
-// both appearances.
+// The menu bar item's template images: each state's SF Symbol drawn at 18 pt
+// Regular by Scripts/status-icons.swift into 36 px (2x) PNGs of black ink on
+// transparency. MyGo's TrayOptions.Icon takes PNG bytes and IconIsTemplate and
+// has no SF Symbol API, so the shapes ship as files; macOS tints a template
+// image for the menu bar itself, so one file per state serves both appearances.
 var (
 	//go:embed assets/status/up-to-date.png
 	statusIconUpToDate []byte
@@ -50,6 +49,10 @@ var (
 	statusIconOffline []byte
 	//go:embed assets/status/failed.png
 	statusIconFailed []byte
+	//go:embed assets/status/setup.png
+	statusIconSetup []byte
+	//go:embed assets/status/not-refreshed.png
+	statusIconNotRefreshed []byte
 )
 
 // statusIcon is the menu bar image for one state.
@@ -61,6 +64,10 @@ func statusIcon(s statusState) []byte {
 		return statusIconOffline
 	case statusFailed:
 		return statusIconFailed
+	case statusNotConfigured:
+		return statusIconSetup
+	case statusNotRefreshed:
+		return statusIconNotRefreshed
 	default:
 		return statusIconUpToDate
 	}
@@ -76,13 +83,17 @@ func statusSymbol(s statusState) string {
 		return "wifi.slash"
 	case statusFailed:
 		return "exclamationmark.triangle"
+	case statusNotConfigured:
+		return "key.fill"
+	case statusNotRefreshed:
+		return "arrow.clockwise"
 	default:
 		return "checkmark.circle"
 	}
 }
 
-// statusState is one of the four states the menu bar item shows. The shape and
-// the words of a state say what it means, so no state depends on colour alone;
+// statusState is one of the states the menu bar item shows. The shape and the
+// words of a state say what it means, so no state depends on colour alone;
 // colour is one cue on the popover's glyph and nothing on the item.
 type statusState int
 
@@ -91,6 +102,8 @@ const (
 	statusRefreshing
 	statusOffline
 	statusFailed
+	statusNotConfigured
+	statusNotRefreshed
 )
 
 // statusAction is a button of the popover. The view names each action in the
@@ -144,10 +157,11 @@ type statusInput struct {
 	Videos     []core.Video
 }
 
-// deriveStatus reads the app's state into the popover's model. Offline wins
-// over a refresh in flight, because a refresh cannot finish without a
-// connection; a missing API key and a recorded failure both mean the reader is
-// not up to date, so neither is reported as healthy.
+// deriveStatus reads the app's state into the popover's model. A refresh in
+// flight wins over offline, because the attempt the user just started must be
+// the one the surface reports; a missing API key and a reader that has never
+// refreshed are setup conditions, so neither is reported as healthy or as a
+// failed refresh.
 func deriveStatus(in statusInput) status {
 	settings := in.Settings
 	last, hasLast := stampTime(settings.LastRefresh)
@@ -161,23 +175,10 @@ func deriveStatus(in statusInput) status {
 	}
 
 	switch {
-	case !in.Online:
-		m.State = statusOffline
-		m.Title = "Offline"
-		m.Body = "Showing cached videos"
-		if hasLast {
-			m.Body += " from " + last.Local().Format("15:04")
-		}
-		m.Primary = statusRetry
-		if hasLast {
-			m.Details = append(m.Details, statusDetail{Symbol: "clock", Label: "Last refresh", Value: relativeTime(in.Now, last)})
-		}
-		m.Details = append(m.Details, statusDetail{Symbol: "arrow.triangle.2.circlepath", Label: "Channels", Value: fmt.Sprintf("%d", in.Channels)})
-
 	case settings.APIKey == "":
-		m.State = statusFailed
-		m.Title = "Couldn't refresh subscriptions"
-		m.Body = "Add a YouTube Data API key in Settings, then try again."
+		m.State = statusNotConfigured
+		m.Title = "Set up YouTube Reader"
+		m.Body = "Add a YouTube Data API key in Settings to get started."
 		m.Primary = statusNoAction
 		m.Details = append(m.Details, statusDetail{Symbol: "arrow.triangle.2.circlepath", Label: "Channels", Value: fmt.Sprintf("%d", in.Channels)})
 
@@ -191,16 +192,33 @@ func deriveStatus(in statusInput) status {
 		}
 		m.Details = append(m.Details, statusDetail{Symbol: "arrow.triangle.2.circlepath", Label: "Channels", Value: fmt.Sprintf("%d", in.Channels)})
 
+	case !in.Online:
+		m.State = statusOffline
+		m.Title = "Offline"
+		m.Body = "Showing cached videos"
+		if hasLast {
+			m.Body += " from " + last.Local().Format("15:04")
+		}
+		m.Primary = statusRetry
+		if hasLast {
+			m.Details = append(m.Details, statusDetail{Symbol: "clock", Label: "Last refresh", Value: relativeTime(in.Now, last)})
+		}
+		m.Details = append(m.Details, statusDetail{Symbol: "arrow.triangle.2.circlepath", Label: "Channels", Value: fmt.Sprintf("%d", in.Channels)})
+
 	case len(settings.RecentFailures) > 0:
 		m.State = statusFailed
 		m.Title = "Couldn't refresh subscriptions"
-		m.Body = "Check your connection, then try again."
+		m.Body = settings.RecentFailures[0].Message
 		m.Primary = statusRetry
 		at, hasAt := stampTime(settings.RecentFailures[0].At)
 		switch {
 		case paused:
 			m.Body = "YouTube API quota reached. Refresh resumes on " + pausedUntil.Local().Format("2 Jan, 15:04") + "."
 			m.Primary = statusNoAction
+		case strings.HasPrefix(settings.RecentFailures[0].Message, "quota paused"):
+			// The stored quota failure carries a machine stamp; the pause has
+			// ended, so the row keeps the human sentence instead.
+			m.Body = "YouTube API quota reached. Retry to refresh again."
 		case rejectedKey(settings.RecentFailures[0].Message):
 			// The API answered, so the connection is not what to check.
 			m.Body = "The YouTube API rejected the key. Check it in Settings, then try again."
@@ -210,12 +228,15 @@ func deriveStatus(in statusInput) status {
 		}
 		m.Details = append(m.Details, statusDetail{Symbol: "arrow.triangle.2.circlepath", Label: "Channels", Value: fmt.Sprintf("%d", in.Channels)})
 
+	case !hasLast:
+		m.State = statusNotRefreshed
+		m.Title = "Not refreshed yet"
+		m.Body = "Refresh to fetch your subscriptions and videos."
+		m.Details = append(m.Details, statusDetail{Symbol: "arrow.triangle.2.circlepath", Label: "Channels", Value: fmt.Sprintf("%d", in.Channels)})
+
 	default:
 		m.Title = "Up to date"
-		m.Body = "Waiting for the first refresh"
-		if hasLast {
-			m.Body = "Last refresh " + relativeTime(in.Now, last)
-		}
+		m.Body = "Last refresh " + relativeTime(in.Now, last)
 		if paused {
 			m.Details = append(m.Details, statusDetail{Symbol: "clock", Label: "Next refresh", Value: "Paused until " + pausedUntil.Local().Format("2 Jan, 15:04")})
 		} else if hasNext {
@@ -315,7 +336,7 @@ func statusActionLabel(a statusAction, state statusState) string {
 	case statusRetry:
 		return "Retry"
 	case statusOpenSettings:
-		if state == statusFailed {
+		if state == statusFailed || state == statusNotConfigured {
 			return "Open Settings…"
 		}
 		return "Settings…"
@@ -333,6 +354,10 @@ func statusItemTitle(s statusState) string {
 		return "Offline"
 	case statusFailed:
 		return "Refresh failed"
+	case statusNotConfigured:
+		return "Set up"
+	case statusNotRefreshed:
+		return "Not refreshed"
 	}
 	return ""
 }
@@ -443,6 +468,10 @@ func statusGlyphColor(s statusState, tokens mui.Tokens) ui.Color {
 		return tokens.Warning
 	case statusFailed:
 		return tokens.Danger
+	case statusNotConfigured:
+		return tokens.Warning
+	case statusNotRefreshed:
+		return tokens.Accent
 	default:
 		return tokens.Success
 	}
@@ -585,7 +614,6 @@ func newStatusBar(w *Window) *statusBar {
 	}
 	s.online = mygo.Network.Status().Online
 	s.tray.OnClick(s.toggle)
-	s.tray.OnRightClick(s.popUpMenu)
 	// A pause already in force at launch has told the user before: the item
 	// shows it, and only a pause that begins while the app runs is news.
 	s.paused = !s.model(time.Now()).PausedUntil.IsZero()
@@ -761,22 +789,6 @@ func (s *statusBar) close() {
 	}
 }
 
-// popUpMenu shows the item's commands on a right click, the menu every menu bar
-// item answers with, so the popover's actions need no pointer at the item.
-func (s *statusBar) popUpMenu() {
-	if s.tray == nil {
-		return
-	}
-	s.tray.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
-		{Label: "Refresh Now", Click: func(*mygo.MenuItem, *mygo.Window) { s.w.runRefresh(true) }},
-		{Label: "Open Settings…", Click: func(*mygo.MenuItem, *mygo.Window) { s.w.openSettings() }},
-		mygo.Separator(),
-		{Role: mygo.RoleQuit},
-	}))
-	defer s.tray.SetMenu(nil)
-	s.tray.PopUpMenu()
-}
-
 // raisePaused raises the quota pause as an alert, never as a warning inside the
 // popover. The dialog blocks, and it is no sheet over the panel: the popover is
 // closed first.
@@ -809,13 +821,4 @@ func (w *Window) openSettings() {
 	w.window.Show()
 	w.window.Focus()
 	w.window.Invalidate()
-}
-
-// online reports whether the status item's watcher has a connection. A window
-// without a status bar, as in a test, behaves as online.
-func (w *Window) online() bool {
-	if w.status == nil {
-		return true
-	}
-	return w.status.online
 }

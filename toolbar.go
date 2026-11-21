@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -167,14 +166,9 @@ func (w *Window) refreshControl(c *ui.Context, t mui.Tokens) {
 		content: func() { ui.Icon(c, mui.IconRefresh).Size(toolbarGlyph, toolbarGlyph) },
 		onClick: func() { w.runRefresh(true) },
 	}
-	switch {
-	case w.app.Busy:
+	if w.app.Busy {
 		spec.label, spec.tooltip, spec.disabled = "Refreshing", "Refreshing", true
 		spec.content = func() { ui.Spinner(c).Size(toolbarGlyph, toolbarGlyph).TextColor(t.Muted) }
-	case len(w.app.settingsSnapshot().RecentFailures) > 0:
-		// The failure words live in the overflow menu; the tinted glyph keeps
-		// the last refresh from failing silently.
-		spec.face, spec.tooltip = t.Danger, "Refresh issue"
 	}
 	w.toolbarControl(c, t, spec)
 }
@@ -192,12 +186,10 @@ func (w *Window) overflowControl(c *ui.Context, t mui.Tokens) {
 		ui.PopoverMenuButtonOptions{At: ui.AnchorBottomEnd, Self: ui.AnchorTopEnd})
 }
 
-// overflowMenu is the toolbar's overflow: the refresh status first, then the
-// commands that also exist as toolbar controls or menu commands, then the
-// secondary ones. Anything that cannot run right now is dimmed, not hidden.
+// overflowMenu is the toolbar's overflow: the commands that also exist as
+// toolbar controls or menu commands, then the secondary ones. Anything that
+// cannot run right now is dimmed, not hidden.
 func (w *Window) overflowMenu(m *ui.Menu) {
-	m.Item(w.statusLabel()).Disabled(true)
-	m.Separator()
 	if m.Item("Refresh").Shortcut(ui.Cmd, ui.KeyR).Disabled(w.app.Busy).Chosen() {
 		w.runRefresh(true)
 	}
@@ -222,22 +214,6 @@ func (w *Window) exportFavorites(c *ui.Context) {
 	} else {
 		w.toast(c, "Favorites exported", false)
 	}
-}
-
-// statusLabel is the refresh status the overflow menu opens with: what the
-// header subtitle used to say, in the board's words.
-func (w *Window) statusLabel() string {
-	if w.app.Busy {
-		return "Refreshing…"
-	}
-	settings := w.app.settingsSnapshot()
-	if len(settings.RecentFailures) > 0 {
-		return "Refresh issue"
-	}
-	if label := refreshedLabel(settings.LastRefresh); label != "" {
-		return label
-	}
-	return "Not refreshed yet"
 }
 
 // contentStrip is the 44 pt list filter: the channel drop-down, the search
@@ -376,27 +352,6 @@ func fitFilterStrip(inner, checkbox, checkboxIcon, count float32) (channel, sear
 		deficit -= d
 	}
 	return channel, search, gap, collapsed
-}
-
-func refreshedLabel(stamp string) string {
-	if stamp == "" {
-		return ""
-	}
-	t, err := time.Parse(time.RFC3339, stamp)
-	if err != nil {
-		return "Last refresh " + stamp
-	}
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return "Last refresh just now"
-	case d < time.Hour:
-		return fmt.Sprintf("Last refresh %d min ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("Last refresh %d hr ago", int(d.Hours()))
-	default:
-		return "Last refresh on " + t.Local().Format("Jan 2, 2006 at 15:04")
-	}
 }
 
 func (w *Window) title() string {
