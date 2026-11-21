@@ -367,10 +367,12 @@ func TestCardChannelNameHandlesEmptyChannelID(t *testing.T) {
 	}
 }
 
+// countText counts the sidebar rows assistive technology names want: the
+// rows' labels, not the text nodes inside them, so a row counts once.
 func countText(tt *ui.Tester, want string) int {
 	n := 0
-	for _, text := range tt.Texts() {
-		if text == want {
+	for _, info := range tt.AccessAll() {
+		if info.Role == ui.RoleButton && info.Name == want {
 			n++
 		}
 	}

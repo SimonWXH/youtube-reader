@@ -847,10 +847,7 @@ func (a *App) VisibleVideos() []core.Video {
 	showShorts := a.Settings.ShowShorts
 	a.settingsMu.RUnlock()
 	for _, v := range a.Videos {
-		if !showShorts && v.IsShort {
-			continue
-		}
-		if allowed != nil && !allowed[v.ID] && !allowed[v.ChannelID] {
+		if !a.videoVisible(v, allowed, showShorts) {
 			continue
 		}
 		if a.ChannelFilter != "" && v.ChannelID != a.ChannelFilter {
@@ -868,6 +865,19 @@ func (a *App) VisibleVideos() []core.Video {
 		sort.Slice(out, func(i, j int) bool { return out[i].FavoritedAt > out[j].FavoritedAt })
 	}
 	return out
+}
+
+// videoVisible is the permanent visibility rule shared by the grid and the
+// sidebar counts, so a row's count always equals the videos its destination
+// shows once the transient filter bar is cleared. The filter bar's
+// ChannelFilter, Search and UnreadOnly are applied on top of a destination
+// rather than being part of it, so VisibleVideos applies them itself and the
+// sidebar counts leave them out.
+func (a *App) videoVisible(v core.Video, allowed map[string]bool, showShorts bool) bool {
+	if !showShorts && v.IsShort {
+		return false
+	}
+	return allowed == nil || allowed[v.ID] || allowed[v.ChannelID]
 }
 
 func (a *App) HasSelection() bool {

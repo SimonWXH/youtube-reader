@@ -126,9 +126,10 @@ const (
 
 // Hairline and focus widths. Rules and the grid-card selection stroke are 1 pt.
 // The selection target adds a 2 pt 24% accent halo and sets the 2 pt keyboard
-// focus ring 3 pt outside the element's bounds; current call sites still draw
-// only the 1 pt stroke and pass a 2 pt focus offset. Sidebar rows and segmented
-// controls show selection as a tinted background with accent text.
+// focus ring 3 pt outside the element's bounds; sidebar rows use that 3 pt gap,
+// while StatefulButton still draws only the 1 pt stroke and passes a 2 pt focus
+// offset. Sidebar rows and segmented controls show selection as a tinted
+// background with accent text.
 const (
 	Hairline     float32 = 1
 	FocusRing    float32 = 2

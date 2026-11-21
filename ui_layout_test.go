@@ -13,9 +13,9 @@ func TestFitPaneWidths(t *testing.T) {
 	})
 
 	t.Run("persists chosen widths", func(t *testing.T) {
-		sidebar, details := fitPaneWidths(400, 500, true, 1280)
-		if sidebar != 400 || details != 500 {
-			t.Fatalf("fitPaneWidths = %v, %v; want 400, 500", sidebar, details)
+		sidebar, details := fitPaneWidths(300, 500, true, 1280)
+		if sidebar != 300 || details != 500 {
+			t.Fatalf("fitPaneWidths = %v, %v; want 300, 500", sidebar, details)
 		}
 	})
 
@@ -27,7 +27,7 @@ func TestFitPaneWidths(t *testing.T) {
 	})
 
 	t.Run("shrinks panes to respect total width", func(t *testing.T) {
-		sidebar, details := fitPaneWidths(480, 560, true, 960)
+		sidebar, details := fitPaneWidths(maxSidebarWidth, 560, true, 960)
 		if sidebar+details+minGridWidth > 960-2*splitDividerWidth() {
 			t.Fatalf("panes overflow window: sidebar=%v details=%v", sidebar, details)
 		}
@@ -38,8 +38,18 @@ func TestFitPaneWidths(t *testing.T) {
 }
 
 func TestBoundedSidebarWidth(t *testing.T) {
+	// The design board fixes the draggable range at 220 to 320 pt.
+	if minSidebarWidth != 220 || maxSidebarWidth != 320 {
+		t.Fatalf("sidebar bounds = %v/%v, want 220/320", minSidebarWidth, maxSidebarWidth)
+	}
 	if got := boundedSidebarWidth(40, false, 1280); got != minSidebarWidth {
 		t.Fatalf("boundedSidebarWidth(40) = %v, want %v", got, minSidebarWidth)
+	}
+	if got := boundedSidebarWidth(minSidebarWidth, false, 1280); got != minSidebarWidth {
+		t.Fatalf("boundedSidebarWidth(%v) = %v, want the minimum kept", minSidebarWidth, got)
+	}
+	if got := boundedSidebarWidth(maxSidebarWidth, false, 1280); got != maxSidebarWidth {
+		t.Fatalf("boundedSidebarWidth(%v) = %v, want the maximum kept", maxSidebarWidth, got)
 	}
 	if got := boundedSidebarWidth(919, false, 960); got != maxSidebarWidth {
 		t.Fatalf("boundedSidebarWidth(919) = %v, want %v", got, maxSidebarWidth)

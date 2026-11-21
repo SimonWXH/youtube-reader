@@ -15,11 +15,11 @@ const (
 	defaultHeaderHeight  float32 = 128
 	settingsHeaderHeight float32 = 104
 
-	defaultSidebarWidth float32 = 256
+	defaultSidebarWidth float32 = 260
 	defaultDetailsWidth float32 = 320
 
-	minSidebarWidth float32 = 180
-	maxSidebarWidth float32 = 480
+	minSidebarWidth float32 = 220
+	maxSidebarWidth float32 = 320
 	minDetailsWidth float32 = 280
 	maxDetailsWidth float32 = 560
 	minGridWidth    float32 = 320
@@ -65,6 +65,8 @@ type Window struct {
 	window             *mygo.Window
 	grid               ui.GridState
 	selectedIndex      *int
+	sidebarFocus       string // sidebar row that takes the focus in the next frame
+	sidebarKeyboard    string // sidebar row that arrow navigation focused
 	sidebarWidth       float32
 	contentWidth       float32
 	detailsWidth       float32
