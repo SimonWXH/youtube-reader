@@ -17,6 +17,19 @@ import (
 const (
 	defaultHeaderHeight  float32 = 128
 	settingsHeaderHeight float32 = 104
+
+	defaultSidebarWidth float32 = 256
+	defaultDetailsWidth float32 = 320
+
+	minSidebarWidth float32 = 180
+	maxSidebarWidth float32 = 480
+	minDetailsWidth float32 = 280
+	maxDetailsWidth float32 = 560
+	minGridWidth    float32 = 320
+
+	defaultMaxGridColumns = 5
+	minMaxGridColumns     = 2
+	maxMaxGridColumns     = 8
 )
 
 func realMain() {
@@ -51,10 +64,14 @@ func realMain() {
 }
 
 type Window struct {
-	app           *App
-	window        *mygo.Window
-	grid          ui.GridState
-	selectedIndex *int
+	app                *App
+	window             *mygo.Window
+	grid               ui.GridState
+	selectedIndex      *int
+	sidebarWidth       float32
+	contentWidth       float32
+	detailsWidth       float32
+	gridAvailableWidth float32
 }
 
 func (w *Window) toast(c *ui.Context, msg string, isError bool) {
@@ -144,14 +161,149 @@ func plural(n int) string {
 func (w *Window) view(c *ui.Context) {
 	t := c.Theme()
 	tokens := mui.NewTokens(t, t.Dark)
-	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
+	w.app.Settings.MaxGridColumns = clampInt(w.app.Settings.MaxGridColumns, minMaxGridColumns, maxMaxGridColumns)
+
+	total := windowWidth(c)
+	selected := w.app.HasSelection()
+	w.sidebarWidth, w.detailsWidth = fitPaneWidths(
+		w.app.Settings.SidebarWidth, w.app.Settings.DetailsWidth,
+		selected, total,
+	)
+	w.contentWidth = total - w.sidebarWidth - 2*splitDividerWidth()
+	if selected {
+		w.contentWidth -= w.detailsWidth + splitDividerWidth()
+	}
+	// MyGo's Split clamps only to its own 40 DIP minimum while a drag is
+	// active. Keep the width it reports within the same bounds used on the
+	// next build, so a drag cannot save a value that immediately snaps back.
+	w.sidebarWidth = boundedSidebarWidth(w.sidebarWidth, selected, total)
+	w.contentWidth = max(minGridWidth, w.contentWidth)
+	if selected {
+		w.contentWidth = min(w.contentWidth, total-w.sidebarWidth-2*splitDividerWidth()-minDetailsWidth)
+	}
+	var contentSplit ui.Element
+	outerSplit := ui.Split(c, &w.sidebarWidth, func() {
 		w.sidebar(c, tokens)
-		w.content(c, tokens)
-	})
+	}, func() {
+		if !selected {
+			w.gridAvailableWidth = w.contentWidth
+			w.content(c, tokens)
+			return
+		}
+		contentSplit = ui.Split(c, &w.contentWidth, func() {
+			w.gridAvailableWidth = w.contentWidth - splitDividerWidth()
+			w.content(c, tokens)
+		}, func() {
+			w.drawer(c, tokens)
+		}).Fill()
+	}).Fill()
+	outerChanged := outerSplit.Changed()
+	contentChanged := contentSplit.Changed()
+	if outerChanged || contentChanged {
+		w.app.Settings.SidebarWidth = boundedSidebarWidth(w.sidebarWidth, selected, total)
+		if detailsChanged, ok := persistedDetailsWidth(total, w.sidebarWidth, w.contentWidth, selected, contentChanged); ok {
+			w.app.Settings.DetailsWidth = detailsChanged
+		}
+		_ = w.app.SaveSettings()
+	}
+}
+
+// persistedDetailsWidth recovers the inner split's new size only when that
+// split exists and reported a change. Without this guard, an outer split
+// drag computes a nonsensical details width from the no-details content pane.
+func persistedDetailsWidth(total, sidebar, content float32, selected, contentChanged bool) (float32, bool) {
+	if !selected || !contentChanged {
+		return 0, false
+	}
+	details := total - sidebar - content - 3*splitDividerWidth()
+	if details < minDetailsWidth {
+		return 0, false
+	}
+	return clamp(details, minDetailsWidth, maxDetailsWidth), true
+}
+
+func fitPaneWidths(sidebar, details float32, selected bool, total float32) (float32, float32) {
+	if sidebar <= 0 {
+		sidebar = defaultSidebarWidth
+	}
+	if details <= 0 {
+		details = defaultDetailsWidth
+	}
+	sidebar = clamp(sidebar, minSidebarWidth, maxSidebarWidth)
+	details = clamp(details, minDetailsWidth, maxDetailsWidth)
+	if !selected {
+		if total <= 0 {
+			return sidebar, details
+		}
+		return clamp(sidebar, minSidebarWidth, min(maxSidebarWidth, total-2*splitDividerWidth()-minGridWidth)), details
+	}
+	if total <= 0 {
+		return sidebar, details
+	}
+	divider := splitDividerWidth()
+	maxTotal := total - 2*divider
+	if maxTotal < minSidebarWidth+minGridWidth+minDetailsWidth {
+		return minSidebarWidth, minDetailsWidth
+	}
+	if sidebar+details+minGridWidth > maxTotal {
+		excess := sidebar + details + minGridWidth - maxTotal
+		room := sidebar + details - minSidebarWidth - minDetailsWidth
+		sidebarShare := float32(0.5)
+		if room > 0 {
+			sidebarShare = (sidebar - minSidebarWidth) / room
+		}
+		sidebar -= excess * sidebarShare
+		details -= excess * (1 - sidebarShare)
+	}
+	return sidebar, details
+}
+
+// boundedSidebarWidth matches the Split's drag value to the bounds that the
+// next build's fitPaneWidths would enforce, so a drag cannot persist a width
+// that immediately snaps back.
+func boundedSidebarWidth(width float32, selected bool, total float32) float32 {
+	max := maxSidebarWidth
+	if total > 0 {
+		maxGridShare := total - 2*splitDividerWidth() - minGridWidth
+		if selected {
+			maxGridShare -= minDetailsWidth + splitDividerWidth()
+		}
+		max = min(max, maxGridShare)
+	}
+	return clamp(width, minSidebarWidth, max)
+}
+
+func splitDividerWidth() float32 {
+	return 1 // The divider line itself; the drag handle overlays both panes.
+}
+
+func windowWidth(c *ui.Context) float32 {
+	w, _ := c.Size()
+	return w
+}
+
+func clampInt(v, min, max int) int {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
+}
+
+func clamp(v, min, max float32) float32 {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
 }
 
 func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
-	sidebar := ui.Column(c).Width(256).Shrink(0).Background(t.Sidebar)
+	sidebar := ui.Column(c).Fill().Shrink(0).Background(t.Sidebar)
 	sidebar.Draw(func(p *ui.Painter, r ui.Rect) {
 		p.Fill(ui.Rect{X: r.X + r.W - 1, Y: r.Y, W: 1, H: r.H}, t.Border, 0)
 	})
@@ -243,7 +395,6 @@ func (w *Window) content(c *ui.Context, t mui.Tokens) {
 			return
 		}
 		w.gridArea(c, t)
-		w.drawer(c, t)
 	})
 }
 
@@ -324,7 +475,7 @@ func (w *Window) header(c *ui.Context, t mui.Tokens) {
 				}
 			}
 			ui.SearchField(c.Key("search"), &w.app.Search).Width(220).Label("Search videos")
-			ui.Checkbox(c.Key("unread"), &w.app.UnreadOnly, "Unread").Label("Unread").FontSize(14)
+			ui.Checkbox(c.Key("unread"), &w.app.UnreadOnly, "未观看").Label("未观看").FontSize(14)
 			ui.Row(c).Grow(1)
 			ui.Text(c, fmt.Sprintf("%d videos", len(w.app.VisibleVideos()))).FontSize(13).TextColor(t.Muted).SingleLine()
 		})
@@ -372,7 +523,7 @@ func (w *Window) title() string {
 
 func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 	videos := w.app.VisibleVideos()
-	ui.Column(c).Absolute().Top(defaultHeaderHeight).Left(12).Right(332).Bottom(16).Children(func() {
+	ui.Column(c).Grow(1).Padding(0, 12, 16, 12).Children(func() {
 		if len(videos) == 0 {
 			if w.app.SelectedVideoID != "" {
 				w.app.SelectedVideoID = ""
@@ -396,7 +547,8 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 		}
 		w.selectedIndex = &target
 		w.grid.Selected = w.selectedIndex
-		grid := ui.GridView(c, &w.grid, len(videos), 240, 302, func(i int) {
+		minWidth := w.gridMinWidth(c, w.app.Settings.MaxGridColumns)
+		grid := ui.GridView(c, &w.grid, len(videos), minWidth, 302, func(i int) {
 			v := videos[i]
 			selected := w.app.SelectedVideoID == v.ID
 			card := ui.Column(c).Height(302).Gap(5).Padding(12).Radius(10).Background(t.Surface).Border(1, t.BorderSoft).Transition(mui.Fade).Clip()
@@ -409,7 +561,7 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 				ui.Row(c).Height(160).FillWidth().Radius(8).Clip().Children(func() {
 					mui.Thumbnail(c, t, v.ThumbnailURL, 0, 0)
 				})
-				ui.Text(c, v.Title).Bold().FontSize(14).FixedLineHeight(20).Height(40).MaxLines(2).Label(v.Title)
+				ui.Text(c, v.Title).Bold().FontSize(14).FixedLineHeight(20).Height(40).MaxLines(2).Wrap().Label(v.Title)
 				if desc := strings.TrimSpace(v.Description); desc != "" {
 					ui.Text(c, desc).FontSize(13).TextColor(t.Muted).FixedLineHeight(18).Height(36).MaxLines(2)
 				}
@@ -425,7 +577,7 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 					ui.Text(c, core.RelativeDate(v.PublishedAt, time.Now())).FontSize(13).TextColor(t.Muted).SingleLine()
 				})
 			})
-		}).Grow(1).Padding(0, 12, 16)
+		}).Grow(1)
 		if grid.Changed() {
 			if w.grid.Selected != nil && *w.grid.Selected < len(videos) {
 				w.app.SelectedVideoID = videos[*w.grid.Selected].ID
@@ -434,8 +586,25 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 	})
 }
 
+func (w *Window) gridMinWidth(c *ui.Context, maxColumns int) float32 {
+	available := w.gridAvailableWidth
+	if available <= 0 {
+		available = w.contentWidth
+	}
+	return gridMinWidthForAvailable(available, c.Theme().Space(2), maxColumns)
+}
+
+// gridMinWidthForAvailable uses the width the grid will actually occupy on
+// this build, not the split's stale previous-frame width. That keeps the
+// first paint and later divider drags within the configured column cap.
+func gridMinWidthForAvailable(available, gap float32, maxColumns int) float32 {
+	maxColumns = clampInt(maxColumns, minMaxGridColumns, maxMaxGridColumns)
+	available -= 24
+	return max(float32(200), available/float32(maxColumns)-gap)
+}
+
 func (w *Window) drawer(c *ui.Context, t mui.Tokens) {
-	drawer := ui.Column(c).Width(320).Padding(24, 20).Gap(16).Background(t.App).Absolute().Top(defaultHeaderHeight).Right(0).Bottom(0)
+	drawer := ui.Column(c).Fill().Padding(24, 20).Gap(16).Background(t.App)
 	drawer.Draw(func(p *ui.Painter, r ui.Rect) {
 		p.Fill(ui.Rect{X: r.X, Y: r.Y, W: 1, H: r.H}, t.Border, 0)
 	})
@@ -452,7 +621,7 @@ func (w *Window) drawer(c *ui.Context, t mui.Tokens) {
 			ui.Text(c, "Video not found.").FontSize(14).TextColor(t.Muted)
 			return
 		}
-		ui.Text(c, v.Title).Bold().FontSize(20).FixedLineHeight(26).MaxLines(3)
+		ui.Text(c, v.Title).Bold().FontSize(20).FixedLineHeight(26).MaxLines(3).Wrap()
 		ui.Text(c, v.ChannelTitle+"  -  "+core.RelativeDate(v.PublishedAt, time.Now())).FontSize(13).TextColor(t.Muted)
 		if v.ThumbnailURL != "" {
 			ui.Row(c).Height(158).FillWidth().Radius(10).Clip().Children(func() {
@@ -492,6 +661,14 @@ func (w *Window) drawer(c *ui.Context, t mui.Tokens) {
 func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 	ui.Scroll(c).Grow(1).Children(func() {
 		ui.Column(c).Gap(16).Padding(24, 32, 32).Children(func() {
+			ui.Text(c, "Layout").Bold().FontSize(15)
+			ui.Text(c, "Maximum columns in each row (2-8)").FontSize(14)
+			columns := float64(w.app.Settings.MaxGridColumns)
+			if ui.Stepper(c, &columns, float64(minMaxGridColumns), float64(maxMaxGridColumns), 1).Changed() {
+				w.app.Settings.MaxGridColumns = int(columns)
+				_ = w.app.SaveSettings()
+			}
+			ui.Divider(c)
 			ui.Text(c, "API key (local only, never synced)").FontSize(14)
 			ui.TextInput(c.Key("api-key"), &w.app.Settings.APIKey).Password().Placeholder("YouTube Data API v3 key").Width(520)
 			ui.Text(c, "Refresh interval").FontSize(14)
