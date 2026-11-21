@@ -64,13 +64,14 @@ func realMain() {
 }
 
 type Window struct {
-	app           *App
-	window        *mygo.Window
-	grid          ui.GridState
-	selectedIndex *int
-	sidebarWidth  float32
-	contentWidth  float32
-	detailsWidth  float32
+	app                *App
+	window             *mygo.Window
+	grid               ui.GridState
+	selectedIndex      *int
+	sidebarWidth       float32
+	contentWidth       float32
+	detailsWidth       float32
+	gridAvailableWidth float32
 }
 
 func (w *Window) toast(c *ui.Context, msg string, isError bool) {
@@ -160,39 +161,68 @@ func plural(n int) string {
 func (w *Window) view(c *ui.Context) {
 	t := c.Theme()
 	tokens := mui.NewTokens(t, t.Dark)
-	w.sidebarWidth, w.detailsWidth = fitPaneWidths(
-		w.app.Settings.SidebarWidth, w.app.Settings.DetailsWidth,
-		w.app.HasSelection(), windowWidth(c),
-	)
-	w.app.Settings.SidebarWidth = w.sidebarWidth
-	w.app.Settings.DetailsWidth = w.detailsWidth
 	w.app.Settings.MaxGridColumns = clampInt(w.app.Settings.MaxGridColumns, minMaxGridColumns, maxMaxGridColumns)
 
 	total := windowWidth(c)
+	selected := w.app.HasSelection()
+	w.sidebarWidth, w.detailsWidth = fitPaneWidths(
+		w.app.Settings.SidebarWidth, w.app.Settings.DetailsWidth,
+		selected, total,
+	)
 	w.contentWidth = total - w.sidebarWidth - 2*splitDividerWidth()
-	if w.app.HasSelection() {
+	if selected {
 		w.contentWidth -= w.detailsWidth + splitDividerWidth()
 	}
+	w.app.Settings.SidebarWidth = w.sidebarWidth
+	w.app.Settings.DetailsWidth = w.detailsWidth
 
+	// MyGo's Split clamps only to its own 40 DIP minimum while a drag is
+	// active. Keep the width it reports within the same bounds used on the
+	// next build, so a drag cannot save a value that immediately snaps back.
+	w.sidebarWidth = boundedSidebarWidth(w.sidebarWidth, selected, total)
+	w.contentWidth = max(minGridWidth, w.contentWidth)
+	if selected {
+		w.contentWidth = min(w.contentWidth, total-w.sidebarWidth-2*splitDividerWidth()-minDetailsWidth)
+	}
 	var contentSplit ui.Element
 	outerSplit := ui.Split(c, &w.sidebarWidth, func() {
 		w.sidebar(c, tokens)
 	}, func() {
-		if !w.app.HasSelection() {
+		if !selected {
+			w.gridAvailableWidth = w.contentWidth
 			w.content(c, tokens)
 			return
 		}
 		contentSplit = ui.Split(c, &w.contentWidth, func() {
+			w.gridAvailableWidth = w.contentWidth - splitDividerWidth()
 			w.content(c, tokens)
 		}, func() {
 			w.drawer(c, tokens)
 		}).Fill()
 	}).Fill()
-	if outerSplit.Changed() || contentSplit.Changed() {
-		w.app.Settings.SidebarWidth = w.sidebarWidth
-		w.app.Settings.DetailsWidth = clamp(total-w.sidebarWidth-w.contentWidth-3*splitDividerWidth(), minDetailsWidth, maxDetailsWidth)
+	outerChanged := outerSplit.Changed()
+	contentChanged := contentSplit.Changed()
+	if outerChanged || contentChanged {
+		w.app.Settings.SidebarWidth = boundedSidebarWidth(w.sidebarWidth, selected, total)
+		if detailsChanged, ok := persistedDetailsWidth(total, w.sidebarWidth, w.contentWidth, selected, contentChanged); ok {
+			w.app.Settings.DetailsWidth = detailsChanged
+		}
 		_ = w.app.SaveSettings()
 	}
+}
+
+// persistedDetailsWidth recovers the inner split's new size only when that
+// split exists and reported a change. Without this guard, an outer split
+// drag computes a nonsensical details width from the no-details content pane.
+func persistedDetailsWidth(total, sidebar, content float32, selected, contentChanged bool) (float32, bool) {
+	if !selected || !contentChanged {
+		return 0, false
+	}
+	details := total - sidebar - content - 3*splitDividerWidth()
+	if details < minDetailsWidth {
+		return 0, false
+	}
+	return clamp(details, minDetailsWidth, maxDetailsWidth), true
 }
 
 func fitPaneWidths(sidebar, details float32, selected bool, total float32) (float32, float32) {
@@ -205,14 +235,10 @@ func fitPaneWidths(sidebar, details float32, selected bool, total float32) (floa
 	sidebar = clamp(sidebar, minSidebarWidth, maxSidebarWidth)
 	details = clamp(details, minDetailsWidth, maxDetailsWidth)
 	if !selected {
-		details = max(details, minDetailsWidth)
-	}
-	if !selected {
 		if total <= 0 {
 			return sidebar, details
 		}
-		sidebar = clamp(sidebar, minSidebarWidth, total-2*splitDividerWidth()-minGridWidth)
-		return sidebar, details
+		return clamp(sidebar, minSidebarWidth, min(maxSidebarWidth, total-2*splitDividerWidth()-minGridWidth)), details
 	}
 	if total <= 0 {
 		return sidebar, details
@@ -233,6 +259,21 @@ func fitPaneWidths(sidebar, details float32, selected bool, total float32) (floa
 		details -= excess * (1 - sidebarShare)
 	}
 	return sidebar, details
+}
+
+// boundedSidebarWidth matches the Split's drag value to the bounds that the
+// next build's fitPaneWidths would enforce, so a drag cannot persist a width
+// that immediately snaps back.
+func boundedSidebarWidth(width float32, selected bool, total float32) float32 {
+	max := maxSidebarWidth
+	if total > 0 {
+		maxGridShare := total - 2*splitDividerWidth() - minGridWidth
+		if selected {
+			maxGridShare -= minDetailsWidth + splitDividerWidth()
+		}
+		max = min(max, maxGridShare)
+	}
+	return clamp(width, minSidebarWidth, max)
 }
 
 func splitDividerWidth() float32 {
@@ -549,14 +590,19 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 }
 
 func (w *Window) gridMinWidth(c *ui.Context, maxColumns int) float32 {
-	if maxColumns < minMaxGridColumns {
-		maxColumns = minMaxGridColumns
+	available := w.gridAvailableWidth
+	if available <= 0 {
+		available = w.contentWidth
 	}
-	if maxColumns > maxMaxGridColumns {
-		maxColumns = maxMaxGridColumns
-	}
-	gap := c.Theme().Space(2)
-	available := w.contentWidth - 24
+	return gridMinWidthForAvailable(available, c.Theme().Space(2), maxColumns)
+}
+
+// gridMinWidthForAvailable uses the width the grid will actually occupy on
+// this build, not the split's stale previous-frame width. That keeps the
+// first paint and later divider drags within the configured column cap.
+func gridMinWidthForAvailable(available, gap float32, maxColumns int) float32 {
+	maxColumns = clampInt(maxColumns, minMaxGridColumns, maxMaxGridColumns)
+	available -= 24
 	return max(float32(200), available/float32(maxColumns)-gap)
 }
 
