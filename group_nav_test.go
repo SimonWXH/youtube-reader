@@ -183,6 +183,9 @@ func TestCardChannelNameOpensChannelAndPreservesCardSelection(t *testing.T) {
 	w := &Window{app: a, selectedIndex: new(int)}
 	tt := ui.NewTester(w.view, 1280, 840)
 	tt.Frame()
+	if n := countText(tt, "Group channel"); n != 1 {
+		t.Fatalf("collapsed group should not render its channel row; got %d matches in %q", n, tt.Texts())
+	}
 	if err := tt.Click("Group"); err != nil {
 		t.Fatalf("click group header: %v", err)
 	}
@@ -192,21 +195,17 @@ func TestCardChannelNameOpensChannelAndPreservesCardSelection(t *testing.T) {
 	if !a.Settings.ExpandedGroups["group-1"] {
 		t.Fatalf("group expansion not saved: %+v", a.Settings.ExpandedGroups)
 	}
-	tt.Frame()
-	found := false
-	for _, text := range tt.Texts() {
-		if text == "Group channel" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("expanded group does not render channels: %q", tt.Texts())
+	if n := countText(tt, "Group channel"); n != 2 {
+		t.Fatalf("expanded group should add its channel row; got %d matches in %q", n, tt.Texts())
 	}
 	if err := tt.Click("Group"); err != nil {
 		t.Fatalf("click group header again: %v", err)
 	}
 	if !a.GroupCollapsed("group-1") {
 		t.Fatal("clicking expanded group header did not collapse it")
+	}
+	if n := countText(tt, "Group channel"); n != 1 {
+		t.Fatalf("collapsed group should remove its channel row; got %d matches in %q", n, tt.Texts())
 	}
 
 	if err := tt.Click("The PrimeTime"); err != nil {
@@ -251,6 +250,9 @@ func TestGroupHeaderKeyboardToggleKeepsFocus(t *testing.T) {
 	if !found {
 		t.Fatal("group header is not exposed as a disclosure")
 	}
+	if n := countText(tt, "Group channel"); n != 1 {
+		t.Fatalf("collapsed group should not render its channel row; got %d matches in %q", n, tt.Texts())
+	}
 
 	var disclosure ui.AccessInfo
 	for i := 0; i < 20; i++ {
@@ -274,9 +276,15 @@ func TestGroupHeaderKeyboardToggleKeepsFocus(t *testing.T) {
 	if !disclosure.Expanded {
 		t.Fatal("expanded group is not exposed as expanded")
 	}
+	if n := countText(tt, "Group channel"); n != 2 {
+		t.Fatalf("expanded group should add its channel row; got %d matches in %q", n, tt.Texts())
+	}
 	tt.Key(0, ui.KeyEnter)
 	if !a.GroupCollapsed("group-1") {
 		t.Fatal("Enter did not collapse the group")
+	}
+	if n := countText(tt, "Group channel"); n != 1 {
+		t.Fatalf("collapsed group should remove its channel row; got %d matches in %q", n, tt.Texts())
 	}
 	disclosure, _ = tt.AccessByRole(ui.RoleDisclosure, "Group")
 	if !disclosure.Focused {
@@ -357,4 +365,14 @@ func TestCardChannelNameHandlesEmptyChannelID(t *testing.T) {
 			t.Fatalf("opened invalid channel URL: %q", url)
 		}
 	}
+}
+
+func countText(tt *ui.Tester, want string) int {
+	n := 0
+	for _, text := range tt.Texts() {
+		if text == want {
+			n++
+		}
+	}
+	return n
 }
