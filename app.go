@@ -149,7 +149,7 @@ func localLockDir() string {
 func defaultSettings() core.Settings {
 	dir := appDir()
 	return core.Settings{
-		RefreshMinutes:  60,
+		RefreshMinutes:  defaultRefreshMinutes,
 		SyncPath:        filepath.Join(dir, "youtube-reader-sync.json"),
 		BackupPath:      filepath.Join(dir, "favorites-backup.json"),
 		NotificationIDs: []string{},
@@ -170,9 +170,9 @@ func LoadApp() (*App, error) {
 	if data, err := os.ReadFile(filepath.Join(dir, "settings.json")); err == nil {
 		_ = json.Unmarshal(data, &settings)
 	}
-	if settings.RefreshMinutes <= 0 {
-		settings.RefreshMinutes = 60
-	}
+	// A zero refresh interval is Manual, a choice the Settings window
+	// offers, so it is kept as it is. A file without the key keeps the
+	// default the struct started with.
 	if settings.SyncPath == "" {
 		settings.SyncPath = filepath.Join(dir, "youtube-reader-sync.json")
 	}
@@ -550,7 +550,7 @@ func (a *App) Refresh(force bool) RefreshOutcome {
 	_, _ = a.updateSettings(func(s *core.Settings) bool {
 		if outcome.Changed {
 			s.LastRefresh = core.FormatRFC3339(now)
-			s.NextRefresh = core.FormatRFC3339(now.Add(interval))
+			s.NextRefresh = nextRefreshStamp(now, interval)
 		}
 		s.RecentFailures = outcome.Failures
 		if containsQuotaFailure(outcome.Failures) {
@@ -563,6 +563,15 @@ func (a *App) Refresh(force bool) RefreshOutcome {
 		outcome.Channels = a.Channels
 	}
 	return outcome
+}
+
+// nextRefreshStamp is when the next automatic refresh falls due: empty under
+// Manual, which schedules none.
+func nextRefreshStamp(from time.Time, interval time.Duration) string {
+	if interval <= 0 {
+		return ""
+	}
+	return core.FormatRFC3339(from.Add(interval))
 }
 
 func containsQuotaFailure(failures []core.RefreshFailure) bool {
@@ -622,7 +631,8 @@ func (a *App) StartupRefreshIfDue() {
 	refreshMinutes := a.Settings.RefreshMinutes
 	quotaPausedUntil := a.Settings.QuotaPausedUntil
 	a.settingsMu.RUnlock()
-	if lastRefresh == "" {
+	// Zero is Manual: only Refresh and the menu's command refresh then.
+	if lastRefresh == "" || refreshMinutes <= 0 {
 		return
 	}
 	last, err := time.Parse(time.RFC3339, lastRefresh)
@@ -709,7 +719,7 @@ func (a *App) ConsumeHandoff() error {
 		if fresh && handoff.Result != nil && handoff.CreatedAt != "" {
 			s.LastRefresh = handoff.CreatedAt
 			if at, err := time.Parse(time.RFC3339, handoff.CreatedAt); err == nil {
-				s.NextRefresh = core.FormatRFC3339(at.Add(refreshInterval))
+				s.NextRefresh = nextRefreshStamp(at, refreshInterval)
 			}
 		}
 		s.LastHandoffID = handoff.ID

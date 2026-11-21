@@ -12,15 +12,7 @@ import (
 func (w *Window) header(c *ui.Context, t mui.Tokens) {
 	title := w.title()
 	subtitle := refreshedLabel(w.app.settingsSnapshot().LastRefresh)
-	if w.app.SettingsOpen {
-		title = "Settings"
-		subtitle = "Refresh, imports, sync and notifications"
-	}
-	headerHeight := defaultHeaderHeight
-	if w.app.SettingsOpen {
-		headerHeight = settingsHeaderHeight
-	}
-	ui.Column(c).Padding(16, 24, 12).Gap(12).Height(headerHeight).Shrink(0).Children(func() {
+	ui.Column(c).Padding(16, 24, 12).Gap(12).Height(defaultHeaderHeight).Shrink(0).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Gap(2).Grow(1).Children(func() {
 				ui.Text(c, title).Bold().FontSize(28).FixedLineHeight(34).TextColor(t.Text).SingleLine()
@@ -44,15 +36,9 @@ func (w *Window) header(c *ui.Context, t mui.Tokens) {
 				w.runRefresh(c, true)
 			})
 			mui.StatefulButton(c, t, "settings", "Settings", mui.IconSettings, false, mui.Default, func() {
-				if w.app.SettingsOpen {
-					_ = w.app.SaveSettings()
-				}
-				w.app.SettingsOpen = !w.app.SettingsOpen
+				w.openSettingsWindow()
 			})
 		})
-		if w.app.SettingsOpen {
-			return
-		}
 		ui.Row(c).Height(34).AlignItems(ui.Center).Gap(12).Children(func() {
 			options := []string{"All channels"}
 			ids := []string{""}

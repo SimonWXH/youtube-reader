@@ -68,12 +68,20 @@ type Settings struct {
 	QuotaPausedUntil string           `json:"quotaPausedUntil,omitempty"`
 	LastHandoffID    string           `json:"lastHandoffID,omitempty"`
 	HelperInstalled  bool             `json:"helperInstalled,omitempty"`
-
-	// Local UI preferences. These stay in settings.json and are never synced.
+	// Local UI preferences and local-only state. These stay in settings.json
+	// and are never synced.
 	SidebarWidth   float32         `json:"sidebarWidth,omitempty"`
 	DetailsWidth   float32         `json:"detailsWidth,omitempty"`
 	MaxGridColumns int             `json:"maxGridColumns,omitempty"`
 	ExpandedGroups map[string]bool `json:"expandedGroups,omitempty"`
+	// LastSettingsPane is the Settings window's pane, restored on reopen.
+	LastSettingsPane string `json:"lastSettingsPane,omitempty"`
+	// LastFavoritesExport is when favorites were last written to the backup
+	// file, for the Backups pane's "Last export" line.
+	LastFavoritesExport string `json:"lastFavoritesExport,omitempty"`
+	// NotificationPermissionDenied remembers that macOS refused a
+	// notification, so the Notifications pane can offer System Settings.
+	NotificationPermissionDenied bool `json:"notificationPermissionDenied,omitempty"`
 }
 
 type FavoriteRecord struct {

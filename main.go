@@ -12,8 +12,7 @@ import (
 )
 
 const (
-	defaultHeaderHeight  float32 = 128
-	settingsHeaderHeight float32 = 104
+	defaultHeaderHeight float32 = 128
 
 	defaultSidebarWidth float32 = 260
 	defaultDetailsWidth float32 = 320
@@ -54,6 +53,9 @@ func realMain() {
 			Content: ui.View(window.view),
 		})
 		window.window = win
+		// Zone A owns the app's full menu bar; until it lands, this puts
+		// Settings… and its Command-Comma accelerator in the App menu.
+		window.installSettingsCommand()
 	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
@@ -71,6 +73,8 @@ type Window struct {
 	contentWidth       float32
 	detailsWidth       float32
 	gridAvailableWidth float32
+	// settingsWindow is the standalone Settings window and its view state.
+	settingsWindow settingsWindow
 }
 
 func (w *Window) toast(c *ui.Context, msg string, isError bool) {
@@ -97,7 +101,7 @@ func (w *Window) runRefresh(c *ui.Context, force bool) {
 				}
 				if outcome.Changed {
 					for _, n := range outcome.Notified {
-						postNotification(n)
+						w.postNotification(n)
 					}
 				}
 			})
@@ -107,7 +111,9 @@ func (w *Window) runRefresh(c *ui.Context, force bool) {
 	}()
 }
 
-func postNotification(plan NotificationPlan) {
+// postNotification shows one local notification and reports what the system
+// said, so a refusal can be recorded for the Notifications pane.
+func postNotification(plan NotificationPlan) error {
 	body := fmt.Sprintf("%d new video%s", plan.Count, plural(plan.Count))
 	if plan.NewestTitle != "" {
 		body += "\n" + plan.NewestTitle
@@ -120,7 +126,9 @@ func postNotification(plan NotificationPlan) {
 	})
 	if err := n.Show(); err != nil {
 		log.Printf("notification: %v", err)
+		return err
 	}
+	return nil
 }
 
 func registerNotificationClick(app *App) (off func()) {
@@ -160,12 +168,8 @@ func plural(n int) string {
 func (w *Window) content(c *ui.Context, t mui.Tokens) {
 	ui.Column(c).Grow(1).MinWidth(0).Background(t.App).Children(func() {
 		w.header(c, t)
-		if w.app.SettingsOpen {
-			w.settings(c, t)
-			return
-		}
 		if w.app.settingsSnapshot().APIKey == "" {
-			w.emptyState(c, t, "Set up YouTube Reader", "Add a YouTube Data API key in Settings to start following channels.", "setup-settings", "Open Settings", func(*ui.Context) { w.app.SettingsOpen = true })
+			w.emptyState(c, t, "Set up YouTube Reader", "Add a YouTube Data API key in Settings to start following channels.", "setup-settings", "Open Settings", func(*ui.Context) { w.openSettingsWindow() })
 			return
 		}
 		if len(w.app.Sync.Channels) == 0 {

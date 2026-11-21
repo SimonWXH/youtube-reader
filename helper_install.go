@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"text/template"
 )
 
@@ -41,34 +42,49 @@ const launchdPlist = `<?xml version="1.0" encoding="UTF-8"?>
     <string>-data-dir</string><string>{{.DataDir}}</string>
   </array>
   <key>RunAtLoad</key><true/>
+{{- if .Interval}}
   <key>StartInterval</key><integer>{{.Interval}}</integer>
+{{- end}}
   <key>StandardOutPath</key><string>{{.DataDir}}/helper.log</string>
   <key>StandardErrorPath</key><string>{{.DataDir}}/helper.err.log</string>
 </dict></plist>
 `
 
-func installHelper() error {
+// installHelper registers the helper as a user LaunchAgent. The Settings
+// window's refresh interval schedules it: an interval in minutes becomes the
+// LaunchAgent's StartInterval, and Manual (zero) installs it at login only.
+func installHelper(refreshMinutes int) error {
 	p := helperPathsFor()
+	p.Interval = refreshMinutes * 60
 	path := filepath.Join(p.Home, "Library", "LaunchAgents", helperLabel+".plist")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	tmpl, err := template.New("plist").Parse(launchdPlist)
+	plist, err := renderLaunchAgent(p)
 	if err != nil {
 		return err
 	}
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if err := tmpl.Execute(f, struct {
-		helperPaths
-		Label string
-	}{helperPaths: p, Label: helperLabel}); err != nil {
+	if err := os.WriteFile(path, []byte(plist), 0o600); err != nil {
 		return err
 	}
 	return exec.Command("launchctl", "bootout", "gui/"+uid(), path).Run()
+}
+
+// renderLaunchAgent is the LaunchAgent's property list, so the interval the
+// Settings window chose can be read back in a test.
+func renderLaunchAgent(p helperPaths) (string, error) {
+	tmpl, err := template.New("plist").Parse(launchdPlist)
+	if err != nil {
+		return "", err
+	}
+	var out strings.Builder
+	if err := tmpl.Execute(&out, struct {
+		helperPaths
+		Label string
+	}{helperPaths: p, Label: helperLabel}); err != nil {
+		return "", err
+	}
+	return out.String(), nil
 }
 
 func uninstallHelper() error {

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -11,31 +14,406 @@ import (
 	mui "github.com/simon/youtube-reader/ui"
 )
 
-func (w *Window) settings(c *ui.Context, t mui.Tokens) {
+// The Settings window takes its geometry from the agreed design (board A4,
+// 4.6, and the gap table's row E): a separate 520 x 460 window with a 52 pt
+// title bar that macOS's window controls sit in, a 40 pt pane toolbar under
+// it, and a scrollable form body of a 140 pt label column beside a control
+// column. Minimize and zoom stay in the title bar, dimmed, because the board
+// fixes the window's size; only the close button acts.
+//
+// The fixed lengths below are the board's own measurements, named once. Every
+// colour, radius, spacing step, focus ring, and transition comes from the T0
+// token layer in ui/theme.go and ui/typography.go.
+const (
+	settingsWindowWidth  float32 = 520
+	settingsWindowHeight float32 = 460
+	settingsTitleBarH    float32 = 52
+	settingsPaneBarH     float32 = 40
+	settingsPaneInset    float32 = 16
+	settingsLabelColumn  float32 = 140
+	settingsControlH     float32 = 28
+	settingsAPIKeyWidth  float32 = 240
+	settingsPopupWidth   float32 = 160
+	settingsSegmentH     float32 = 22
+	settingsStepperValue float32 = 40
+	settingsStepperStep  float32 = 26
+	settingsGlyph        float32 = 16
+
+	// The rest of the board's control geometry. These are the native
+	// controls' own metrics (board B1), not spacing between blocks, so they
+	// are named here rather than derived from the layout ladder: a
+	// segmented control's 2 pt inset and 9 pt segment padding, its 22 pt
+	// segment, the 32 x 18 switch, the 6 pt glyph gap, and the 72 pt
+	// minimum width of a primary button.
+	settingsSegmentInset  float32 = 2
+	settingsSegmentGap    float32 = 2
+	settingsSegmentPadX   float32 = 9
+	settingsSegmentRadius float32 = 4
+	settingsSwitchWidth   float32 = 32
+	settingsSwitchHeight  float32 = 18
+	settingsSwitchRadius  float32 = 9
+	settingsGlyphGap      float32 = 6
+	settingsPrimaryMinW   float32 = 72
+)
+
+// The three glyphs the shared icon set does not have yet: the API key's
+// reveal eye and its struck-through twin, and the stepper's marks. They follow
+// the set's 24 pt box, 1.5 pt stroke, and round joins.
+var (
+	settingsIconEye    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/></svg>`))
+	settingsIconEyeOff = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.6 5.7A9.6 9.6 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-2.7 3.6"/><path d="M6.3 7.7A17 17 0 0 0 2.5 12S6 18.5 12 18.5a9.4 9.4 0 0 0 4-1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="m3 3 18 18"/></svg>`))
+	settingsIconMinus  = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/></svg>`))
+	settingsIconPlus   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>`))
+)
+
+// settingsPane is one of the window's three panes.
+type settingsPane int
+
+const (
+	settingsGeneral settingsPane = iota
+	settingsBackups
+	settingsNotifications
+)
+
+var settingsPaneNames = [...]string{"General", "Backups", "Notifications"}
+
+// title is the pane's name, which the window title follows.
+func (p settingsPane) title() string {
+	if int(p) < 0 || int(p) >= len(settingsPaneNames) {
+		return settingsPaneNames[settingsGeneral]
+	}
+	return settingsPaneNames[p]
+}
+
+// name is the pane's name as settings.json keeps it.
+func (p settingsPane) name() string { return p.title() }
+
+// settingsPaneFromName restores the pane shown last time, General for a name
+// this build does not know.
+func settingsPaneFromName(name string) settingsPane {
+	for i, candidate := range settingsPaneNames {
+		if candidate == name {
+			return settingsPane(i)
+		}
+	}
+	return settingsGeneral
+}
+
+// settingsWindow is the standalone Settings window's view state. MyGo owns the
+// native window; this keeps the pane and the field state that belongs to the
+// window rather than to the model.
+type settingsWindow struct {
+	win *mygo.Window
+	// pane is the pane shown, restored from the last session on open.
+	pane settingsPane
+	// revealAPIKey shows the API key in its field. It is never persisted.
+	revealAPIKey bool
+}
+
+// refreshChoices are the refresh intervals the popup offers, in minutes. Zero
+// is Manual: the app never refreshes on its own, while Refresh and the menu's
+// command still do.
+var refreshChoices = []struct {
+	minutes int
+	label   string
+}{
+	{0, "Manual"},
+	{5, "5 min"},
+	{15, "15 min"},
+	{30, "30 min"},
+	{60, "60 min"},
+}
+
+// defaultRefreshMinutes is the interval a new install gets.
+const defaultRefreshMinutes = 15
+
+func refreshChoiceLabel(minutes int) string {
+	for _, choice := range refreshChoices {
+		if choice.minutes == minutes {
+			return choice.label
+		}
+	}
+	return fmt.Sprintf("%d min", minutes)
+}
+
+func refreshChoiceMinutes(label string) int {
+	for _, choice := range refreshChoices {
+		if choice.label == label {
+			return choice.minutes
+		}
+	}
+	if minutes := core.ParseRefreshMinutes(label); minutes > 0 {
+		return minutes
+	}
+	return defaultRefreshMinutes
+}
+
+// settingsWindowOptions is the board's settings window: 520 x 460 and fixed,
+// which is why minimize and zoom stay in the title bar dimmed and only the
+// close button acts. MyGo draws the controls over the view, so the view draws
+// the 52 pt title bar itself.
+func settingsWindowOptions(pane settingsPane, view func(*ui.Context)) mygo.WindowOptions {
+	return mygo.WindowOptions{
+		Title:           pane.title(),
+		Width:           int(settingsWindowWidth),
+		Height:          int(settingsWindowHeight),
+		DisableResize:   true,
+		DisableMinimize: true,
+		DisableMaximize: true,
+		TitleBarStyle:   mygo.TitleBarHiddenInset,
+		Content:         ui.View(view),
+	}
+}
+
+// openSettingsWindow shows the Settings window, creating it on first use and
+// restoring the pane shown last time. It runs on the main thread: from the App
+// menu's Settings…, the window toolbar, and the empty state's button.
+func (w *Window) openSettingsWindow() {
+	if win := w.settingsWindow.win; win != nil && !win.IsDestroyed() {
+		win.Show()
+		win.Focus()
+		return
+	}
+	// A closed window's state is gone: a new one starts from the pane shown
+	// last time, which the close saved.
+	pane := settingsPaneFromName(w.app.settingsSnapshot().LastSettingsPane)
+	w.settingsWindow = settingsWindow{pane: pane}
+	win := mygo.NewWindow(settingsWindowOptions(pane, w.settingsView))
+	if win == nil {
+		return
+	}
+	w.settingsWindow.win = win
+	w.app.SettingsOpen = true
+	win.OnClosed(func() {
+		// A window that is no longer the current one was already replaced.
+		if w.settingsWindow.win != win {
+			return
+		}
+		w.settingsWindow = settingsWindow{}
+		w.app.SettingsOpen = false
+	})
+}
+
+func (w *Window) closeSettingsWindow() {
+	w.app.SettingsOpen = false
+	if win := w.settingsWindow.win; win != nil {
+		win.Close()
+	}
+}
+
+// setSettingsPane switches panes from the window's pane toolbar and keeps the
+// choice for the next open.
+func (w *Window) setSettingsPane(pane settingsPane) {
+	if w.settingsWindow.pane == pane {
+		return
+	}
+	w.settingsWindow.pane = pane
+	if win := w.settingsWindow.win; win != nil {
+		win.SetTitle(pane.title())
+		win.Invalidate()
+	}
+	w.saveSettings(func(s *core.Settings) bool {
+		if s.LastSettingsPane == pane.name() {
+			return false
+		}
+		s.LastSettingsPane = pane.name()
+		return true
+	})
+}
+
+// refreshSettingsWindow repaints an open Settings window after a change made
+// outside it, as a picker, an export, or a refused notification.
+func (w *Window) refreshSettingsWindow() {
+	if win := w.settingsWindow.win; win != nil {
+		win.Invalidate()
+	}
+}
+
+// settingsMenuAccelerator is the board's Command-Comma, the settings command's
+// key equivalent in the App menu.
+const settingsMenuAccelerator = "Cmd+,"
+
+// saveSettings applies a change made in the Settings window. The main window
+// shows several of the same values, so it repaints when one changed.
+func (w *Window) saveSettings(fn func(*core.Settings) bool) {
+	changed, _ := w.app.updateSettings(fn)
+	if changed && w.window != nil {
+		w.window.Invalidate()
+	}
+}
+
+// invalidateMainWindow repaints the main window after a change to the data it
+// shows, as an import, an erase, or a new notification consent.
+func (w *Window) invalidateMainWindow() {
+	if w.window != nil {
+		w.window.Invalidate()
+	}
+}
+
+// installSettingsCommand puts Settings… in the App menu with the board's
+// Command-Comma. Zone A owns the app's full menu bar; until that lands, this
+// registers the one command the standalone window needs, beside the menus
+// macOS expects an app to have.
+func (w *Window) installSettingsCommand() {
+	mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
+		{Label: mygo.App.Name(), Submenu: []*mygo.MenuItem{
+			{Role: mygo.RoleAbout},
+			mygo.Separator(),
+			{Label: "Settings…", Accelerator: settingsMenuAccelerator, Click: func(*mygo.MenuItem, *mygo.Window) {
+				w.openSettingsWindow()
+			}},
+			mygo.Separator(),
+			{Role: mygo.RoleServices},
+			mygo.Separator(),
+			{Role: mygo.RoleHide},
+			{Role: mygo.RoleHideOthers},
+			{Role: mygo.RoleUnhide},
+			mygo.Separator(),
+			{Role: mygo.RoleQuit},
+		}},
+		// Only the Edit menu beside the App menu: the Window menu's Close
+		// would leave the app running without a window, as MyGo does not quit
+		// with the last one. Zone A's full menu bar owns that choice.
+		{Role: mygo.RoleEditMenu},
+	}))
+}
+
+// settingsView draws the window's content. It is also what the tests render,
+// so it never touches the native window.
+func (w *Window) settingsView(c *ui.Context) {
+	t := c.Theme()
+	tokens := mui.NewTokens(t, t.Dark)
 	settings := w.app.settingsSnapshot()
-	apiKey := settings.APIKey
-	backupPath := settings.BackupPath
-	syncPath := settings.SyncPath
-	showShorts := settings.ShowShorts
-	ui.Scroll(c).Grow(1).Children(func() {
-		ui.Column(c).Gap(16).Padding(24, 32, 32).Children(func() {
-			ui.Text(c, "Layout").Bold().FontSize(15)
-			ui.Text(c, "Maximum columns in each row (2-8)").FontSize(14)
-			columns := float64(settings.MaxGridColumns)
-			if ui.Stepper(c, &columns, float64(minMaxGridColumns), float64(maxMaxGridColumns), 1).Changed() {
-				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
-					if s.MaxGridColumns == int(columns) {
-						return false
-					}
-					s.MaxGridColumns = int(columns)
-					return true
+	c.OnWindowShortcut(0, ui.KeyEscape, w.closeSettingsWindow)
+	ui.Column(c).Fill().Background(tokens.App).Children(func() {
+		w.settingsTitleBar(c, tokens)
+		w.settingsPaneBar(c, tokens)
+		ui.Scroll(c).Grow(1).Children(func() {
+			// The body's bottom inset is small: the board's three panes fit
+			// 368 pt almost exactly, and a pane that overflows, as a long
+			// channel list does, still scrolls under it.
+			ui.Column(c).FillWidth().Padding(mui.Space(4), mui.Space(5), mui.Space(2)).Gap(mui.Space(3)).Children(func() {
+				switch w.settingsWindow.pane {
+				case settingsBackups:
+					w.backupsPane(c, tokens, settings)
+				case settingsNotifications:
+					w.notificationsPane(c, tokens, settings)
+				default:
+					w.generalPane(c, tokens, settings)
+				}
+			})
+		})
+	})
+}
+
+// settingsTitleBar draws the 52 pt bar under the window controls: the active
+// pane's name, centred on the window, on the app surface. It drags the window
+// as the system title bar it replaces does.
+func (w *Window) settingsTitleBar(c *ui.Context, t mui.Tokens) {
+	bar := ui.Row(c).Height(settingsTitleBarH).Shrink(0).FillWidth().Background(t.App).DragWindow()
+	bar.Draw(func(p *ui.Painter, r ui.Rect) {
+		p.Fill(ui.Rect{X: r.X, Y: r.Y + r.H - mui.Hairline, W: r.W, H: mui.Hairline}, t.BorderSoft, 0)
+	})
+	bar.Children(func() {
+		ui.Box(c).Grow(1)
+		mui.ToolbarTitle.Apply(ui.Text(c, w.settingsWindow.pane.title())).TextColor(t.Text).SingleLine()
+		ui.Box(c).Grow(1)
+	})
+}
+
+// settingsPaneBar draws the pane toolbar: the one segmented control that
+// switches panes. It is not customisable and always shows the active pane.
+func (w *Window) settingsPaneBar(c *ui.Context, t mui.Tokens) {
+	bar := ui.Row(c).Height(settingsPaneBarH).Shrink(0).FillWidth().AlignItems(ui.Center).Padding(0, settingsPaneInset).Background(t.App)
+	bar.Draw(func(p *ui.Painter, r ui.Rect) {
+		p.Fill(ui.Rect{X: r.X, Y: r.Y + r.H - mui.Hairline, W: r.W, H: mui.Hairline}, t.BorderSoft, 0)
+	})
+	bar.Children(func() {
+		selected := int(w.settingsWindow.pane)
+		parts := ui.SegmentedBase(c.Key("settings-panes"), &selected, len(settingsPaneNames))
+		// The pane toolbar takes the keyboard as the window opens, as the
+		// first control of a settings window does: Tab starts at the top of
+		// the visual order and the arrows switch panes straight away.
+		track := parts.Track.Height(settingsControlH).Shrink(0).Padding(settingsSegmentInset).Gap(settingsSegmentGap).
+			Radius(mui.RadiusControl).Background(t.SurfaceAlt).Border(mui.Hairline, t.Border).
+			AlignItems(ui.Center).AutoFocus().FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
+		track.Children(func() {
+			for i, name := range settingsPaneNames {
+				segment := parts.Segment(i).Height(settingsSegmentH).Padding(0, settingsSegmentPadX).
+					Radius(settingsSegmentRadius).Center().FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
+				if i == int(w.settingsWindow.pane) {
+					segment.Background(t.Surface).Border(mui.Hairline, t.BorderSoft)
+					segment.Children(func() {
+						mui.Secondary.Apply(ui.Text(c, name)).FontWeight(int(mui.Semibold)).TextColor(t.Text).SingleLine()
+					})
+					continue
+				}
+				segment.Background(t.SurfaceAlt)
+				segment.Children(func() {
+					mui.Secondary.Apply(ui.Text(c, name)).TextColor(t.Muted).SingleLine()
 				})
 			}
-			ui.Divider(c)
-			ui.Text(c, "API key (local only, never synced)").FontSize(14)
-			apiKeyInput := ui.TextInput(c.Key("api-key"), &apiKey).Password().Placeholder("YouTube Data API v3 key").Width(520)
-			if apiKeyInput.Changed() {
-				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+		})
+		if track.Changed() {
+			w.setSettingsPane(settingsPane(selected))
+		}
+	})
+}
+
+// settingsRow is one label-and-control row of a form: the 140 pt label column,
+// its first line on the control's centre, and the control column beside it.
+// The control column holds the row's control and, under it, its helpers.
+func (w *Window) settingsRow(c *ui.Context, t mui.Tokens, label string, control func()) {
+	ui.Row(c).AlignItems(ui.Start).Gap(mui.Space(3)).Children(func() {
+		ui.Box(c).Width(settingsLabelColumn).Shrink(0).Height(settingsControlH).AlignItems(ui.Start).Justify(ui.Center).Children(func() {
+			mui.Control.Apply(ui.Text(c, label)).TextColor(t.Text).SingleLine()
+		})
+		ui.Column(c).Grow(1).MinWidth(0).Gap(mui.Space(1)).Children(control)
+	})
+}
+
+// settingsHelper is the 11 pt line under a control; in Danger it is the
+// field's validation message.
+func (w *Window) settingsHelper(c *ui.Context, t mui.Tokens, text string, isError bool) {
+	color := t.Muted
+	if isError {
+		color = t.Danger
+	}
+	mui.Helper.Apply(ui.Text(c, text)).TextColor(color).MaxLines(2).Wrap()
+}
+
+// settingsSectionHeader titles a group inside a pane.
+func (w *Window) settingsSectionHeader(c *ui.Context, t mui.Tokens, text string) {
+	mui.SectionHeader.Apply(ui.Text(c, text)).TextColor(t.Text).SingleLine()
+}
+
+// settingsDivider is the 1 pt rule between groups, as wide as the form.
+func (w *Window) settingsDivider(c *ui.Context, t mui.Tokens) {
+	ui.Box(c).Height(mui.Hairline).FillWidth().Background(t.BorderSoft).MarginY(mui.Space(1))
+}
+
+// generalPane holds the API key, the refresh schedule, the grid, the
+// background helper, and the subscription import, as the board's A4 General
+// pane draws it.
+func (w *Window) generalPane(c *ui.Context, t mui.Tokens, settings core.Settings) {
+	apiKey := strings.TrimSpace(settings.APIKey)
+	invalidKey := false
+	w.settingsRow(c, t, "API key", func() {
+		ui.Row(c).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
+			field := ui.TextInput(c.Key("settings-api-key"), &apiKey).Width(settingsAPIKeyWidth).Height(settingsControlH).
+				PaddingX(mui.Space(2)).Radius(mui.RadiusControl).Background(t.Surface).Border(mui.Hairline, t.Border).
+				TextColor(t.Text).Label("API key").Tooltip("YouTube Data API v3 key").
+				FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
+			mui.Control.Apply(field)
+			if !w.settingsWindow.revealAPIKey {
+				field.Password()
+			}
+			// The board validates on blur: while the field has the focus the
+			// message stays neutral, and a stored key that is wrong shows its
+			// message as soon as the pane opens.
+			invalidKey = !field.Focused() && !validAPIKey(apiKey)
+			if field.Changed() {
+				w.saveSettings(func(s *core.Settings) bool {
 					if s.APIKey == apiKey {
 						return false
 					}
@@ -43,19 +421,62 @@ func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 					return true
 				})
 			}
-			ui.Text(c, "Refresh interval").FontSize(14)
-			selected := refreshLabel(settings.RefreshMinutes)
-			if ui.Select(c.Key("interval"), &selected, []string{"15 minutes", "30 minutes", "1 hour", "2 hours", "4 hours"}).Width(520).Changed() {
-				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
-					if s.RefreshMinutes == refreshMinutes(selected) {
-						return false
-					}
-					s.RefreshMinutes = refreshMinutes(selected)
-					return true
-				})
+			revealLabel := "Reveal API key"
+			revealGlyph := settingsIconEye
+			if w.settingsWindow.revealAPIKey {
+				revealLabel = "Hide API key"
+				revealGlyph = settingsIconEyeOff
 			}
-			if ui.Checkbox(c.Key("shorts"), &showShorts, "Show Shorts").FontSize(14).Changed() {
-				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+			w.settingsButton(c, t, "settings-reveal-key", "", revealGlyph, settingsButtonSecondary, true, revealLabel, func() {
+				w.settingsWindow.revealAPIKey = !w.settingsWindow.revealAPIKey
+				w.refreshSettingsWindow()
+			})
+		})
+		if invalidKey {
+			message := "That is not a YouTube Data API key."
+			if apiKey == "" {
+				message = "Add a YouTube Data API v3 key to refresh subscriptions."
+			}
+			w.settingsHelper(c, t, message, true)
+			return
+		}
+		w.settingsHelper(c, t, "Stored on this Mac only. Never synced.", false)
+	})
+
+	w.settingsRow(c, t, "Refresh interval", func() {
+		selected := refreshChoiceLabel(settings.RefreshMinutes)
+		choices := make([]settingsChoice, 0, len(refreshChoices))
+		for _, choice := range refreshChoices {
+			choices = append(choices, settingsChoice{value: choice.label, label: choice.label})
+		}
+		popup := w.settingsPopup(c, t, "settings-refresh-interval", settingsPopupWidth, choices, &selected)
+		if popup.Changed() {
+			minutes := refreshChoiceMinutes(selected)
+			w.saveSettings(func(s *core.Settings) bool {
+				if s.RefreshMinutes == minutes {
+					return false
+				}
+				s.RefreshMinutes = minutes
+				return true
+			})
+			// An installed helper schedules the interval the login item was
+			// written with, so it follows the new one.
+			if helperInstalled() {
+				if err := installHelper(minutes); err != nil {
+					w.toast(c, "Helper: "+err.Error(), true)
+				}
+			}
+		}
+		if settings.RefreshMinutes <= 0 {
+			w.settingsHelper(c, t, "Refreshes only when you choose Refresh.", false)
+		}
+	})
+
+	showShorts := settings.ShowShorts
+	w.settingsRow(c, t, "Show Shorts", func() {
+		ui.Row(c).Height(settingsControlH).AlignItems(ui.Center).Children(func() {
+			if w.settingsSwitch(c, t, "settings-show-shorts", &showShorts, "Show Shorts").Changed() {
+				w.saveSettings(func(s *core.Settings) bool {
 					if s.ShowShorts == showShorts {
 						return false
 					}
@@ -63,108 +484,599 @@ func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 					return true
 				})
 			}
-			ui.Divider(c)
-			ui.Text(c, "OPML import").Bold().FontSize(15)
-			mui.StatefulButton(c, t, "import-opml", "Choose OPML file...", nil, false, mui.Default, func() { w.importOPML(c) }).AlignSelf(ui.Start)
-			ui.Text(c, "Favorites backup (standalone JSON, no API key or history)").Bold().FontSize(15)
-			if ui.TextInput(c.Key("backup-path"), &backupPath).Width(520).Changed() {
-				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
-					if s.BackupPath == backupPath {
-						return false
-					}
-					s.BackupPath = backupPath
-					return true
-				})
-			}
-			ui.Text(c, "Export writes the current favorites to the backup path below. Restore reads a chosen favorites JSON file and merges by stable video ID; newer local favorites win.").FontSize(13).TextColor(t.Muted)
-			ui.Row(c).Gap(8).Children(func() {
-				mui.StatefulButton(c, t, "export-fav", "Export favorites", nil, false, mui.Default, func() {
-					if err := w.app.ExportFavorites(); err != nil {
-						w.toast(c, "Export failed: "+err.Error(), true)
-					} else {
-						w.toast(c, "Favorites exported", false)
-					}
-				})
-				mui.StatefulButton(c, t, "restore-fav", "Restore favorites from file...", nil, false, mui.Default, func() {
-					w.restoreFavorites(c)
-				})
-			})
-			ui.Text(c, "Sync file (single JSON shared with Syncthing)").Bold().FontSize(15)
-			if ui.TextInput(c.Key("sync-path"), &syncPath).Width(520).Changed() {
-				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
-					if s.SyncPath == syncPath {
-						return false
-					}
-					s.SyncPath = syncPath
-					return true
-				})
-			}
-			mui.StatefulButton(c, t, "save-paths", "Save paths", nil, false, mui.Default, func() {
-				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
-					changed := s.APIKey != apiKey || s.BackupPath != backupPath || s.SyncPath != syncPath
-					s.APIKey = apiKey
-					s.BackupPath = backupPath
-					s.SyncPath = syncPath
-					return changed
-				})
-				w.toast(c, "Settings saved", false)
-			}).AlignSelf(ui.Start)
-			ui.Divider(c)
-			ui.Text(c, "Notifications (local to this device)").Bold().FontSize(15)
-			mui.StatefulButton(c, t, "enable-group", "Enable all for selected group", nil, false, mui.Default, func() {
-				w.app.EnableNotificationsForSelection()
-				w.toast(c, "Notifications enabled", false)
-			}).AlignSelf(ui.Start)
-			channels := make([]core.Channel, len(w.app.Channels))
-			copy(channels, w.app.Channels)
-			ui.Scroll(c).Height(180).Children(func() {
-				for i := range channels {
-					enabled := w.app.notificationEnabled(channels[i].ID)
-					id := channels[i].ID
-					if ui.Checkbox(c.Key("notify-"+id), &enabled, channels[i].Title).Changed() {
-						_, _ = w.app.updateSettings(func(s *core.Settings) bool {
-							s.NotificationIDs = toggleID(s.NotificationIDs, id, enabled)
-							return true
-						})
-					}
-				}
-			})
-			ui.Text(c, "Notification clicks open the channel's filtered view, including after a cold launch.").FontSize(13).TextColor(t.Muted)
-			ui.Divider(c)
-			ui.Text(c, "Background helper").Bold().FontSize(15)
-			ui.Text(c, "Register the standalone helper with a user LaunchAgent (RunAtLoad + StartInterval) to refresh while the app is closed.").FontSize(13).TextColor(t.Muted)
-			ui.Row(c).Gap(8).Children(func() {
-				mui.StatefulButton(c, t, "install-helper", "Install LaunchAgent", nil, false, mui.Default, func() {
-					if err := installHelper(); err != nil {
-						w.toast(c, "Install failed: "+err.Error(), true)
-					} else {
-						w.toast(c, "Helper installed", false)
-					}
-				})
-				mui.StatefulButton(c, t, "uninstall-helper", "Uninstall LaunchAgent", nil, false, mui.Default, func() {
-					if err := uninstallHelper(); err != nil {
-						w.toast(c, "Uninstall failed: "+err.Error(), true)
-					} else {
-						w.toast(c, "Helper uninstalled", false)
-					}
-				})
-			})
-			mui.StatefulButton(c, t, "force-lock", "Force take over sync", nil, false, mui.Default, func() {
-				w.app.Lock.Release()
-				lock, err := core.AcquireLock(localLockDir())
-				if err == nil {
-					w.app.Lock = lock
-					w.toast(c, "Sync lock taken over", false)
-				} else {
-					w.toast(c, "Take over failed: "+err.Error(), true)
-				}
-			}).AlignSelf(ui.Start)
-			mui.StatefulButton(c, t, "close-settings", "Done", nil, true, mui.Default, func() {
-				_ = w.app.SaveSettings()
-				w.app.SettingsOpen = false
-			}).AlignSelf(ui.Start)
 		})
 	})
+
+	columns := settings.MaxGridColumns
+	if columns < minMaxGridColumns || columns > maxMaxGridColumns {
+		columns = defaultMaxGridColumns
+	}
+	w.settingsRow(c, t, "Grid columns", func() {
+		ui.Row(c).Height(settingsControlH).AlignItems(ui.Center).Gap(mui.Space(2)).Children(func() {
+			w.settingsStepper(c, t, "settings-grid-columns", columns, minMaxGridColumns, maxMaxGridColumns, func(next int) {
+				w.saveSettings(func(s *core.Settings) bool {
+					if s.MaxGridColumns == next {
+						return false
+					}
+					s.MaxGridColumns = next
+					return true
+				})
+			})
+			w.settingsHelper(c, t, fmt.Sprintf("%d to %d columns", minMaxGridColumns, maxMaxGridColumns), false)
+		})
+	})
+
+	w.settingsDivider(c, t)
+
+	w.settingsSectionHeader(c, t, "Background helper")
+	mui.Secondary.Apply(ui.Text(c, "Refreshes subscriptions while the app is closed. Installs a login item you can remove at any time.")).
+		TextColor(t.Muted).MaxLines(2).Wrap()
+	installed := helperInstalled()
+	ui.Row(c).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
+		label := "Install helper…"
+		if installed {
+			label = "Uninstall helper…"
+		}
+		w.settingsButton(c, t, "settings-helper", label, nil, settingsButtonSecondary, true, "", func() {
+			var err error
+			if installed {
+				err = uninstallHelper()
+			} else {
+				err = installHelper(settings.RefreshMinutes)
+			}
+			if err != nil {
+				w.toast(c, "Helper: "+err.Error(), true)
+				return
+			}
+			w.saveSettings(func(s *core.Settings) bool {
+				if s.HelperInstalled == !installed {
+					return false
+				}
+				s.HelperInstalled = !installed
+				return true
+			})
+			w.refreshSettingsWindow()
+		})
+		status := "Not installed"
+		if installed {
+			status = "Installed"
+		}
+		w.settingsHelper(c, t, status, false)
+	})
+
+	w.settingsRow(c, t, "Subscriptions", func() {
+		ui.Row(c).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
+			w.settingsButton(c, t, "settings-import-opml", "Import OPML…", nil, settingsButtonSecondary, true, "", func() {
+				w.importOPML(c)
+			})
+			w.settingsHelper(c, t, "Channels and groups merge by ID.", false)
+		})
+	})
+}
+
+// backupsPane holds the favorites backup file, its export and import, the
+// shared sync file, and the pane's one destructive action.
+func (w *Window) backupsPane(c *ui.Context, t mui.Tokens, settings core.Settings) {
+	backupPath := settings.BackupPath
+	w.settingsRow(c, t, "Backup file", func() {
+		ui.Row(c).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
+			w.settingsPathField(c, t, "settings-backup-path", "Backup file", &backupPath)
+			w.settingsButton(c, t, "settings-choose-backup", "Choose…", nil, settingsButtonSecondary, true, "", func() {
+				path, ok := w.choosePath("Favorites backup", backupPath, "Favorites backup", "json")
+				if !ok {
+					return
+				}
+				w.saveSettings(func(s *core.Settings) bool {
+					if s.BackupPath == path {
+						return false
+					}
+					s.BackupPath = path
+					return true
+				})
+				w.refreshSettingsWindow()
+			})
+		})
+		ui.Row(c).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
+			w.settingsButton(c, t, "settings-export-favorites", "Export favorites…", nil, settingsButtonSecondary, true, "", func() {
+				if err := w.app.ExportFavorites(); err != nil {
+					w.toast(c, "Export failed: "+err.Error(), true)
+					return
+				}
+				w.saveSettings(func(s *core.Settings) bool {
+					s.LastFavoritesExport = core.FormatRFC3339(time.Now())
+					return true
+				})
+				w.toast(c, "Favorites exported", false)
+				w.refreshSettingsWindow()
+			}).Grow(1)
+			w.settingsButton(c, t, "settings-import-favorites", "Import favorites…", nil, settingsButtonSecondary, true, "", func() {
+				w.restoreFavorites(c)
+			}).Grow(1)
+		})
+		lastExport := "Last export: Never"
+		if at := core.RelativeDate(settings.LastFavoritesExport, time.Now()); at != "" {
+			lastExport = "Last export: " + at
+		}
+		mui.Secondary.Apply(ui.Text(c, lastExport)).TextColor(t.Muted).SingleLine()
+	})
+
+	w.settingsDivider(c, t)
+
+	syncPath := settings.SyncPath
+	w.settingsRow(c, t, "Sync file", func() {
+		ui.Row(c).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
+			w.settingsPathField(c, t, "settings-sync-path", "Sync file", &syncPath)
+			w.settingsButton(c, t, "settings-choose-sync", "Choose…", nil, settingsButtonSecondary, true, "", func() {
+				path, ok := w.choosePath("Sync file", syncPath, "Sync file", "json")
+				if !ok {
+					return
+				}
+				w.saveSettings(func(s *core.Settings) bool {
+					if s.SyncPath == path {
+						return false
+					}
+					s.SyncPath = path
+					return true
+				})
+				w.refreshSettingsWindow()
+			})
+		})
+		w.settingsHelper(c, t, "One JSON file shared with Syncthing. Groups, reads and favorites only.", false)
+		w.settingsButton(c, t, "settings-force-takeover", "Force take over sync", nil, settingsButtonSecondary, true, "", func() {
+			if w.app.Lock != nil {
+				w.app.Lock.Release()
+			}
+			lock, err := core.AcquireLock(localLockDir())
+			if err != nil {
+				w.toast(c, "Take over failed: "+err.Error(), true)
+				return
+			}
+			w.app.Lock = lock
+			w.toast(c, "Sync lock taken over", false)
+		}).AlignSelf(ui.Start)
+	})
+
+	// The destructive action sits 24 pt below the rest of the form.
+	ui.Box(c).Height(mui.Space(3))
+	w.settingsDivider(c, t)
+	w.settingsRow(c, t, "", func() {
+		ui.Row(c).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
+			w.settingsButton(c, t, "settings-erase-favorites", "Erase local favorites…", nil, settingsButtonDanger, true, "", func() {
+				w.confirmEraseFavorites(c)
+			})
+		})
+		w.settingsHelper(c, t, "Removes every favorite from this Mac. Cannot be undone here.", false)
+	})
+}
+
+// notificationsPane holds explicit per-channel consent, and the permission
+// state when macOS refused the app's notifications.
+func (w *Window) notificationsPane(c *ui.Context, t mui.Tokens, settings core.Settings) {
+	if settings.NotificationPermissionDenied {
+		w.notificationsDeniedBanner(c, t)
+	}
+	mui.Secondary.Apply(ui.Text(c, "Turn on a channel to be notified when it publishes a new video. Notifications are local to this Mac.")).
+		TextColor(t.Muted).MaxLines(3).Wrap()
+
+	channels := make([]core.Channel, len(w.app.Channels))
+	copy(channels, w.app.Channels)
+	w.settingsRow(c, t, "", func() {
+		ui.Row(c).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
+			w.settingsButton(c, t, "settings-enable-all", "Enable All", nil, settingsButtonSecondary, len(channels) > 0, "", func() {
+				w.app.EnableNotificationsForSelection()
+				w.toast(c, "Notifications enabled", false)
+				w.invalidateMainWindow()
+				w.refreshSettingsWindow()
+			})
+			w.settingsHelper(c, t, "For every channel in the selected group.", false)
+		})
+	})
+
+	if len(channels) == 0 {
+		mui.Secondary.Apply(ui.Text(c, "Import subscriptions to choose channels.")).TextColor(t.Muted).SingleLine()
+		return
+	}
+	list := ui.Column(c).FillWidth().Border(mui.Hairline, t.BorderSoft).Radius(mui.RadiusNotice).Background(t.Surface).Clip()
+	list.Children(func() {
+		for i := range channels {
+			channel := channels[i]
+			if i > 0 {
+				ui.Box(c).Height(mui.Hairline).FillWidth().Background(t.BorderSoft)
+			}
+			enabled := w.app.notificationEnabled(channel.ID)
+			ui.Row(c).Height(settingsControlH).FillWidth().AlignItems(ui.Center).Gap(mui.Space(2)).
+				Padding(0, mui.Space(2)).Children(func() {
+				mui.Control.Apply(ui.Text(c, channel.Title)).TextColor(t.Text).SingleLine().Grow(1)
+				if w.settingsSwitch(c, t, "settings-notify-"+channel.ID, &enabled, channel.Title).Changed() {
+					id := channel.ID
+					w.saveSettings(func(s *core.Settings) bool {
+						s.NotificationIDs = toggleID(s.NotificationIDs, id, enabled)
+						return true
+					})
+				}
+			})
+		}
+	})
+}
+
+// notificationsDeniedBanner offers the one useful action when macOS refused
+// the app's notifications: the System Settings pane that allows them.
+func (w *Window) notificationsDeniedBanner(c *ui.Context, t mui.Tokens) {
+	ui.Row(c).FillWidth().Padding(mui.Space(2), settingsSegmentPadX).Gap(mui.Space(2)).
+		AlignItems(ui.Center).Radius(mui.RadiusNotice).
+		Background(t.Warning.Alpha(0.12)).Border(mui.Hairline, t.Warning.Alpha(0.28)).Children(func() {
+		ui.Icon(c, mui.IconAlert).Size(settingsGlyph, settingsGlyph).TextColor(t.Warning)
+		mui.Secondary.Apply(ui.Text(c, "Notifications are turned off for YouTube Reader in System Settings.")).
+			TextColor(t.Warning).Grow(1).MaxLines(2).Wrap()
+		w.settingsButton(c, t, "settings-open-notification-settings", "Open System Settings…", nil, settingsButtonSecondary, true, "", func() {
+			c.OpenURL("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+		})
+	})
+}
+
+// settingsPathField is one editable file path: 11.5 pt monospace on the
+// surface, with the whole path in its tooltip. Every edit is saved at once, so
+// closing the window or switching panes never loses it.
+func (w *Window) settingsPathField(c *ui.Context, t mui.Tokens, key, label string, path *string) ui.Element {
+	field := ui.TextInput(c.Key(key), path).Height(settingsControlH).PaddingX(mui.Space(2)).
+		Radius(mui.RadiusControl).Background(t.Surface).Border(mui.Hairline, t.Border).
+		TextColor(t.Text).Label(label).Tooltip(*path).Grow(1).MinWidth(0).
+		FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
+	mui.MonospacePath.Apply(field)
+	if field.Changed() {
+		next := *path
+		w.saveSettings(func(s *core.Settings) bool {
+			switch key {
+			case "settings-sync-path":
+				if s.SyncPath == next {
+					return false
+				}
+				s.SyncPath = next
+			case "settings-backup-path":
+				if s.BackupPath == next {
+					return false
+				}
+				s.BackupPath = next
+			}
+			return true
+		})
+	}
+	return field
+}
+
+// settingsSwitch is the board's 32 x 18 switch. MyGo draws it natively, with
+// the platform's white knob and Reduce Motion honoured; the themed copy gives
+// it the T0 accent instead of MyGo's default blue, so it matches the window.
+func (w *Window) settingsSwitch(c *ui.Context, t mui.Tokens, key string, on *bool, label string) ui.Element {
+	themed := *c.Theme()
+	themed.Accent = t.Accent
+	themed.AccentText = t.AccentText
+	themed.InactiveAccent = t.Accent
+	themed.Focus = t.Focus
+	themed.FocusRingWidth = mui.FocusRing
+	themed.FocusRingOffset = mui.FocusRingGap
+	var sw ui.Element
+	ui.Themed(c, &themed).Background(ui.Transparent).Shrink(0).Children(func() {
+		sw = ui.Switch(c.Key(key), on).Size(settingsSwitchWidth, settingsSwitchHeight).Radius(settingsSwitchRadius).
+			Shrink(0).Label(label).FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
+	})
+	return sw
+}
+
+// settingsStepper is the 28 pt numeric stepper for the grid's column cap: two
+// 26 pt buttons around a 40 pt tabular value, as board B1 draws it.
+func (w *Window) settingsStepper(c *ui.Context, t mui.Tokens, key string, value, lo, hi int, onChange func(int)) {
+	clampValue := func(v int) int { return clampInt(v, lo, hi) }
+	step := ui.Row(c).Height(settingsControlH).Shrink(0).AlignItems(ui.Center).
+		Radius(mui.RadiusControl).Background(t.Surface).Border(mui.Hairline, t.Border).Clip()
+	step.Children(func() {
+		w.settingsStepperButton(c, t, key+"-minus", "Decrease", settingsIconMinus, func() {
+			onChange(clampValue(value - 1))
+		})
+		ui.Box(c).Width(settingsStepperValue).Height(settingsControlH).Center().
+			BorderStartWidth(mui.Hairline).BorderEndWidth(mui.Hairline).BorderColor(t.BorderSoft).Children(func() {
+			mui.Metadata.Apply(ui.Text(c, fmt.Sprintf("%d", value))).TextColor(t.Text)
+		})
+		w.settingsStepperButton(c, t, key+"-plus", "Increase", settingsIconPlus, func() {
+			onChange(clampValue(value + 1))
+		})
+	})
+}
+
+func (w *Window) settingsStepperButton(c *ui.Context, t mui.Tokens, key, label string, glyph *ui.SVG, onClick func()) {
+	button := ui.ButtonBase(c.Key(key)).Width(settingsStepperStep).Height(settingsControlH).Center().
+		Shrink(0).Background(t.Surface).Label(label).Cursor(ui.CursorPointer).
+		FocusRingColor(t.Focus).FocusRingOffset(-mui.FocusRingGap)
+	button.Children(func() {
+		ui.Icon(c, glyph).Size(14, 14).TextColor(t.Muted)
+	})
+	button.Draw(func(p *ui.Painter, r ui.Rect) {
+		if face, ok := buttonPressFace(button, t); ok {
+			p.Fill(r, face, 0)
+		}
+	})
+	if button.Clicked() {
+		onClick()
+	}
+}
+
+// settingsChoice is one option of the pop-up button.
+type settingsChoice struct {
+	value string
+	label string
+}
+
+// settingsPopup is the 28 pt pop-up button: the chosen label and a chevron on
+// a bordered surface, opening a token-styled list of choices. MyGo's
+// SelectBase supplies the keyboard model: arrows to open and move, Enter and
+// Space to choose, Escape to close.
+func (w *Window) settingsPopup(c *ui.Context, t mui.Tokens, key string, width float32, choices []settingsChoice, selected *string) ui.Element {
+	parts := ui.SelectBase(c.Key(key), selected)
+	trigger := parts.Trigger.Height(settingsControlH).Width(width).Shrink(0).PaddingX(mui.Space(2)).
+		Justify(ui.SpaceBetween).AlignItems(ui.Center).Label(*selected).
+		Radius(mui.RadiusControl).Background(t.Surface).Border(mui.Hairline, t.Border).
+		FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
+	trigger.Children(func() {
+		mui.Control.Apply(ui.Text(c, *selected)).TextColor(t.Text).SingleLine()
+		ui.Icon(c, mui.IconChevronDown).Size(12, 12).TextColor(t.Muted)
+	})
+	trigger.Draw(func(p *ui.Painter, r ui.Rect) {
+		if face, ok := buttonPressFace(trigger, t); ok {
+			p.Fill(ui.Rect{X: r.X - 1, Y: r.Y - 1, W: r.W + 2, H: r.H + 2}, face, mui.RadiusControl)
+		}
+	})
+	parts.Popup(func(panel ui.Element) {
+		panel.MinWidth(width).Padding(mui.Space(1)).Radius(mui.RadiusNotice).
+			Background(t.Surface).Border(mui.Hairline, t.Border).
+			Shadow(0, mui.ElevationOffsetY, mui.ElevationBlur, mui.ElevationSpread, t.Shadow)
+		for _, choice := range choices {
+			item := parts.Item(choice.value).Height(settingsControlH).Padding(0, settingsSegmentPadX).
+				Radius(mui.RadiusControl).Justify(ui.Start).AlignItems(ui.Center)
+			switch {
+			case item.Highlighted():
+				item.Background(t.AccentSoft)
+			case choice.value == *selected:
+				item.Background(t.SurfaceAlt)
+			}
+			item.Children(func() {
+				color := t.Text
+				if item.Highlighted() {
+					color = t.Accent
+				}
+				mui.Control.Apply(ui.Text(c, choice.label)).TextColor(color).SingleLine()
+			})
+		}
+	})
+	return trigger
+}
+
+// settingsButtonKind selects one of the board's button faces.
+type settingsButtonKind int
+
+const (
+	settingsButtonSecondary settingsButtonKind = iota
+	settingsButtonPrimary
+	settingsButtonDanger
+	settingsButtonQuiet
+)
+
+// settingsButton is the board's 28 pt button: 13 pt label, a 6 pt radius, a
+// 1 pt outline, 12 pt inner padding, and the 2 pt focus ring at its 3 pt
+// offset. A quiet or dangerous button has no outline until it is hovered; the
+// primary face fills with the accent.
+func (w *Window) settingsButton(c *ui.Context, t mui.Tokens, key, label string, glyph *ui.SVG, kind settingsButtonKind, enabled bool, accessibleName string, onClick func()) ui.Element {
+	primary := kind == settingsButtonPrimary
+	background, border, text := t.Surface, t.Border, t.Text
+	switch kind {
+	case settingsButtonPrimary:
+		background, border, text = t.Accent, t.Accent, t.AccentText
+	case settingsButtonDanger:
+		background, border, text = ui.Transparent, ui.Transparent, t.Danger
+	case settingsButtonQuiet:
+		background, border, text = ui.Transparent, ui.Transparent, t.Muted
+	}
+	if !enabled {
+		background, border, text = t.SurfaceAlt, t.Border, t.Muted
+	}
+	button := ui.ButtonBase(c.Key(key)).Height(settingsControlH).Shrink(0).AlignItems(ui.Center).
+		Radius(mui.RadiusControl).Background(background).Border(mui.Hairline, border).TextColor(text).
+		Cursor(ui.CursorPointer).Transition(mui.Fade).
+		FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
+	if label == "" {
+		button.Width(settingsControlH).Padding(0)
+	} else {
+		button.Gap(settingsGlyphGap).Padding(0, mui.Space(3))
+		if primary {
+			button.MinWidth(settingsPrimaryMinW)
+		}
+	}
+	if !enabled {
+		button.Disabled(true)
+	}
+	if accessibleName != "" {
+		button.Label(accessibleName)
+	}
+	button.Children(func() {
+		if glyph != nil {
+			ui.Icon(c, glyph).Size(settingsGlyph, settingsGlyph)
+		}
+		if label != "" {
+			mui.Control.Apply(ui.Text(c, label)).SingleLine()
+		}
+	})
+	button.Draw(func(p *ui.Painter, r ui.Rect) {
+		if !enabled {
+			return
+		}
+		switch {
+		case button.Pressed():
+			p.Fill(ui.Rect{X: r.X - 1, Y: r.Y - 1, W: r.W + 2, H: r.H + 2}, settingsButtonPressedFace(t, kind), mui.RadiusControl)
+		case button.Hovered():
+			p.Fill(ui.Rect{X: r.X - 1, Y: r.Y - 1, W: r.W + 2, H: r.H + 2}, settingsButtonHoverFace(t, kind), mui.RadiusControl)
+		}
+	})
+	if button.Clicked() && onClick != nil {
+		onClick()
+	}
+	return button
+}
+
+func settingsButtonHoverFace(t mui.Tokens, kind settingsButtonKind) ui.Color {
+	switch kind {
+	case settingsButtonPrimary:
+		return t.Accent.Mix(t.Surface, 0.12)
+	case settingsButtonDanger:
+		return t.Danger.Alpha(0.10)
+	case settingsButtonQuiet:
+		return t.SurfaceAlt
+	default:
+		return t.SurfaceAlt
+	}
+}
+
+func settingsButtonPressedFace(t mui.Tokens, kind settingsButtonKind) ui.Color {
+	switch kind {
+	case settingsButtonPrimary:
+		return t.Accent.Mix(t.Text, 0.12)
+	case settingsButtonDanger:
+		return t.Danger.Alpha(0.16)
+	default:
+		return t.BorderSoft
+	}
+}
+
+// buttonPressFace returns the face a control paints over itself while pressed
+// or hovered, for controls that draw their own outline.
+func buttonPressFace(el ui.Element, t mui.Tokens) (ui.Color, bool) {
+	switch {
+	case el.Pressed():
+		return t.BorderSoft, true
+	case el.Hovered():
+		return t.SurfaceAlt, true
+	}
+	return ui.Transparent, false
+}
+
+// validAPIKey accepts a YouTube Data API v3 key: 39 characters, the "AIza"
+// prefix every key Google issues. It never returns the key itself.
+func validAPIKey(key string) bool {
+	return len(key) == 39 && strings.HasPrefix(key, "AIza")
+}
+
+// helperLaunchAgentPath is where the background helper's login item lives.
+func helperLaunchAgentPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "Library", "LaunchAgents", helperLabel+".plist")
+}
+
+// helperInstalled reports whether the login item is on disk, which is the
+// truth the pane shows rather than a remembered flag.
+func helperInstalled() bool {
+	_, err := os.Stat(helperLaunchAgentPath())
+	return err == nil
+}
+
+// choosePath asks for one file with the system panel and returns it, false
+// when the panel was cancelled.
+func (w *Window) choosePath(title, current, filterName, extension string) (string, bool) {
+	dir := filepath.Dir(current)
+	if current == "" || dir == "." {
+		dir = filepath.Join(os.Getenv("HOME"), "Downloads")
+	}
+	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+		Parent:      w.settingsWindow.win,
+		Title:       title,
+		DefaultPath: dir,
+		Filters:     []mygo.FileFilter{{Name: filterName, Extensions: []string{extension}}},
+	})
+	if err != nil || len(paths) == 0 {
+		return "", false
+	}
+	return paths[0], true
+}
+
+// confirmEraseFavorites asks with the system's own alert before the one action
+// that loses data. The Erase button is marked destructive, and Cancel is both
+// the default and what Escape chooses.
+func (w *Window) confirmEraseFavorites(c *ui.Context) {
+	count := len(w.app.Sync.Favorites)
+	if count == 0 {
+		return
+	}
+	plural := "favorites"
+	if count == 1 {
+		plural = "favorite"
+	}
+	result, err := mygo.Dialog.Message(mygo.MessageOptions{
+		Parent:             w.settingsWindow.win,
+		Type:               mygo.MessageWarning,
+		Title:              "Erase local favorites?",
+		Message:            fmt.Sprintf("Erase all %d %s from this Mac?", count, plural),
+		Detail:             "This cannot be undone here. Other devices that still hold these favorites can bring them back when they sync.",
+		Buttons:            []string{"Cancel", "Erase"},
+		DefaultButton:      0,
+		CancelButton:       0,
+		DestructiveButtons: []int{1},
+	})
+	if err != nil {
+		w.toast(c, "Erase failed: "+err.Error(), true)
+		return
+	}
+	if result.Button != 1 {
+		return
+	}
+	if err := w.app.eraseFavorites(); err != nil {
+		w.toast(c, "Erase failed: "+err.Error(), true)
+		return
+	}
+	w.toast(c, "Favorites erased", false)
+	w.invalidateMainWindow()
+	w.refreshSettingsWindow()
+}
+
+// eraseFavorites removes every favorite from the sync state and writes the
+// file, taking a newer file from another device first so the erase does not
+// drop its groups or read states.
+func (a *App) eraseFavorites() error {
+	a.settingsMu.RLock()
+	syncPath := a.Settings.SyncPath
+	device := a.DeviceID
+	a.settingsMu.RUnlock()
+	if current, err := core.LoadSyncWithConflicts(syncPath, device); err == nil && current.UpdatedAt > a.Sync.UpdatedAt {
+		a.Sync = core.MergeSync(current, a.Sync)
+	}
+	a.Sync.Favorites = map[string]core.FavoriteRecord{}
+	a.Sync.UpdatedAt = time.Now().UnixMilli()
+	return a.SaveSync()
+}
+
+// postNotification shows one local notification and records a refusal, so the
+// Notifications pane can offer System Settings instead of retrying forever.
+func (w *Window) postNotification(plan NotificationPlan) {
+	err := postNotification(plan)
+	if err == nil {
+		w.saveSettings(func(s *core.Settings) bool {
+			if !s.NotificationPermissionDenied {
+				return false
+			}
+			s.NotificationPermissionDenied = false
+			return true
+		})
+		return
+	}
+	if !errors.Is(err, mygo.ErrNotificationsDenied) {
+		return
+	}
+	changed, _ := w.app.updateSettings(func(s *core.Settings) bool {
+		if s.NotificationPermissionDenied {
+			return false
+		}
+		s.NotificationPermissionDenied = true
+		return true
+	})
+	if changed {
+		w.refreshSettingsWindow()
+	}
 }
 
 func toggleID(ids []string, id string, add bool) []string {
@@ -180,38 +1092,9 @@ func toggleID(ids []string, id string, add bool) []string {
 	return out
 }
 
-func refreshLabel(m int) string {
-	switch m {
-	case 15:
-		return "15 minutes"
-	case 30:
-		return "30 minutes"
-	case 120:
-		return "2 hours"
-	case 240:
-		return "4 hours"
-	default:
-		return "1 hour"
-	}
-}
-func refreshMinutes(s string) int {
-	switch s {
-	case "15 minutes":
-		return 15
-	case "30 minutes":
-		return 30
-	case "2 hours":
-		return 120
-	case "4 hours":
-		return 240
-	default:
-		return 60
-	}
-}
-
 func (w *Window) importOPML(c *ui.Context) {
 	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
-		Parent:      w.window,
+		Parent:      w.settingsWindow.win,
 		Title:       "Import OPML",
 		DefaultPath: filepath.Join(os.Getenv("HOME"), "Downloads"),
 		Filters:     []mygo.FileFilter{{Name: "OPML", Extensions: []string{"opml", "xml"}}},
@@ -229,6 +1112,8 @@ func (w *Window) importOPML(c *ui.Context) {
 		return
 	}
 	w.toast(c, "Imported channels", false)
+	w.invalidateMainWindow()
+	w.refreshSettingsWindow()
 }
 
 func (w *Window) restoreFavorites(c *ui.Context) {
@@ -237,13 +1122,13 @@ func (w *Window) restoreFavorites(c *ui.Context) {
 		defaultPath = filepath.Join(os.Getenv("HOME"), "Downloads")
 	}
 	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
-		Parent:      w.window,
-		Title:       "Restore favorites",
+		Parent:      w.settingsWindow.win,
+		Title:       "Import favorites",
 		DefaultPath: defaultPath,
 		Filters:     []mygo.FileFilter{{Name: "Favorites backup", Extensions: []string{"json"}}},
 	})
 	if err != nil {
-		w.toast(c, "Restore failed: "+err.Error(), true)
+		w.toast(c, "Import failed: "+err.Error(), true)
 		return
 	}
 	if len(paths) == 0 {
@@ -251,12 +1136,14 @@ func (w *Window) restoreFavorites(c *ui.Context) {
 	}
 	changed, err := w.app.ImportFavorites(paths[0])
 	if err != nil {
-		w.toast(c, "Restore failed: "+err.Error(), true)
+		w.toast(c, "Import failed: "+err.Error(), true)
 		return
 	}
 	if changed == 0 {
-		w.toast(c, "No newer favorites to restore", false)
+		w.toast(c, "No newer favorites to import", false)
 		return
 	}
-	w.toast(c, fmt.Sprintf("Restored %d favorite%s", changed, plural(changed)), false)
+	w.toast(c, fmt.Sprintf("Imported %d favorite%s", changed, plural(changed)), false)
+	w.invalidateMainWindow()
+	w.refreshSettingsWindow()
 }

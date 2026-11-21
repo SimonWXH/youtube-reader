@@ -86,9 +86,8 @@ func loadHelperSettings(dir string) core.Settings {
 	if data, err := os.ReadFile(filepath.Join(dir, "settings.json")); err == nil {
 		_ = json.Unmarshal(data, &settings)
 	}
-	if settings.RefreshMinutes <= 0 {
-		settings.RefreshMinutes = 60
-	}
+	// A zero interval is Manual: the app may schedule no refresh, and the
+	// LaunchAgent is installed at login only. Keep it as settings.json has it.
 	if settings.SyncPath == "" {
 		settings.SyncPath = filepath.Join(dir, "youtube-reader-sync.json")
 	}
@@ -200,7 +199,10 @@ func containsQuotaFailure(failures []core.RefreshFailure) bool {
 func mergeHelperSettings(settings core.Settings, result core.RefreshResult, now time.Time) core.Settings {
 	if result.Changed {
 		settings.LastRefresh = core.FormatRFC3339(now)
-		settings.NextRefresh = core.FormatRFC3339(now.Add(time.Duration(settings.RefreshMinutes) * time.Minute))
+		settings.NextRefresh = ""
+		if settings.RefreshMinutes > 0 {
+			settings.NextRefresh = core.FormatRFC3339(now.Add(time.Duration(settings.RefreshMinutes) * time.Minute))
+		}
 	}
 	if result.Changed || len(result.Failures) > 0 {
 		settings.RecentFailures = result.Failures
