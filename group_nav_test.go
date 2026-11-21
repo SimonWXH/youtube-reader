@@ -1,11 +1,12 @@
-// Package main tests for local UI preferences and channel link navigation.
 package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -56,6 +57,46 @@ func TestGroupCollapseDefaultsCollapsedAndPersists(t *testing.T) {
 	a.Settings.ExpandedGroups = nil
 	if !a.GroupCollapsed("group-1") {
 		t.Fatal("unknown groups must default to collapsed")
+	}
+}
+
+func TestGroupCollapseSettingsStayConcurrentSafe(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+	a.Settings.ExpandedGroups = map[string]bool{}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	errCh := make(chan error, 2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			if err := a.SaveSettings(); err != nil {
+				errCh <- fmt.Errorf("save settings: %w", err)
+				return
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			collapsed := i%2 == 0
+			groupID := fmt.Sprintf("group-%d", i%4)
+			if err := a.SetGroupCollapsed(groupID, collapsed); err != nil {
+				errCh <- fmt.Errorf("set group collapsed: %w", err)
+				return
+			}
+			if a.GroupCollapsed(groupID) != collapsed {
+				errCh <- fmt.Errorf("unexpected state for %s", groupID)
+				return
+			}
+		}
+	}()
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Error(err)
 	}
 }
 

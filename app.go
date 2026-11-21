@@ -9,18 +9,20 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/simon/youtube-reader/core"
 )
 
 type App struct {
-	Settings core.Settings
-	Sync     core.SyncState
-	Store    *core.Store
-	Dir      string
-	DeviceID string
-	Lock     *core.SyncLock
+	Settings   core.Settings
+	settingsMu sync.RWMutex
+	Sync       core.SyncState
+	Store      *core.Store
+	Dir        string
+	DeviceID   string
+	Lock       *core.SyncLock
 
 	Groups   []core.ChannelGroup
 	Channels []core.Channel
@@ -44,6 +46,8 @@ type App struct {
 // GroupCollapsed reports whether a subscription group's channel list is
 // folded. Groups default to collapsed when no preference has been stored.
 func (a *App) GroupCollapsed(groupID string) bool {
+	a.settingsMu.RLock()
+	defer a.settingsMu.RUnlock()
 	if a.Settings.ExpandedGroups != nil {
 		if expanded, ok := a.Settings.ExpandedGroups[groupID]; ok {
 			return !expanded
@@ -54,11 +58,32 @@ func (a *App) GroupCollapsed(groupID string) bool {
 
 // SetGroupCollapsed stores a group's folding state in local settings.
 func (a *App) SetGroupCollapsed(groupID string, collapsed bool) error {
+	a.settingsMu.Lock()
+	defer a.settingsMu.Unlock()
 	if a.Settings.ExpandedGroups == nil {
 		a.Settings.ExpandedGroups = map[string]bool{}
 	}
 	a.Settings.ExpandedGroups[groupID] = !collapsed
-	return a.SaveSettings()
+	data, err := a.settingsSnapshot()
+	if err != nil {
+		return err
+	}
+	return a.saveSettings(data)
+}
+
+func (a *App) settingsSnapshot() ([]byte, error) {
+	snapshot := a.Settings
+	if a.Settings.ExpandedGroups != nil {
+		snapshot.ExpandedGroups = make(map[string]bool, len(a.Settings.ExpandedGroups))
+		for id, expanded := range a.Settings.ExpandedGroups {
+			snapshot.ExpandedGroups[id] = expanded
+		}
+	}
+	return json.MarshalIndent(snapshot, "", "  ")
+}
+
+func (a *App) saveSettings(data []byte) error {
+	return atomicWrite(filepath.Join(a.Dir, "settings.json"), data)
 }
 
 type RefreshOutcome = core.RefreshResult
@@ -178,11 +203,13 @@ func (a *App) SaveSettings() error {
 			a.Settings.QuotaPausedUntil = disk.QuotaPausedUntil
 		}
 	}
-	data, err := json.MarshalIndent(a.Settings, "", "  ")
+	a.settingsMu.RLock()
+	data, err := a.settingsSnapshot()
+	a.settingsMu.RUnlock()
 	if err != nil {
 		return err
 	}
-	return atomicWrite(path, data)
+	return a.saveSettings(data)
 }
 
 func settingsStatusTime(s core.Settings) time.Time {
