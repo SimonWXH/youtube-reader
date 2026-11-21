@@ -165,11 +165,12 @@ func TestSettingsConcurrentReadersAndWritersStayConsistent(t *testing.T) {
 
 func TestCardChannelNameOpensChannelAndPreservesCardSelection(t *testing.T) {
 	video := core.Video{ID: "video-1", ChannelID: "UC_1", ChannelTitle: "The PrimeTime", Title: "Episode"}
+	other := core.Video{ID: "video-2", ChannelID: "UC_2", ChannelTitle: "Other channel", Title: "Another episode"}
 	a := &App{
 		Dir:             t.TempDir(),
 		Selected:        "all",
 		Settings:        core.Settings{APIKey: "test-key", ExpandedGroups: map[string]bool{}},
-		SelectedVideoID: video.ID,
+		SelectedVideoID: other.ID,
 		Sync: core.SyncState{
 			Favorites:  map[string]core.FavoriteRecord{},
 			ReadStates: map[string]map[string]core.ReadRecord{},
@@ -177,7 +178,7 @@ func TestCardChannelNameOpensChannelAndPreservesCardSelection(t *testing.T) {
 		},
 		Groups:   []core.ChannelGroup{{ID: "group-1", Name: "Group", ChannelIDs: []string{"ch-1"}}},
 		Channels: []core.Channel{{ID: "ch-1", Title: "Group channel"}},
-		Videos:   []core.Video{video},
+		Videos:   []core.Video{video, other},
 	}
 	w := &Window{app: a, selectedIndex: new(int)}
 	tt := ui.NewTester(w.view, 1280, 840)
@@ -215,7 +216,7 @@ func TestCardChannelNameOpensChannelAndPreservesCardSelection(t *testing.T) {
 	if len(urls) != 1 || urls[0] != "https://www.youtube.com/channel/UC_1" {
 		t.Fatalf("opened URLs = %q", urls)
 	}
-	if a.SelectedVideoID != video.ID {
+	if a.SelectedVideoID != other.ID {
 		t.Fatalf("card selection changed to %q", a.SelectedVideoID)
 	}
 	if a.Sync.IsRead(video.ID) {
@@ -288,17 +289,18 @@ func TestGroupHeaderKeyboardToggleKeepsFocus(t *testing.T) {
 
 func TestCardChannelNameKeyboardOpensChannel(t *testing.T) {
 	video := core.Video{ID: "video-1", ChannelID: "UC_1", ChannelTitle: "The PrimeTime", Title: "Episode"}
+	other := core.Video{ID: "video-2", ChannelID: "UC_2", ChannelTitle: "Other channel", Title: "Another episode"}
 	a := &App{
 		Dir:             t.TempDir(),
 		Selected:        "all",
 		Settings:        core.Settings{APIKey: "test-key"},
-		SelectedVideoID: video.ID,
+		SelectedVideoID: other.ID,
 		Sync: core.SyncState{
 			Favorites:  map[string]core.FavoriteRecord{},
 			ReadStates: map[string]map[string]core.ReadRecord{},
 			Channels:   map[string]core.Channel{"UC_1": {ID: "UC_1", Title: "The PrimeTime"}},
 		},
-		Videos: []core.Video{video},
+		Videos: []core.Video{video, other},
 	}
 	w := &Window{app: a, selectedIndex: new(int)}
 	tt := ui.NewTester(w.view, 1280, 840)
@@ -325,7 +327,7 @@ func TestCardChannelNameKeyboardOpensChannel(t *testing.T) {
 	if len(urls) != 1 || urls[0] != "https://www.youtube.com/channel/UC_1" {
 		t.Fatalf("opened URLs = %q", urls)
 	}
-	if a.SelectedVideoID != video.ID {
+	if a.SelectedVideoID != other.ID {
 		t.Fatalf("card selection changed to %q", a.SelectedVideoID)
 	}
 }

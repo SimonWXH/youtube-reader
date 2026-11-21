@@ -162,16 +162,7 @@ func (w *Window) view(c *ui.Context) {
 	t := c.Theme()
 	tokens := mui.NewTokens(t, t.Dark)
 	settings := w.app.settingsSnapshot()
-	if clamped := clampInt(settings.MaxGridColumns, minMaxGridColumns, maxMaxGridColumns); clamped != settings.MaxGridColumns {
-		_, _ = w.app.updateSettings(func(s *core.Settings) bool {
-			if s.MaxGridColumns == settings.MaxGridColumns {
-				s.MaxGridColumns = clamped
-				return true
-			}
-			return false
-		})
-		settings.MaxGridColumns = clamped
-	}
+	settings.MaxGridColumns = clampInt(settings.MaxGridColumns, minMaxGridColumns, maxMaxGridColumns)
 
 	total := windowWidth(c)
 	selected := w.app.HasSelection()
