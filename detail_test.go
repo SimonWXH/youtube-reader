@@ -8,6 +8,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/simon/youtube-reader/core"
+	mui "github.com/simon/youtube-reader/ui"
 )
 
 func TestDetailDuration(t *testing.T) {
@@ -44,13 +45,31 @@ func detailTestApp(t *testing.T, videos []core.Video, selected string) *App {
 	}
 }
 
-// A description whose seventh line the six-line clamp hides must offer More,
-// and one that fits in six lines must not: the shaped line count decides, not
-// a height measured with a different line height.
+// wrappedDescription returns a single paragraph without hard newlines that
+// shapes to exactly the requested number of lines at width, so fixtures come
+// from the wrap, not from newline characters.
+func wrappedDescription(t *testing.T, width float32, lines int) string {
+	t.Helper()
+	words := strings.Fields(strings.Repeat("the quick brown fox jumps over a lazy dog while reading the list ", 200))
+	font := ui.Font{Family: mui.SFFont, Size: mui.Body.Size, Weight: int(mui.Body.Weight)}
+	for n := 1; n <= len(words); n++ {
+		text := strings.Join(words[:n], " ")
+		if len(ui.ShapeText(text, font, width).Lines()) == lines {
+			return text
+		}
+	}
+	t.Fatalf("no paragraph wraps to %d lines at %v", lines, width)
+	return ""
+}
+
+// A description whose seventh wrapped line the six-line clamp hides must offer
+// More, and one that wraps to exactly six lines must not: the shaped line count
+// decides, not a count of hard newlines or a height measured with a different
+// line height.
 func TestDescriptionMoreTracksRenderedLines(t *testing.T) {
-	six := []string{"One line.", "Two lines.", "Three lines.", "Four.", "Five.", "Six."}
-	short := core.Video{ID: "v-short", Title: "Short description", Description: strings.Join(six, "\n")}
-	long := core.Video{ID: "v-long", Title: "Long description", Description: strings.Join(append(six, "Seven."), "\n")}
+	inner := defaultDetailsWidth - 2*mui.Space(4)
+	short := core.Video{ID: "v-short", Title: "Short description", Description: wrappedDescription(t, inner, 6)}
+	long := core.Video{ID: "v-long", Title: "Long description", Description: wrappedDescription(t, inner, 7)}
 
 	a := detailTestApp(t, []core.Video{short, long}, short.ID)
 	defer a.Close()
@@ -180,5 +199,47 @@ func TestDetailScrollStartsAtTheTopForANewVideo(t *testing.T) {
 	}
 	if next.Y < top.Y-0.5 || next.Y > top.Y+0.5 {
 		t.Fatalf("next video starts at %v; want the top at %v", next.Y, top.Y)
+	}
+}
+
+// A sidebar drag that the open pane leaves no room for must keep the pointer's
+// requested width, not the squeezed width the room allows, so closing the pane
+// brings the sidebar back to what the user asked for.
+func TestSidebarDragKeepsTheRequestedWidthWhenSqueezed(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	defer a.Close()
+	a.Selected = "all"
+	a.Settings.SidebarWidth = maxSidebarWidth
+	a.Settings.DetailsWidth = defaultDetailsWidth
+	a.Videos = []core.Video{{ID: "v-1", Title: "Video"}}
+	a.SelectedVideoID = "v-1"
+
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 960, 640)
+	tt.Frame()
+
+	visible := boundedSidebarWidth(maxSidebarWidth, defaultDetailsWidth, 960)
+	if w.sidebarWidth != visible {
+		t.Fatalf("sidebar shows %v; want the room's %v", w.sidebarWidth, visible)
+	}
+
+	tt.Press(visible, 320)
+	tt.Move(visible+30, 320)
+	tt.Release(visible+30, 320)
+	tt.Frame()
+
+	if w.sidebarWidth != visible {
+		t.Fatalf("the blocked drag resized the sidebar to %v; want %v", w.sidebarWidth, visible)
+	}
+	if got := a.Settings.SidebarWidth; got != visible+30 {
+		t.Fatalf("the blocked drag stored %v; want the requested %v", got, visible+30)
+	}
+
+	a.SelectedVideoID = ""
+	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
+	tt.Frame()
+	if w.sidebarWidth != visible+30 {
+		t.Fatalf("sidebar reopened at %v; want the remembered %v", w.sidebarWidth, visible+30)
 	}
 }

@@ -137,7 +137,7 @@ func (w *Window) view(c *ui.Context) {
 	}
 
 	if outerSplit.Changed() {
-		sidebar := boundedSidebarWidth(w.sidebarWidth, shown, total)
+		sidebar := clamp(w.sidebarWidth, minSidebarWidth, maxSidebarWidth)
 		_, _ = w.app.updateSettings(func(s *core.Settings) bool {
 			if s.SidebarWidth == sidebar {
 				return false
@@ -264,16 +264,16 @@ func (w *Window) detailsDivider(c *ui.Context, t mui.Tokens) {
 			w.setDetailsWidth(c, defaultDetailsWidth, true)
 		}
 	})
-	if next, ok := detailsWidthForKey(d.shown, ui.KeyLeft); ok && line.Shortcut(0, ui.KeyLeft) {
+	if next, ok := detailsWidthForKey(d.width, ui.KeyLeft); ok && line.Shortcut(0, ui.KeyLeft) {
 		w.setDetailsWidth(c, next, true)
 	}
-	if next, ok := detailsWidthForKey(d.shown, ui.KeyRight); ok && line.Shortcut(0, ui.KeyRight) {
+	if next, ok := detailsWidthForKey(d.width, ui.KeyRight); ok && line.Shortcut(0, ui.KeyRight) {
 		w.setDetailsWidth(c, next, true)
 	}
-	if next, ok := detailsWidthForKey(d.shown, ui.KeyHome); ok && line.Shortcut(0, ui.KeyHome) {
+	if next, ok := detailsWidthForKey(d.width, ui.KeyHome); ok && line.Shortcut(0, ui.KeyHome) {
 		w.setDetailsWidth(c, next, true)
 	}
-	if next, ok := detailsWidthForKey(d.shown, ui.KeyEnd); ok && line.Shortcut(0, ui.KeyEnd) {
+	if next, ok := detailsWidthForKey(d.width, ui.KeyEnd); ok && line.Shortcut(0, ui.KeyEnd) {
 		w.setDetailsWidth(c, next, true)
 	}
 }
@@ -308,7 +308,7 @@ func (w *Window) dragDetails(dx, rowWidth float32) {
 	want := d.shown - dx + d.overshoot
 	next := clamp(want, minDetailsWidth, room)
 	d.overshoot = want - next
-	d.width = clampDetailsWidth(next)
+	d.width = clampDetailsWidth(want)
 	d.shown = next
 	d.animating = false
 }
