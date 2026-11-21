@@ -9,85 +9,194 @@ import (
 )
 
 func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
+	nav := &sidebarNav{w: w, focus: w.sidebarFocus, targets: map[string]string{}}
+	w.sidebarFocus = ""
+	counts := w.sidebarCounts()
+
 	sidebar := ui.Column(c).Fill().Shrink(0).Background(t.Sidebar)
-	sidebar.Draw(func(p *ui.Painter, r ui.Rect) {
-		p.Fill(ui.Rect{X: r.X + r.W - 1, Y: r.Y, W: 1, H: r.H}, t.Border, 0)
-	})
 	sidebar.Children(func() {
-		ui.Row(c).Height(72).Padding(20, 20, 16).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "YouTube Reader").FontSize(17).Bold().TextColor(t.Text).SingleLine()
-		})
-		ui.Scroll(c).Grow(1).Padding(0, 12, 12).Children(func() {
+		ui.Scroll(c).Grow(1).Padding(0, mui.Space(2), mui.Space(2)).Children(func() {
 			sectionHeader(c, t, "Library")
-			mui.NavRow(c, t, "all", mui.IconPlay, "All", w.app.Selected == "all", func() {
-				w.app.Selected = "all"
-			})
-			mui.NavRow(c, t, "favorites", mui.IconStar, "Favorites", w.app.Selected == "favorites", func() {
-				w.app.Selected = "favorites"
-			})
+			nav.row(c, t, mui.SidebarRow{
+				Key: "all", Label: "All videos", Glyph: mui.IconPlay, Count: fmt.Sprintf("%d", counts.total),
+				Selected: w.app.Selected == "all",
+				OnClick:  func() { w.app.Selected = "all" },
+			}, "all")
+			nav.row(c, t, mui.SidebarRow{
+				Key: "favorites", Label: "Favorites", Glyph: mui.IconStar, Count: fmt.Sprintf("%d", counts.favorites),
+				Selected: w.app.Selected == "favorites",
+				OnClick:  func() { w.app.Selected = "favorites" },
+			}, "favorites")
 			for _, g := range w.app.Groups {
-				w.groupSection(c, t, g)
+				w.groupSection(c, t, g, nav, counts)
 			}
 			sectionHeader(c, t, "Channels")
+			if len(w.app.Channels) == 0 {
+				mui.Secondary.Apply(ui.Text(c, "No channels yet")).TextColor(t.Muted).Padding(mui.Space(1), mui.Space(2)).SingleLine()
+			}
 			for _, ch := range w.app.Channels {
 				ch := ch
-				mui.ChannelNavRow(c, t, "all-channels:"+ch.ID, ch.Title, ch.AvatarURL, w.app.Selected == "channel:"+ch.ID, func() {
-					w.app.Selected = "channel:" + ch.ID
+				nav.row(c, t, mui.SidebarRow{
+					Key: "all-channels:" + ch.ID, Label: ch.Title, Channel: true, Avatar: ch.AvatarURL,
+					Count:    fmt.Sprintf("%d", counts.perChannel[ch.ID]),
+					Selected: w.app.Selected == "channel:"+ch.ID,
+					OnClick:  func() { w.app.Selected = "channel:" + ch.ID },
+				}, "channel:"+ch.ID)
+			}
+		})
+		w.statusSection(c, t, nav)
+	})
+	// Up and Down move the sidebar's selection. MyGo routes a shortcut to the
+	// element whose subtree holds the focus, so the keys work from any row
+	// and never leak into the grid or the toolbar.
+	sidebar.OnShortcut(0, ui.KeyDown, nav.move(1))
+	sidebar.OnShortcut(0, ui.KeyUp, nav.move(-1))
+}
+
+// sidebarNav keeps the sidebar's keyboard order for one frame. Rows register
+// themselves as they build, so Up and Down can move the selection from the
+// focused row to the next row that navigates, skipping the fold rows in
+// between exactly as a native source list does.
+type sidebarNav struct {
+	w       *Window
+	keys    []string          // every focusable row, in visual order
+	targets map[string]string // row key -> the selection it opens
+	focus   string            // row to take the focus in this frame
+	at      int               // index of the focused row, -1 for none
+}
+
+// row builds a row and adds it to the keyboard order. target is the
+// selection the row opens, empty for a row that folds or toggles instead.
+func (n *sidebarNav) row(c *ui.Context, t mui.Tokens, r mui.SidebarRow, target string) {
+	n.observe(r.Build(c, t), r.Key, target)
+}
+
+// observe records a built row and applies a pending arrow-key move to it.
+func (n *sidebarNav) observe(el ui.Element, key, target string) {
+	if target != "" {
+		n.targets[key] = target
+	}
+	if n.focus == key {
+		el.Focus()
+	}
+	if el.Focused() {
+		n.at = len(n.keys)
+	}
+	n.keys = append(n.keys, key)
+}
+
+// move returns the Up or Down handler: it walks from the focused row in the
+// direction delta, stops at the first row that navigates, and puts the focus
+// on it for the next frame so the row scrolls itself into view.
+func (n *sidebarNav) move(delta int) func() {
+	return func() {
+		if n.at < 0 {
+			return
+		}
+		for i := n.at + delta; i >= 0 && i < len(n.keys); i += delta {
+			key := n.keys[i]
+			target, ok := n.targets[key]
+			if !ok {
+				continue
+			}
+			n.w.sidebarFocus = key
+			n.w.app.Selected = target
+			return
+		}
+	}
+}
+
+func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, nav *sidebarNav, counts sidebarCounts) {
+	collapsed := w.app.GroupCollapsed(g.ID)
+	key := "group-collapse:" + g.ID
+	nav.row(c, t, mui.SidebarRow{
+		Key: key, Label: g.Name, Count: fmt.Sprintf("%d", counts.group(g.ChannelIDs)),
+		Fold: true, Expanded: !collapsed,
+		OnClick: func() { _ = w.app.SetGroupCollapsed(g.ID, !collapsed) },
+	}, "")
+	if collapsed {
+		return
+	}
+	for _, id := range g.ChannelIDs {
+		id := id
+		ch := w.channelByID(id)
+		nav.row(c, t, mui.SidebarRow{
+			Key: fmt.Sprintf("group:%s:channel:%s", g.Name, id), Label: ch.Title, Channel: true, Avatar: ch.AvatarURL,
+			Count:    fmt.Sprintf("%d", counts.perChannel[id]),
+			Selected: w.app.Selected == "channel:"+id,
+			OnClick:  func() { w.app.Selected = "channel:" + id },
+		}, "channel:"+id)
+	}
+}
+
+// statusSection keeps the refresh status at the foot of the sidebar until
+// the status surface replaces it, styled as one more row of the list.
+func (w *Window) statusSection(c *ui.Context, t mui.Tokens, nav *sidebarNav) {
+	ui.Column(c).Shrink(0).Padding(mui.Space(2), mui.Space(2), mui.Space(2)).Gap(mui.Space(2)).Background(t.Sidebar).Children(func() {
+		status := mui.SidebarRow{
+			Key: "status", Label: "Status", Fold: true, Expanded: w.app.StatusExpanded,
+			OnClick: func() { w.app.StatusExpanded = !w.app.StatusExpanded },
+		}
+		if failures := len(w.app.settingsSnapshot().RecentFailures); failures > 0 {
+			status.Count = fmt.Sprintf("%d", failures)
+		}
+		nav.row(c, t, status, "")
+		if !w.app.StatusExpanded {
+			return
+		}
+		statusSettings := w.app.settingsSnapshot()
+		// The details align with the status label, one fold indent in.
+		ui.Column(c).Gap(mui.Space(2)).Padding(0, 0, 0, mui.Space(5)).Children(func() {
+			mui.Secondary.Apply(ui.Text(c, "Last: "+orDash(statusSettings.LastRefresh))).TextColor(t.Muted).SingleLine()
+			mui.Secondary.Apply(ui.Text(c, "Next: "+orDash(statusSettings.NextRefresh))).TextColor(t.Muted).SingleLine()
+			for _, f := range statusSettings.RecentFailures {
+				ui.Row(c).Gap(mui.Space(2)).AlignItems(ui.Start).Children(func() {
+					ui.Icon(c, mui.IconAlert).Size(16, 16).TextColor(t.Danger)
+					mui.Secondary.Apply(ui.Text(c, f.Message)).TextColor(t.Danger).MaxLines(2).Grow(1)
 				})
 			}
 		})
-		statusTitle := "Status"
-		if w.app.StatusExpanded {
-			statusTitle = "Status (last refresh / next / failures)"
-		}
-		ui.Column(c).Padding(12, 12, 16).Gap(8).Background(t.Sidebar).Children(func() {
-			mui.NavRow(c, t, "status", nil, statusTitle, false, func() {
-				w.app.StatusExpanded = !w.app.StatusExpanded
-			})
-			if w.app.StatusExpanded {
-				statusSettings := w.app.settingsSnapshot()
-				ui.Text(c, "Last: "+orDash(statusSettings.LastRefresh)).FontSize(13).TextColor(t.Muted)
-				ui.Text(c, "Next: "+orDash(statusSettings.NextRefresh)).FontSize(13).TextColor(t.Muted)
-				for _, f := range statusSettings.RecentFailures {
-					ui.Row(c).Gap(8).AlignItems(ui.Start).Children(func() {
-						ui.Icon(c, mui.IconAlert).Size(16, 16)
-						ui.Text(c, f.Message).FontSize(13).TextColor(t.Danger).MaxLines(2).Grow(1)
-					})
-				}
-			}
-		})
 	})
 }
 
-func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup) {
-	key := "group-collapse:" + g.ID
-	collapsed := w.app.GroupCollapsed(g.ID)
-	headline := ui.ButtonBase(c).Key(key).Height(28).FillWidth().Gap(mui.Space(1)).Padding(0, mui.Space(1)).Radius(6).Background(t.Sidebar).TextColor(t.Muted).FontSize(13).Cursor(ui.CursorPointer).Transition(mui.Fade).FocusRingColor(t.Focus).FocusRingOffset(2).Role(ui.RoleDisclosure).Expanded(!collapsed).Label(g.Name)
-	headline.Children(func() {
-		glyph := mui.IconChevron
-		if !collapsed {
-			glyph = mui.IconChevronDown
-		}
-		ui.Icon(c, glyph).Size(14, 14)
-		ui.Text(c, g.Name).FontSize(13).SingleLine().Grow(1)
-		ui.Text(c, fmt.Sprintf("%d", len(g.ChannelIDs))).FontSize(12).TextColor(t.Muted).SingleLine()
-	})
-	if headline.Clicked() {
-		_ = w.app.SetGroupCollapsed(g.ID, !collapsed)
-	}
-	if !collapsed {
-		for _, id := range g.ChannelIDs {
-			id := id
-			ch := w.channelByID(id)
-			mui.ChannelNavRow(c, t, fmt.Sprintf("group:%s:channel:%s", g.Name, id), ch.Title, ch.AvatarURL, w.app.Selected == "channel:"+id, func() {
-				w.app.Selected = "channel:" + id
-			})
-		}
-	}
-}
-
+// sectionHeader titles a section of the sidebar. Its 13 pt Semibold Muted
+// label is the token pair that clears the 4.5:1 floor on the sidebar
+// surface in both appearances.
 func sectionHeader(c *ui.Context, t mui.Tokens, title string) {
-	ui.Text(c, title).FontSize(13).TextColor(t.Muted).Padding(20, 12, 8).SingleLine()
+	header := mui.SectionHeader.Apply(ui.Text(c, title)).TextColor(t.Muted).SingleLine()
+	header.Role(ui.RoleHeading).Level(2).Padding(mui.Space(3), mui.Space(2), mui.Space(1))
+}
+
+// sidebarCounts is the trailing count of every sidebar row: videos per
+// channel, the total for All videos, favorites for Favorites, and the sum
+// of a group's channels for the group row. Shorts hidden from the grid are
+// not counted, so a count matches the videos its destination shows.
+type sidebarCounts struct {
+	total      int
+	favorites  int
+	perChannel map[string]int
+}
+
+func (w *Window) sidebarCounts() sidebarCounts {
+	showShorts := w.app.settingsSnapshot().ShowShorts
+	counts := sidebarCounts{perChannel: make(map[string]int, len(w.app.Channels))}
+	for _, v := range w.app.Videos {
+		if !showShorts && v.IsShort {
+			continue
+		}
+		counts.total++
+		counts.perChannel[v.ChannelID]++
+	}
+	counts.favorites = len(w.app.Sync.Favorites)
+	return counts
+}
+
+func (c sidebarCounts) group(channelIDs []string) int {
+	sum := 0
+	for _, id := range channelIDs {
+		sum += c.perChannel[id]
+	}
+	return sum
 }
 
 func (w *Window) channelByID(id string) core.Channel {
