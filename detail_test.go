@@ -64,19 +64,31 @@ func wrappedDescription(t *testing.T, width float32, lines int) string {
 
 // A description whose seventh wrapped line the six-line clamp hides must offer
 // More, and one that wraps to exactly six lines must not: the shaped line count
-// decides, not a count of hard newlines or a height measured with a different
-// line height.
+// decides at the pane's settled width, not the animated one, so the button does
+// not pop in while the pane opens.
 func TestDescriptionMoreTracksRenderedLines(t *testing.T) {
 	inner := defaultDetailsWidth - 2*mui.Space(4)
 	short := core.Video{ID: "v-short", Title: "Short description", Description: wrappedDescription(t, inner, 6)}
 	long := core.Video{ID: "v-long", Title: "Long description", Description: wrappedDescription(t, inner, 7)}
 
-	a := detailTestApp(t, []core.Video{short, long}, short.ID)
+	a := detailTestApp(t, []core.Video{short, long}, "")
 	defer a.Close()
 	w := &Window{app: a, selectedIndex: new(int)}
 	tt := ui.NewTester(w.view, 1280, 840)
 	tt.Frame()
 
+	a.SelectedVideoID = short.ID
+	tt.Frame()
+	tt.Advance(60 * time.Millisecond)
+	tt.Frame()
+	if w.detail.shown <= 0 || w.detail.shown >= defaultDetailsWidth-0.5 {
+		t.Fatalf("pane width %v is not mid-animation", w.detail.shown)
+	}
+	if n := countText(tt, "More"); n != 0 {
+		t.Fatalf("the opening pane offered More %d times for six rendered lines; want none", n)
+	}
+	tt.Advance(300 * time.Millisecond)
+	tt.Frame()
 	if n := countText(tt, "More"); n != 0 {
 		t.Fatalf("six rendered lines offer More %d times; want no More", n)
 	}
@@ -92,6 +104,70 @@ func TestDescriptionMoreTracksRenderedLines(t *testing.T) {
 	tt.Frame()
 	if !tt.HasText("Show less") {
 		t.Fatal("More must reveal the full description")
+	}
+}
+
+// Closing the error pane keeps the error on screen for the whole close
+// animation rather than sliding out an empty state.
+func TestDetailErrorStaysThroughTheCloseAnimation(t *testing.T) {
+	a := detailTestApp(t, []core.Video{{ID: "v-1", Title: "Video"}}, "v-gone")
+	defer a.Close()
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 840)
+	tt.Frame()
+
+	if !tt.HasText("Couldn't load this video") {
+		t.Fatalf("a missing video shows no error: %q", tt.Texts())
+	}
+	if err := tt.Click("Close details"); err != nil {
+		t.Fatalf("click Close details: %v", err)
+	}
+	tt.Advance(60 * time.Millisecond)
+	tt.Frame()
+	if !tt.HasText("Couldn't load this video") {
+		t.Fatalf("the error vanished during the close animation: %q", tt.Texts())
+	}
+	if tt.HasText("Select a video to see details") {
+		t.Fatal("the empty state slid out under the closing error")
+	}
+	tt.Advance(300 * time.Millisecond)
+	tt.Frame()
+	if tt.HasText("Couldn't load this video") {
+		t.Fatal("the closed pane kept the error")
+	}
+}
+
+// At the minimum window with the widest requested pane, the divider shows less
+// than the request; one arrow press must still move it.
+func TestSqueezedDetailDividerKeyMovesThePane(t *testing.T) {
+	video := core.Video{ID: "v-1", Title: "Video"}
+	a := detailTestApp(t, []core.Video{video}, video.ID)
+	defer a.Close()
+	a.Settings.DetailsWidth = maxDetailsWidth
+
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 960, 640)
+	tt.Frame()
+
+	settled := detailWidthForRoom(maxDetailsWidth, 960-minSidebarWidth-splitDividerWidth())
+	if w.detail.shown != settled {
+		t.Fatalf("pane shows %v; want the room's %v", w.detail.shown, settled)
+	}
+	if w.detail.width != maxDetailsWidth {
+		t.Fatalf("pane stores %v; want %v", w.detail.width, maxDetailsWidth)
+	}
+
+	x := 960 - w.detail.shown - splitDividerWidth()
+	tt.Press(x, 300)
+	tt.Release(x, 300)
+	tt.Key(0, ui.KeyRight)
+	tt.Frame()
+
+	if w.detail.shown >= settled {
+		t.Fatalf("one Right press left the pane at %v; want it narrower than %v", w.detail.shown, settled)
+	}
+	if want := settled - detailKeyStep; w.detail.width != want {
+		t.Fatalf("pane stores %v after Right; want %v", w.detail.width, want)
 	}
 }
 
@@ -202,14 +278,14 @@ func TestDetailScrollStartsAtTheTopForANewVideo(t *testing.T) {
 	}
 }
 
-// A sidebar drag that the open pane leaves no room for must keep the pointer's
-// requested width, not the squeezed width the room allows, so closing the pane
-// brings the sidebar back to what the user asked for.
+// A sidebar drag that the open pane leaves no room for must keep its full
+// travel in the requested width, never the squeezed width on screen, so closing
+// the pane brings the sidebar back to what the user asked for.
 func TestSidebarDragKeepsTheRequestedWidthWhenSqueezed(t *testing.T) {
 	a := newTestApp(t, t.TempDir())
 	defer a.Close()
 	a.Selected = "all"
-	a.Settings.SidebarWidth = maxSidebarWidth
+	a.Settings.SidebarWidth = 340
 	a.Settings.DetailsWidth = defaultDetailsWidth
 	a.Videos = []core.Video{{ID: "v-1", Title: "Video"}}
 	a.SelectedVideoID = "v-1"
@@ -218,28 +294,37 @@ func TestSidebarDragKeepsTheRequestedWidthWhenSqueezed(t *testing.T) {
 	tt := ui.NewTester(w.view, 960, 640)
 	tt.Frame()
 
-	visible := boundedSidebarWidth(maxSidebarWidth, defaultDetailsWidth, 960)
+	shown := detailWidthForRoom(defaultDetailsWidth, 960-minSidebarWidth-splitDividerWidth())
+	visible := boundedSidebarWidth(340, shown, 960)
 	if w.sidebarWidth != visible {
 		t.Fatalf("sidebar shows %v; want the room's %v", w.sidebarWidth, visible)
 	}
 
-	tt.Press(visible, 320)
-	tt.Move(visible+30, 320)
-	tt.Release(visible+30, 320)
-	tt.Frame()
-
-	if w.sidebarWidth != visible {
-		t.Fatalf("the blocked drag resized the sidebar to %v; want %v", w.sidebarWidth, visible)
+	const moves float32 = 3
+	const step float32 = 10
+	x := visible
+	tt.Press(x, 320)
+	for i := float32(1); i <= moves; i++ {
+		tt.Move(x+i*step, 320)
+		if grid := 960 - w.sidebarWidth - 2*splitDividerWidth() - w.detail.shown; grid < minGridWidth-0.01 {
+			t.Fatalf("grid %v went below its %v minimum during the drag", grid, minGridWidth)
+		}
+		if w.sidebarWidth != visible {
+			t.Fatalf("the blocked drag resized the sidebar to %v; want %v", w.sidebarWidth, visible)
+		}
 	}
-	if got := a.Settings.SidebarWidth; got != visible+30 {
-		t.Fatalf("the blocked drag stored %v; want the requested %v", got, visible+30)
+	tt.Release(x+moves*step, 320)
+
+	want := 340 + moves*step
+	if got := a.Settings.SidebarWidth; got != want {
+		t.Fatalf("the blocked drag stored %v; want the requested %v", got, want)
 	}
 
 	a.SelectedVideoID = ""
 	tt.Frame()
 	tt.Advance(300 * time.Millisecond)
 	tt.Frame()
-	if w.sidebarWidth != visible+30 {
-		t.Fatalf("sidebar reopened at %v; want the remembered %v", w.sidebarWidth, visible+30)
+	if w.sidebarWidth != want {
+		t.Fatalf("sidebar reopened at %v; want the remembered %v", w.sidebarWidth, want)
 	}
 }

@@ -36,11 +36,12 @@ type detailState struct {
 	dragging  bool
 	overshoot float32
 
-	videoID  string
-	video    core.Video
-	hasVideo bool
-	errID    string
-	more     bool
+	videoID      string
+	video        core.Video
+	hasVideo     bool
+	errID        string
+	errDismissed bool
+	more         bool
 
 	returnFocus bool
 	returnIndex int
@@ -112,17 +113,21 @@ func (w *Window) view(c *ui.Context) {
 				d.more = false
 			}
 			d.videoID, d.video, d.hasVideo, d.errID = selectedID, v, true, ""
+			d.errDismissed = false
 		} else {
 			d.videoID, d.hasVideo, d.errID = "", false, selectedID
+			d.errDismissed = false
 		}
 	}
-	open := selectedID != "" || d.errID != ""
+	open := selectedID != "" || (d.errID != "" && !d.errDismissed)
 
 	fitted := detailWidthForRoom(d.width, w.detailFitWidth(c))
 	shown := w.advanceDetails(c, open, fitted)
-	w.sidebarWidth = boundedSidebarWidth(settings.SidebarWidth, shown, total)
+	request := clampSidebarWidth(settings.SidebarWidth)
+	w.sidebarWidth = boundedSidebarWidth(request, shown, total)
 	d.shown = shown
 
+	before := w.sidebarWidth
 	var outerSplit ui.Element
 	panes := func() {
 		w.mainArea(c, tokens, shown)
@@ -137,14 +142,9 @@ func (w *Window) view(c *ui.Context) {
 	}
 
 	if outerSplit.Changed() {
-		sidebar := clamp(w.sidebarWidth, minSidebarWidth, maxSidebarWidth)
-		_, _ = w.app.updateSettings(func(s *core.Settings) bool {
-			if s.SidebarWidth == sidebar {
-				return false
-			}
-			s.SidebarWidth = sidebar
-			return true
-		})
+		request = clampSidebarWidth(request + w.sidebarWidth - before)
+		w.sidebarWidth = boundedSidebarWidth(request, shown, total)
+		w.persistSidebarWidth(request)
 	}
 
 	if d.returnFocus {
@@ -155,7 +155,8 @@ func (w *Window) view(c *ui.Context) {
 		w.grid.Focus(c)
 	}
 	if !open && shown == 0 {
-		d.videoID, d.video, d.hasVideo, d.more, d.errID = "", core.Video{}, false, false, ""
+		d.videoID, d.video, d.hasVideo, d.more = "", core.Video{}, false, false
+		d.errID, d.errDismissed = "", false
 	}
 }
 
@@ -264,16 +265,17 @@ func (w *Window) detailsDivider(c *ui.Context, t mui.Tokens) {
 			w.setDetailsWidth(c, defaultDetailsWidth, true)
 		}
 	})
-	if next, ok := detailsWidthForKey(d.width, ui.KeyLeft); ok && line.Shortcut(0, ui.KeyLeft) {
+	visible := min(d.width, d.shown)
+	if next, ok := detailsWidthForKey(visible, ui.KeyLeft); ok && line.Shortcut(0, ui.KeyLeft) {
 		w.setDetailsWidth(c, next, true)
 	}
-	if next, ok := detailsWidthForKey(d.width, ui.KeyRight); ok && line.Shortcut(0, ui.KeyRight) {
+	if next, ok := detailsWidthForKey(visible, ui.KeyRight); ok && line.Shortcut(0, ui.KeyRight) {
 		w.setDetailsWidth(c, next, true)
 	}
-	if next, ok := detailsWidthForKey(d.width, ui.KeyHome); ok && line.Shortcut(0, ui.KeyHome) {
+	if next, ok := detailsWidthForKey(visible, ui.KeyHome); ok && line.Shortcut(0, ui.KeyHome) {
 		w.setDetailsWidth(c, next, true)
 	}
-	if next, ok := detailsWidthForKey(d.width, ui.KeyEnd); ok && line.Shortcut(0, ui.KeyEnd) {
+	if next, ok := detailsWidthForKey(visible, ui.KeyEnd); ok && line.Shortcut(0, ui.KeyEnd) {
 		w.setDetailsWidth(c, next, true)
 	}
 }
@@ -308,7 +310,11 @@ func (w *Window) dragDetails(dx, rowWidth float32) {
 	want := d.shown - dx + d.overshoot
 	next := clamp(want, minDetailsWidth, room)
 	d.overshoot = want - next
-	d.width = clampDetailsWidth(want)
+	width := want
+	if want > room && d.width > width {
+		width = d.width
+	}
+	d.width = clampDetailsWidth(width)
 	d.shown = next
 	d.animating = false
 }
@@ -350,8 +356,10 @@ func (w *Window) closeDetails(c *ui.Context) {
 		d.dragging = false
 		w.persistDetailsWidth()
 	}
+	if d.errID != "" {
+		d.errDismissed = true
+	}
 	w.app.SelectedVideoID = ""
-	d.errID = ""
 	d.returnFocus = !w.app.SettingsOpen
 }
 
@@ -444,6 +452,7 @@ func (w *Window) retryDetails(c *ui.Context) {
 func (w *Window) detailVideo(c *ui.Context, t mui.Tokens, v core.Video) {
 	d := &w.detail
 	innerWidth := max(d.shown-2*mui.Space(4), 0)
+	settledWidth := max(detailWidthForRoom(d.width, windowWidth(c)-minSidebarWidth-splitDividerWidth())-2*mui.Space(4), 0)
 
 	body := ui.Scroll(c.Key(v.ID)).Grow(1).MinWidth(0).Padding(mui.Space(4)).Gap(mui.Space(3))
 	body.Children(func() {
@@ -462,7 +471,7 @@ func (w *Window) detailVideo(c *ui.Context, t mui.Tokens, v core.Video) {
 				if !d.more {
 					text.MaxLines(6)
 				}
-				if descriptionOverflows(desc, innerWidth) {
+				if descriptionOverflows(desc, settledWidth) {
 					more := ui.ButtonBase(c).Key("details-description-more").
 						Height(mui.Body.LineHeight).Padding(0).Radius(mui.RadiusControl).
 						Background(t.App).TextColor(t.Accent).Cursor(ui.CursorPointer).
@@ -684,9 +693,7 @@ func youtubeWatchURL(id string) string {
 // divider drag instead of the flag. The grid keeps its minimum while there is
 // room to give, and the sidebar never goes below its own minimum.
 func boundedSidebarWidth(width, shown, total float32) float32 {
-	if width <= 0 {
-		width = defaultSidebarWidth
-	}
+	width = clampSidebarWidth(width)
 	limit := maxSidebarWidth
 	if total > 0 {
 		room := total - 2*splitDividerWidth() - minGridWidth
@@ -697,6 +704,26 @@ func boundedSidebarWidth(width, shown, total float32) float32 {
 	}
 	limit = max(limit, minSidebarWidth)
 	return clamp(width, minSidebarWidth, limit)
+}
+
+// clampSidebarWidth keeps the user's requested sidebar width inside the
+// board's 180-480 range, with zero meaning the 256 default.
+func clampSidebarWidth(width float32) float32 {
+	if width <= 0 {
+		width = defaultSidebarWidth
+	}
+	return clamp(width, minSidebarWidth, maxSidebarWidth)
+}
+
+func (w *Window) persistSidebarWidth(width float32) {
+	width = clampSidebarWidth(width)
+	_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+		if s.SidebarWidth == width {
+			return false
+		}
+		s.SidebarWidth = width
+		return true
+	})
 }
 
 func splitDividerWidth() float32 {
