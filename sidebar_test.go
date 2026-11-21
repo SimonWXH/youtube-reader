@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -170,6 +171,121 @@ func TestSidebarCountsMatchTheirDestination(t *testing.T) {
 	a.ChannelFilter = ""
 	a.Videos = []core.Video{favorite, plain, shortFavorite}
 	check("favorite left the store", 2, 1, 1, 1)
+}
+
+// TestSidebarRendersDestinationCounts checks the count each row actually
+// paints, not just the helper's arithmetic: every destination row shows the
+// number of videos its destination holds, in both the collapsed and the
+// expanded group, and in both places a channel row appears.
+func TestSidebarRendersDestinationCounts(t *testing.T) {
+	type channelFixture struct {
+		id, title string
+		videos    int
+	}
+	channels := []channelFixture{
+		{"ch-a", "Alpha channel", 17},
+		{"ch-b", "Beta channel", 12},
+		{"ch-c", "Gamma channel", 7},
+		{"ch-d", "Delta channel", 4},
+	}
+	const favoriteVideos = 23
+	var (
+		videos       []core.Video
+		appChannels  []core.Channel
+		syncChannels = map[string]core.Channel{}
+		perChannel   = map[string]int{}
+	)
+	for _, ch := range channels {
+		appChannels = append(appChannels, core.Channel{ID: ch.id, Title: ch.title})
+		syncChannels[ch.id] = core.Channel{ID: ch.id, Title: ch.title}
+		perChannel[ch.id] = ch.videos
+		for i := 0; i < ch.videos; i++ {
+			videos = append(videos, core.Video{
+				ID:           fmt.Sprintf("%s-%d", ch.id, i),
+				ChannelID:    ch.id,
+				ChannelTitle: ch.title,
+				Title:        fmt.Sprintf("%s video %d", ch.title, i),
+			})
+		}
+	}
+	favorites := make(map[string]core.FavoriteRecord, favoriteVideos)
+	for _, v := range videos[:favoriteVideos] {
+		favorites[v.ID] = core.FavoriteRecord{VideoID: v.ID}
+	}
+	groups := []core.ChannelGroup{
+		{ID: "group-a", Name: "Alpha group", ChannelIDs: []string{"ch-a", "ch-b"}},
+		{ID: "group-b", Name: "Beta group", ChannelIDs: []string{"ch-c", "ch-d"}},
+	}
+	a := &App{
+		Dir:      t.TempDir(),
+		Selected: "all",
+		Settings: core.Settings{
+			APIKey:         "test",
+			SidebarWidth:   defaultSidebarWidth,
+			DetailsWidth:   defaultDetailsWidth,
+			ExpandedGroups: map[string]bool{"group-a": true},
+		},
+		Sync: core.SyncState{
+			Favorites:  favorites,
+			ReadStates: map[string]map[string]core.ReadRecord{},
+			Channels:   syncChannels,
+			Groups:     map[string]core.ChannelGroup{"group-a": groups[0], "group-b": groups[1]},
+		},
+		Groups:   groups,
+		Channels: appChannels,
+		Videos:   videos,
+	}
+	tt := sidebarTester(t, a)
+
+	assertSidebarCount(t, tt, "All videos", fmt.Sprintf("%d", len(videos)), 1)
+	assertSidebarCount(t, tt, "Favorites", fmt.Sprintf("%d", favoriteVideos), 1)
+	assertSidebarCount(t, tt, "Alpha group", fmt.Sprintf("%d", perChannel["ch-a"]+perChannel["ch-b"]), 1)
+	assertSidebarCount(t, tt, "Beta group", fmt.Sprintf("%d", perChannel["ch-c"]+perChannel["ch-d"]), 1)
+	assertSidebarCount(t, tt, "Alpha channel", fmt.Sprintf("%d", perChannel["ch-a"]), 2)
+	assertSidebarCount(t, tt, "Beta channel", fmt.Sprintf("%d", perChannel["ch-b"]), 2)
+	assertSidebarCount(t, tt, "Gamma channel", fmt.Sprintf("%d", perChannel["ch-c"]), 1)
+	assertSidebarCount(t, tt, "Delta channel", fmt.Sprintf("%d", perChannel["ch-d"]), 1)
+}
+
+// sidebarRowBoxes returns the boxes of the sidebar rows named name. A group
+// row is a disclosure and a navigation row is a button.
+func sidebarRowBoxes(tt *ui.Tester, name string) []ui.Rect {
+	var boxes []ui.Rect
+	for _, info := range tt.AccessAll() {
+		if info.Name == name && (info.Role == ui.RoleButton || info.Role == ui.RoleDisclosure) {
+			boxes = append(boxes, info.Bounds)
+		}
+	}
+	return boxes
+}
+
+// assertSidebarCount checks that name names the expected number of sidebar
+// rows and that each one paints count inside its own box.
+func assertSidebarCount(t *testing.T, tt *ui.Tester, name, count string, rows int) {
+	t.Helper()
+	boxes := sidebarRowBoxes(tt, name)
+	if len(boxes) != rows {
+		t.Fatalf("%q has %d sidebar rows, want %d", name, len(boxes), rows)
+	}
+	shown := 0
+	for _, text := range tt.Texts() {
+		if text == count {
+			shown++
+		}
+	}
+	if shown != rows {
+		t.Fatalf("%q count %q appears %d times, want once per row (%d); texts = %q", name, count, shown, rows, tt.Texts())
+	}
+	text, ok := tt.Find(count)
+	if !ok {
+		t.Fatalf("%q shows no %q count", name, count)
+	}
+	for _, box := range boxes {
+		if text.X >= box.X && text.X+text.W <= box.X+box.W && text.Y >= box.Y && text.Y+text.H <= box.Y+box.H {
+			return
+		}
+	}
+	t.Fatalf("%q rows at %+v do not hold the %q count at %+v", name, boxes, count, text)
 }
 
 // TestSidebarWidthMatchesDesign checks the agreed 220 to 320 pt range that
