@@ -70,9 +70,10 @@ type Settings struct {
 	HelperInstalled  bool             `json:"helperInstalled,omitempty"`
 
 	// Local UI preferences. These stay in settings.json and are never synced.
-	SidebarWidth   float32 `json:"sidebarWidth,omitempty"`
-	DetailsWidth   float32 `json:"detailsWidth,omitempty"`
-	MaxGridColumns int     `json:"maxGridColumns,omitempty"`
+	SidebarWidth   float32         `json:"sidebarWidth,omitempty"`
+	DetailsWidth   float32         `json:"detailsWidth,omitempty"`
+	MaxGridColumns int             `json:"maxGridColumns,omitempty"`
+	ExpandedGroups map[string]bool `json:"expandedGroups,omitempty"`
 }
 
 type FavoriteRecord struct {

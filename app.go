@@ -9,18 +9,20 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/simon/youtube-reader/core"
 )
 
 type App struct {
-	Settings core.Settings
-	Sync     core.SyncState
-	Store    *core.Store
-	Dir      string
-	DeviceID string
-	Lock     *core.SyncLock
+	Settings   core.Settings
+	settingsMu sync.RWMutex
+	Sync       core.SyncState
+	Store      *core.Store
+	Dir        string
+	DeviceID   string
+	Lock       *core.SyncLock
 
 	Groups   []core.ChannelGroup
 	Channels []core.Channel
@@ -39,6 +41,95 @@ type App struct {
 	LastRefreshMessage string
 	LastNotified       []core.NotificationPlan
 	LastSyncWrite      time.Time
+}
+
+// GroupCollapsed reports whether a subscription group's channel list is
+// folded. Groups default to collapsed when no preference has been stored.
+func (a *App) GroupCollapsed(groupID string) bool {
+	a.settingsMu.RLock()
+	defer a.settingsMu.RUnlock()
+	if a.Settings.ExpandedGroups != nil {
+		if expanded, ok := a.Settings.ExpandedGroups[groupID]; ok {
+			return !expanded
+		}
+	}
+	return true
+}
+
+// SetGroupCollapsed stores a group's folding state in local settings.
+func (a *App) SetGroupCollapsed(groupID string, collapsed bool) error {
+	_, err := a.updateSettings(func(s *core.Settings) bool {
+		if s.ExpandedGroups == nil {
+			s.ExpandedGroups = map[string]bool{}
+		}
+		s.ExpandedGroups[groupID] = !collapsed
+		return true
+	})
+	return err
+}
+
+func cloneSettings(s core.Settings) core.Settings {
+	cloned := s
+	if s.NotificationIDs != nil {
+		cloned.NotificationIDs = append([]string(nil), s.NotificationIDs...)
+	}
+	if s.RecentFailures != nil {
+		cloned.RecentFailures = append([]core.RefreshFailure(nil), s.RecentFailures...)
+	}
+	if s.ExpandedGroups != nil {
+		cloned.ExpandedGroups = make(map[string]bool, len(s.ExpandedGroups))
+		for id, expanded := range s.ExpandedGroups {
+			cloned.ExpandedGroups[id] = expanded
+		}
+	}
+	return cloned
+}
+
+func (a *App) settingsSnapshot() core.Settings {
+	a.settingsMu.RLock()
+	defer a.settingsMu.RUnlock()
+	return cloneSettings(a.Settings)
+}
+
+func (a *App) settingsBytes(s core.Settings) ([]byte, error) {
+	return json.MarshalIndent(s, "", "  ")
+}
+
+func (a *App) saveSettings(data []byte) error {
+	return atomicWrite(filepath.Join(a.Dir, "settings.json"), data)
+}
+
+func (a *App) updateSettings(fn func(*core.Settings) bool) (bool, error) {
+	a.settingsMu.Lock()
+	defer a.settingsMu.Unlock()
+	if !fn(&a.Settings) {
+		return false, nil
+	}
+	a.mergeNewerDiskStatus()
+	data, err := a.settingsBytes(cloneSettings(a.Settings))
+	if err != nil {
+		return true, err
+	}
+	return true, a.saveSettings(data)
+}
+
+// mergeNewerDiskStatus takes the refresh status the background helper wrote to
+// settings.json over the stale copy kept in memory. Every settings write goes
+// through it, so a local preference change cannot clobber failures or a quota
+// pause the helper persisted in the meantime. The caller holds settingsMu.
+func (a *App) mergeNewerDiskStatus() {
+	data, err := os.ReadFile(filepath.Join(a.Dir, "settings.json"))
+	if err != nil {
+		return
+	}
+	var disk core.Settings
+	if json.Unmarshal(data, &disk) != nil || !settingsStatusTime(disk).After(settingsStatusTime(a.Settings)) {
+		return
+	}
+	a.Settings.LastRefresh = disk.LastRefresh
+	a.Settings.NextRefresh = disk.NextRefresh
+	a.Settings.RecentFailures = disk.RecentFailures
+	a.Settings.QuotaPausedUntil = disk.QuotaPausedUntil
 }
 
 type RefreshOutcome = core.RefreshResult
@@ -66,6 +157,7 @@ func defaultSettings() core.Settings {
 		SidebarWidth:    defaultSidebarWidth,
 		DetailsWidth:    defaultDetailsWidth,
 		MaxGridColumns:  defaultMaxGridColumns,
+		ExpandedGroups:  map[string]bool{},
 	}
 }
 
@@ -147,21 +239,14 @@ func (a *App) Close() {
 }
 
 func (a *App) SaveSettings() error {
-	path := filepath.Join(a.Dir, "settings.json")
-	if data, err := os.ReadFile(path); err == nil {
-		var disk core.Settings
-		if json.Unmarshal(data, &disk) == nil && settingsStatusTime(disk).After(settingsStatusTime(a.Settings)) {
-			a.Settings.LastRefresh = disk.LastRefresh
-			a.Settings.NextRefresh = disk.NextRefresh
-			a.Settings.RecentFailures = disk.RecentFailures
-			a.Settings.QuotaPausedUntil = disk.QuotaPausedUntil
-		}
-	}
-	data, err := json.MarshalIndent(a.Settings, "", "  ")
+	a.settingsMu.Lock()
+	defer a.settingsMu.Unlock()
+	a.mergeNewerDiskStatus()
+	data, err := a.settingsBytes(cloneSettings(a.Settings))
 	if err != nil {
 		return err
 	}
-	return atomicWrite(path, data)
+	return a.saveSettings(data)
 }
 
 func settingsStatusTime(s core.Settings) time.Time {
@@ -190,14 +275,17 @@ func handoffStatusTime(createdAt string, failures []core.RefreshFailure) time.Ti
 }
 
 func (a *App) SaveSync() error {
-	if current, err := core.LoadSyncWithConflicts(a.Settings.SyncPath, a.DeviceID); err == nil && current.UpdatedAt > a.Sync.UpdatedAt {
+	a.settingsMu.RLock()
+	syncPath := a.Settings.SyncPath
+	a.settingsMu.RUnlock()
+	if current, err := core.LoadSyncWithConflicts(syncPath, a.DeviceID); err == nil && current.UpdatedAt > a.Sync.UpdatedAt {
 		a.Sync = core.MergeSync(current, a.Sync)
 	}
 	now := time.Now().UnixMilli()
 	if a.Sync.UpdatedAt < now {
 		a.Sync.UpdatedAt = now
 	}
-	if err := core.SaveSyncAtomic(a.Settings.SyncPath, a.Sync); err != nil {
+	if err := core.SaveSyncAtomic(syncPath, a.Sync); err != nil {
 		return err
 	}
 	a.LastSyncWrite = time.Now()
@@ -341,7 +429,10 @@ func ExportFavorites(state core.SyncState, path string, now time.Time) error {
 }
 
 func (a *App) ExportFavorites() error {
-	return ExportFavorites(a.Sync, a.Settings.BackupPath, time.Now())
+	a.settingsMu.RLock()
+	backupPath := a.Settings.BackupPath
+	a.settingsMu.RUnlock()
+	return ExportFavorites(a.Sync, backupPath, time.Now())
 }
 
 func parseFavoritesBackup(data []byte) (favoritesBackup, error) {
@@ -452,17 +543,21 @@ func (a *App) ImportFavorites(path string) (int, error) {
 func (a *App) Refresh(force bool) RefreshOutcome {
 	ctx := context.Background()
 	now := time.Now()
-	client := core.YouTube{Key: a.Settings.APIKey}
-	outcome := core.RefreshYoutube(ctx, client, a.Settings, a.Sync, a.Store, a.Videos, a.Revision, force, now)
-	if outcome.Changed {
-		a.Settings.LastRefresh = core.FormatRFC3339(now)
-		a.Settings.NextRefresh = core.FormatRFC3339(now.Add(time.Duration(a.Settings.RefreshMinutes) * time.Minute))
-	}
-	a.Settings.RecentFailures = outcome.Failures
-	if containsQuotaFailure(outcome.Failures) {
-		a.Settings.QuotaPausedUntil = core.FormatRFC3339(now.Add(24 * time.Hour))
-	}
-	_ = a.SaveSettings()
+	settings := a.settingsSnapshot()
+	interval := time.Duration(settings.RefreshMinutes) * time.Minute
+	client := core.YouTube{Key: settings.APIKey}
+	outcome := core.RefreshYoutube(ctx, client, settings, a.Sync, a.Store, a.Videos, a.Revision, force, now)
+	_, _ = a.updateSettings(func(s *core.Settings) bool {
+		if outcome.Changed {
+			s.LastRefresh = core.FormatRFC3339(now)
+			s.NextRefresh = core.FormatRFC3339(now.Add(interval))
+		}
+		s.RecentFailures = outcome.Failures
+		if containsQuotaFailure(outcome.Failures) {
+			s.QuotaPausedUntil = core.FormatRFC3339(now.Add(24 * time.Hour))
+		}
+		return true
+	})
 	_ = a.reload()
 	if outcome.Changed {
 		outcome.Channels = a.Channels
@@ -480,6 +575,8 @@ func containsQuotaFailure(failures []core.RefreshFailure) bool {
 }
 
 func (a *App) notificationEnabled(channelID string) bool {
+	a.settingsMu.RLock()
+	defer a.settingsMu.RUnlock()
 	for _, id := range a.Settings.NotificationIDs {
 		if id == channelID {
 			return true
@@ -489,36 +586,50 @@ func (a *App) notificationEnabled(channelID string) bool {
 }
 
 func (a *App) EnableNotificationsForSelection() {
-	add := func(id string) {
-		if !a.notificationEnabled(id) {
-			a.Settings.NotificationIDs = append(a.Settings.NotificationIDs, id)
-		}
-	}
+	var ids []string
 	if a.Selected == "all" {
 		for id := range a.Sync.Channels {
-			add(id)
+			ids = append(ids, id)
 		}
 	} else if strings.HasPrefix(a.Selected, "group:") {
 		if g, ok := a.Sync.Groups[strings.TrimPrefix(a.Selected, "group:")]; ok {
-			for _, id := range g.ChannelIDs {
-				add(id)
-			}
+			ids = append(ids, g.ChannelIDs...)
 		}
 	} else if strings.HasPrefix(a.Selected, "channel:") {
-		add(strings.TrimPrefix(a.Selected, "channel:"))
+		ids = append(ids, strings.TrimPrefix(a.Selected, "channel:"))
 	}
-	_ = a.SaveSettings()
+	_, _ = a.updateSettings(func(s *core.Settings) bool {
+		known := make(map[string]bool, len(s.NotificationIDs)+len(ids))
+		for _, id := range s.NotificationIDs {
+			known[id] = true
+		}
+		changed := false
+		for _, id := range ids {
+			if id == "" || known[id] {
+				continue
+			}
+			s.NotificationIDs = append(s.NotificationIDs, id)
+			known[id] = true
+			changed = true
+		}
+		return changed
+	})
 }
 
 func (a *App) StartupRefreshIfDue() {
-	if a.Settings.LastRefresh == "" {
+	a.settingsMu.RLock()
+	lastRefresh := a.Settings.LastRefresh
+	refreshMinutes := a.Settings.RefreshMinutes
+	quotaPausedUntil := a.Settings.QuotaPausedUntil
+	a.settingsMu.RUnlock()
+	if lastRefresh == "" {
 		return
 	}
-	last, err := time.Parse(time.RFC3339, a.Settings.LastRefresh)
-	if err != nil || time.Since(last) < time.Duration(a.Settings.RefreshMinutes)*time.Minute {
+	last, err := time.Parse(time.RFC3339, lastRefresh)
+	if err != nil || time.Since(last) < time.Duration(refreshMinutes)*time.Minute {
 		return
 	}
-	if paused, err := time.Parse(time.RFC3339, a.Settings.QuotaPausedUntil); err == nil && time.Now().Before(paused) {
+	if paused, err := time.Parse(time.RFC3339, quotaPausedUntil); err == nil && time.Now().Before(paused) {
 		return
 	}
 	go func() { _ = a.Refresh(false) }()
@@ -564,10 +675,12 @@ func (a *App) ConsumeHandoff() error {
 	if err := json.Unmarshal(data, &handoff); err != nil {
 		return nil
 	}
-	if handoff.ID != "" && handoff.ID == a.Settings.LastHandoffID {
+	currentStatus := a.settingsSnapshot()
+	refreshInterval := time.Duration(currentStatus.RefreshMinutes) * time.Minute
+	if handoff.ID != "" && handoff.ID == currentStatus.LastHandoffID {
 		return nil
 	}
-	fresh := handoffStatusTime(handoff.CreatedAt, handoff.Failures).After(settingsStatusTime(a.Settings))
+	fresh := handoffStatusTime(handoff.CreatedAt, handoff.Failures).After(settingsStatusTime(currentStatus))
 	if handoff.Result != nil || handoff.Description != "" {
 		a.LastRefreshMessage = handoff.Description
 	}
@@ -579,27 +692,29 @@ func (a *App) ConsumeHandoff() error {
 			log.Printf("notification click handoff: %v", err)
 		}
 	}
-	if fresh && len(handoff.Failures) > 0 {
-		a.Settings.RecentFailures = handoff.Failures
-		if containsQuotaFailure(handoff.Failures) {
-			for _, f := range handoff.Failures {
-				if strings.HasPrefix(f.Message, "quota paused") {
-					if at, err := time.Parse(time.RFC3339, f.At); err == nil {
-						a.Settings.QuotaPausedUntil = core.FormatRFC3339(at.Add(24 * time.Hour))
+	_, _ = a.updateSettings(func(s *core.Settings) bool {
+		if fresh && len(handoff.Failures) > 0 {
+			s.RecentFailures = handoff.Failures
+			if containsQuotaFailure(handoff.Failures) {
+				for _, f := range handoff.Failures {
+					if strings.HasPrefix(f.Message, "quota paused") {
+						if at, err := time.Parse(time.RFC3339, f.At); err == nil {
+							s.QuotaPausedUntil = core.FormatRFC3339(at.Add(24 * time.Hour))
+						}
+						break
 					}
-					break
 				}
 			}
 		}
-	}
-	if fresh && handoff.Result != nil && handoff.CreatedAt != "" {
-		a.Settings.LastRefresh = handoff.CreatedAt
-		if at, err := time.Parse(time.RFC3339, handoff.CreatedAt); err == nil {
-			a.Settings.NextRefresh = core.FormatRFC3339(at.Add(time.Duration(a.Settings.RefreshMinutes) * time.Minute))
+		if fresh && handoff.Result != nil && handoff.CreatedAt != "" {
+			s.LastRefresh = handoff.CreatedAt
+			if at, err := time.Parse(time.RFC3339, handoff.CreatedAt); err == nil {
+				s.NextRefresh = core.FormatRFC3339(at.Add(refreshInterval))
+			}
 		}
-	}
-	a.Settings.LastHandoffID = handoff.ID
-	_ = a.SaveSettings()
+		s.LastHandoffID = handoff.ID
+		return true
+	})
 	_ = os.Remove(path)
 	return a.reload()
 }
@@ -728,8 +843,11 @@ func (a *App) VisibleVideos() []core.Video {
 	}
 	out := make([]core.Video, 0, len(a.Videos))
 	q := strings.ToLower(a.Search)
+	a.settingsMu.RLock()
+	showShorts := a.Settings.ShowShorts
+	a.settingsMu.RUnlock()
 	for _, v := range a.Videos {
-		if !a.Settings.ShowShorts && v.IsShort {
+		if !showShorts && v.IsShort {
 			continue
 		}
 		if allowed != nil && !allowed[v.ID] && !allowed[v.ChannelID] {
