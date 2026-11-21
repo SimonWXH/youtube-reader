@@ -26,14 +26,19 @@ func render(_ symbolName: String, pointSize: CGFloat, side: Int, to path: String
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
     NSColor.clear.setFill()
     NSRect(x: 0, y: 0, width: pointSize, height: pointSize).fill()
-    // Draw the symbol at its own proportions, centered in the point-size box,
-    // then ink it black over its own alpha so the file is a template.
+    // Fit the symbol inside the point-size box, keeping its proportions and a
+    // 1 pt margin, then ink it black over its own alpha so the file is a
+    // template.
     let box = symbol.size
-    let rect = NSRect(x: (pointSize - box.width) / 2, y: (pointSize - box.height) / 2,
-                      width: box.width, height: box.height)
+    let inset: CGFloat = 1
+    let scale = (pointSize - 2 * inset) / max(box.width, box.height)
+    let width = box.width * scale
+    let height = box.height * scale
+    let rect = NSRect(x: (pointSize - width) / 2, y: (pointSize - height) / 2,
+                      width: width, height: height)
     symbol.draw(in: rect)
     NSColor.black.setFill()
-    rect.fill(using: .sourceAtop)
+    NSRect(x: 0, y: 0, width: pointSize, height: pointSize).fill(using: .sourceAtop)
     guard let data = rep.representation(using: .png, properties: [:]) else {
         throw NSError(domain: symbolName, code: 3)
     }

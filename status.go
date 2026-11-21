@@ -272,19 +272,19 @@ func relativeTime(now, t time.Time) string {
 // rather than "0 min".
 func remainingTime(now, t time.Time) string {
 	d := t.Sub(now)
-	switch {
-	case d <= 0:
+	if d <= 0 {
 		return "now"
-	case d < time.Minute:
-		return "1 min"
-	case d < time.Hour:
-		return fmt.Sprintf("%d min", int((d+time.Minute-1)/time.Minute))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%d hr", int((d+time.Hour-1)/time.Hour))
-	default:
-		days := int((d + 24*time.Hour - 1) / (24 * time.Hour))
-		return fmt.Sprintf("%d day%s", days, plural(days))
 	}
+	minutes := int((d + time.Minute - 1) / time.Minute)
+	if minutes < 60 {
+		return fmt.Sprintf("%d min", minutes)
+	}
+	hours := int((d + time.Hour - 1) / time.Hour)
+	if hours < 24 {
+		return fmt.Sprintf("%d hr", hours)
+	}
+	days := int((d + 24*time.Hour - 1) / (24 * time.Hour))
+	return fmt.Sprintf("%d day%s", days, plural(days))
 }
 
 // videosToday counts the videos published on the local day of now, the
