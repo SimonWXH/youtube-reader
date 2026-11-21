@@ -14,7 +14,8 @@ import (
 // captured on a machine whose system appearance is one of them. Release
 // builds never compile this file.
 func init() {
-	if source := os.Getenv("YTREADER_APPEARANCE"); source != "" {
-		mygo.Theme.SetSource(mygo.ThemeSource(source))
+	switch source := mygo.ThemeSource(os.Getenv("YTREADER_APPEARANCE")); source {
+	case mygo.ThemeLight, mygo.ThemeDark:
+		mygo.Theme.SetSource(source)
 	}
 }

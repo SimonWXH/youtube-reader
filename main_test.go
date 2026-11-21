@@ -245,54 +245,75 @@ func TestToolbarChrome(t *testing.T) {
 
 // TestContentStripDegradesWithTheDetailPane checks the filter strip keeps all
 // four controls on one line at the 960 pt minimum with the detail pane open:
-// the search and channel keep their narrow floors and the count becomes its
-// glyph rather than running under the drawer.
+// the search keeps its intrinsic minimum, the channel collapses to its glyph,
+// and the count drops to its glyph only when the grid reaches its minimum.
 func TestContentStripDegradesWithTheDetailPane(t *testing.T) {
 	for _, tc := range []struct {
-		width    int
-		channel  float32
-		search   float32
-		iconOnly bool
+		name         string
+		width        int
+		detailsWidth float32
+		query        string
+		count        string
+		channel      float32
+		search       float32
+		iconOnly     bool
 	}{
-		{width: 1280, channel: channelMenuWidth, search: searchFieldWidth},
-		{width: 960, channel: channelMenuFloor, search: searchFieldFloor, iconOnly: true},
+		{name: "design width", width: 1280, count: "3 videos", channel: channelMenuWidth, search: searchFieldWidth},
+		{name: "minimum width", width: 960, count: "3 videos", channel: channelMenuIcon, search: searchFieldMin},
+		{name: "minimum width, widest drawer", width: 960, count: "3 videos", detailsWidth: maxDetailsWidth, channel: channelMenuIcon, search: searchFieldMin, iconOnly: true},
+		{name: "minimum width, typed query", width: 960, query: "First", count: "1 videos", channel: channelMenuIcon, search: searchFieldMin},
 	} {
-		w := chromeWindow(t)
-		w.app.SelectedVideoID = "v1"
-		tt := ui.NewTester(w.shell, tc.width, 808)
-		tt.Frame()
-
-		strip := chromeControl(t, tt, "Video filters").Bounds
-		channel := chromeControl(t, tt, "All channels").Bounds
-		search, ok := tt.Find("Search videos")
-		if !ok {
-			t.Fatalf("%d: no search field", tc.width)
-		}
-		unwatched := chromeControl(t, tt, "Unwatched").Bounds
-		count := chromeControl(t, tt, "3 videos").Bounds
-
-		if channel.W != tc.channel {
-			t.Fatalf("%d: channel is %v wide, want %v", tc.width, channel.W, tc.channel)
-		}
-		if search.W != tc.search {
-			t.Fatalf("%d: search is %v wide, want %v", tc.width, search.W, tc.search)
-		}
-		if tc.iconOnly != (count.W == countIconWidth && count.H == countIconWidth) {
-			t.Fatalf("%d: count is %v, icon-only want %v", tc.width, count, tc.iconOnly)
-		}
-		for _, box := range []ui.Rect{channel, search, unwatched, count} {
-			if box.X < strip.X || box.X+box.W > strip.X+strip.W ||
-				box.Y < strip.Y || box.Y+box.H > strip.Y+strip.H {
-				t.Fatalf("%d: %v leaves the strip %v", tc.width, box, strip)
+		t.Run(tc.name, func(t *testing.T) {
+			w := chromeWindow(t)
+			w.app.SelectedVideoID = "v1"
+			w.app.Search = tc.query
+			if tc.detailsWidth > 0 {
+				w.app.Settings.DetailsWidth = tc.detailsWidth
 			}
-		}
-		if channel.X+channel.W > search.X || search.X+search.W > unwatched.X ||
-			unwatched.X+unwatched.W > count.X {
-			t.Fatalf("%d: filter controls overlap: %v %v %v %v", tc.width, channel, search, unwatched, count)
-		}
-		if right := strip.X + strip.W - mui.Space(4); count.X+count.W < right-mui.Space(2) {
-			t.Fatalf("%d: count ends at %v, strip's right inset is %v", tc.width, count.X+count.W, right)
-		}
+			tt := ui.NewTester(w.shell, tc.width, 808)
+			tt.Frame()
+
+			strip := chromeControl(t, tt, "Video filters").Bounds
+			channel := chromeControl(t, tt, "All channels").Bounds
+			search, ok := tt.Find("Search videos")
+			if !ok {
+				t.Fatal("no search field")
+			}
+			unwatched := chromeControl(t, tt, "Unwatched").Bounds
+			count := chromeControl(t, tt, tc.count).Bounds
+
+			if channel.W != tc.channel {
+				t.Fatalf("channel is %v wide, want %v", channel.W, tc.channel)
+			}
+			if search.W != tc.search {
+				t.Fatalf("search is %v wide, want %v", search.W, tc.search)
+			}
+			if tc.iconOnly != (count.W == countIconWidth && count.H == countIconWidth) {
+				t.Fatalf("count is %v, icon-only want %v", count, tc.iconOnly)
+			}
+			for _, box := range []ui.Rect{channel, search, unwatched, count} {
+				if box.X < strip.X || box.X+box.W > strip.X+strip.W ||
+					box.Y < strip.Y || box.Y+box.H > strip.Y+strip.H {
+					t.Fatalf("%v leaves the strip %v", box, strip)
+				}
+			}
+			if channel.X+channel.W > search.X || search.X+search.W > unwatched.X ||
+				unwatched.X+unwatched.W > count.X {
+				t.Fatalf("filter controls overlap: %v %v %v %v", channel, search, unwatched, count)
+			}
+			if right := strip.X + strip.W - mui.Space(4); count.X+count.W < right-mui.Space(2) {
+				t.Fatalf("count ends at %v, strip's right inset is %v", count.X+count.W, right)
+			}
+			if tc.query != "" {
+				clear := chromeControl(t, tt, "Clear").Bounds
+				if clear.X < search.X || clear.X+clear.W > search.X+search.W {
+					t.Fatalf("clear button %v leaves the search field %v", clear, search)
+				}
+				if clear.X+clear.W > unwatched.X {
+					t.Fatalf("clear button %v runs into the Unwatched check box %v", clear, unwatched)
+				}
+			}
+		})
 	}
 }
 
@@ -464,6 +485,39 @@ func menuLabels(items []*mygo.MenuItem) []string {
 		labels[i] = item.Label
 	}
 	return labels
+}
+
+// TestSettingsCommandAlwaysOpensThePage checks Settings… is a command, not a
+// toggle: choosing it from the App menu or the overflow menu while the page is
+// open leaves the page open, and its Done button is what closes it.
+func TestSettingsCommandAlwaysOpensThePage(t *testing.T) {
+	w := chromeWindow(t)
+	w.installMenu()
+	app := mygo.App.Menu().Items()[0]
+	settings := menuItemWithLabel(app.Submenu, "Settings…")
+	if settings == nil || settings.Click == nil {
+		t.Fatalf("App menu's Settings… is %+v", settings)
+	}
+	settings.Click(settings, nil)
+	if !w.app.SettingsOpen {
+		t.Fatal("the App menu's Settings… did not open the page")
+	}
+	settings.Click(settings, nil)
+	if !w.app.SettingsOpen {
+		t.Fatal("choosing Settings… again closed the page")
+	}
+
+	tt := ui.NewTester(w.shell, 1280, 808)
+	tt.Frame()
+	if err := tt.Click("More"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.ChooseMenuItem("Settings…"); err != nil {
+		t.Fatal(err)
+	}
+	if !w.app.SettingsOpen {
+		t.Fatal("the overflow menu's Settings… closed the page")
+	}
 }
 
 // TestToolbarRefreshDimsWhileBusy checks the unavailable state the board

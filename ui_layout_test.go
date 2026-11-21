@@ -19,19 +19,25 @@ func TestFitFilterStrip(t *testing.T) {
 		search  float32
 		icon    bool
 	}{
-		{inner: 600, channel: channelMenuWidth, search: searchFieldWidth},
-		{inner: 500, channel: channelMenuWidth, search: 168},
-		{inner: 430, channel: 138, search: searchFieldFloor},
-		{inner: 380, channel: channelMenuFloor, search: searchFieldFloor, icon: true},
-		{inner: 340, channel: channelMenuFloor, search: searchFieldFloor, icon: true},
-		{inner: 300, channel: channelMenuFloor, search: searchFieldMin, icon: true},
-		{inner: 288, channel: 84, search: searchFieldMin, icon: true},
+		{inner: 600, channel: 160, search: 200},
+		{inner: 500, channel: 160, search: 168},
+		{inner: 430, channel: 36, search: 124},
+		{inner: 380, channel: 36, search: 124},
+		{inner: 340, channel: 36, search: 124},
+		{inner: 332, channel: 36, search: 124},
+		{inner: 320, channel: 36, search: 124},
+		{inner: 300, channel: 36, search: 124, icon: true},
+		{inner: 288, channel: 36, search: 124, icon: true},
+		{inner: 284, channel: 36, search: 124, icon: true},
 	}
 	for _, tt := range tests {
 		channel, search, gap, icon := fitFilterStrip(tt.inner, checkbox, countText)
 		if channel != tt.channel || search != tt.search || icon != tt.icon {
 			t.Fatalf("fitFilterStrip(%v) = %v, %v, icon %v; want %v, %v, icon %v",
 				tt.inner, channel, search, icon, tt.channel, tt.search, tt.icon)
+		}
+		if search < 124 {
+			t.Fatalf("fitFilterStrip(%v) gives the search field %v, below its 124 pt intrinsic minimum", tt.inner, search)
 		}
 		count := countText
 		if icon {

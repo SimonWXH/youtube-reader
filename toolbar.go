@@ -20,11 +20,9 @@ const (
 	toolbarGlyph       float32 = 16
 	contentStripHeight float32 = 44
 	channelMenuWidth   float32 = 160
-	channelMenuFloor   float32 = 96
-	channelMenuMin     float32 = 80
+	channelMenuIcon    float32 = 36
 	searchFieldWidth   float32 = 200
-	searchFieldFloor   float32 = 120
-	searchFieldMin     float32 = 80
+	searchFieldMin     float32 = 124
 	countIconWidth     float32 = 16
 )
 
@@ -202,7 +200,7 @@ func (w *Window) overflowMenu(m *ui.Menu) {
 		w.runRefresh(true)
 	}
 	if m.Item("Settings…").Shortcut(ui.Cmd, ui.KeyComma).Chosen() {
-		w.toggleSettings()
+		w.openSettings()
 	}
 	m.Separator()
 	if m.Item("Import OPML…").Chosen() {
@@ -301,9 +299,10 @@ func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
 }
 
 // fitFilterStrip gives the filter controls their widths for the room the grid
-// pane has: the search field shrinks first, then the channel menu, then the
-// count becomes its glyph. The gaps tighten only after all three, so the row
-// never clips its controls or runs under the detail pane.
+// pane has: the search field shrinks first, but never below the width its
+// contents need, then the channel menu collapses to its glyph form, then the
+// gaps tighten, and only then does the count become its glyph. The row never
+// clips its controls or runs under the detail pane.
 func fitFilterStrip(inner, checkbox, count float32) (channel, search, gap float32, iconOnly bool) {
 	channel, search, gap = channelMenuWidth, searchFieldWidth, mui.Space(2)
 	need := func() float32 { return channel + search + checkbox + count + 4*gap }
@@ -316,13 +315,9 @@ func fitFilterStrip(inner, checkbox, count float32) (channel, search, gap float3
 		*value -= d
 		return deficit - d
 	}
-	deficit = shrink(deficit, &search, searchFieldFloor)
+	deficit = shrink(deficit, &search, searchFieldMin)
 	if deficit > 0 {
-		deficit = shrink(deficit, &channel, channelMenuFloor)
-	}
-	if deficit > 0 {
-		iconOnly = true
-		count = countIconWidth
+		channel = channelMenuIcon
 		deficit = need() - inner
 	}
 	if deficit > 0 {
@@ -331,10 +326,8 @@ func fitFilterStrip(inner, checkbox, count float32) (channel, search, gap float3
 		deficit -= d
 	}
 	if deficit > 0 {
-		deficit = shrink(deficit, &search, searchFieldMin)
-	}
-	if deficit > 0 {
-		shrink(deficit, &channel, channelMenuMin)
+		iconOnly = true
+		count = countIconWidth
 	}
 	return channel, search, gap, iconOnly
 }
@@ -387,7 +380,7 @@ func (w *Window) title() string {
 // a shortcut surface and never the only way to run a command.
 func (w *Window) installMenu() {
 	settings := &mygo.MenuItem{Label: "Settings…", Accelerator: "Cmd+,", Click: func(*mygo.MenuItem, *mygo.Window) {
-		w.toggleSettings()
+		w.openSettings()
 	}}
 	w.menuSidebar = &mygo.MenuItem{Label: w.sidebarMenuLabel(), Accelerator: "Ctrl+Cmd+S", Click: func(*mygo.MenuItem, *mygo.Window) {
 		w.setSidebarHidden(!w.sidebarHidden)
@@ -454,14 +447,13 @@ func (w *Window) sidebarMenuLabel() string {
 	return "Hide Sidebar"
 }
 
-// toggleSettings opens the settings page from the App menu or the overflow
-// menu, where the toolbar no longer carries a settings control.
-func (w *Window) toggleSettings() {
+// openSettings shows the settings page from the App menu or the overflow
+// menu, where the toolbar no longer carries a settings control. The command
+// is not a toggle: choosing it while the page is open leaves it open, and the
+// page's Done button is what closes and saves it.
+func (w *Window) openSettings() {
 	apply := func() {
-		if w.app.SettingsOpen {
-			_ = w.app.SaveSettings()
-		}
-		w.app.SettingsOpen = !w.app.SettingsOpen
+		w.app.SettingsOpen = true
 	}
 	if w.window != nil {
 		w.window.Update(apply)
