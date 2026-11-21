@@ -124,10 +124,11 @@ const (
 	RadiusWindow  float32 = 12 // windows and popovers
 )
 
-// Hairline and focus widths. Rules and the grid-card selection stroke are 1 pt;
-// the card also carries a 2 pt 24% accent halo. Keyboard focus is a 2 pt ring
-// set 3 pt outside the element's bounds; sidebar rows and segmented controls
-// show selection as a tinted background with accent text.
+// Hairline and focus widths. Rules and the grid-card selection stroke are 1 pt.
+// The selection target adds a 2 pt 24% accent halo and sets the 2 pt keyboard
+// focus ring 3 pt outside the element's bounds; current call sites still draw
+// only the 1 pt stroke and pass a 2 pt focus offset. Sidebar rows and segmented
+// controls show selection as a tinted background with accent text.
 const (
 	Hairline     float32 = 1
 	FocusRing    float32 = 2
