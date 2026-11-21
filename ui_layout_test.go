@@ -78,27 +78,28 @@ func TestPersistedDetailsWidth(t *testing.T) {
 	}
 }
 
-func TestGridCardMetrics(t *testing.T) {
+// TestGridCardMetricsDesign pins the agreed design geometry: at 1280 pt with
+// a 260 pt sidebar and a 340 pt details pane the split dividers leave the grid
+// 1018 pt closed and 678 pt open, so four 241 pt cards show closed and three
+// 210 pt cards open.
+func TestGridCardMetricsDesign(t *testing.T) {
 	const gap float32 = 8
-	const detailClosedPane float32 = 1019 // 1280 window: sidebar 256, two 1 pt dividers
-	const detailOpenPane float32 = 678    // 1280 window: sidebar 260, details 340
 	const padding float32 = 16
+	const designClosedPane float32 = 1280 - 260 - 2
+	const designOpenPane float32 = 1280 - 260 - 340 - 2
 	cases := []struct {
 		name    string
 		pane    float32
-		cap     int
 		columns int
 		width   float32
 		height  float32
 	}{
-		{"detail closed", detailClosedPane, 5, 4, 241, 211},
-		{"detail open", detailOpenPane, 5, 3, 210, 194},
-		{"narrow window", 702, 5, 3, 218, 199},
+		{"detail closed", designClosedPane, 4, 241, 211},
+		{"detail open", designOpenPane, 3, 210, 194},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			content := tc.pane - 2*padding
-			got := gridCardMetrics(content, gap, tc.cap)
+			got := gridCardMetrics(tc.pane-2*padding, gap, defaultMaxGridColumns)
 			if got.Columns != tc.columns {
 				t.Fatalf("columns = %d; want %d", got.Columns, tc.columns)
 			}
@@ -115,23 +116,59 @@ func TestGridCardMetrics(t *testing.T) {
 	}
 }
 
+// TestShippedGridBounds checks the panes the app ships with (sidebar 256,
+// details 320) at the 1280 pt default width: the cards they produce must never
+// be wider than 280 pt and never outnumber the user's maximum.
+func TestShippedGridBounds(t *testing.T) {
+	const gap float32 = 8
+	const padding float32 = 16
+	const window float32 = 1280
+	closedPane := window - defaultSidebarWidth - 2*splitDividerWidth()
+	openPane := closedPane - defaultDetailsWidth - 2*splitDividerWidth()
+	cases := []struct {
+		name    string
+		pane    float32
+		columns int
+	}{
+		{"detail closed", closedPane, 4},
+		{"detail open", openPane, 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := gridCardMetrics(tc.pane-2*padding, gap, defaultMaxGridColumns)
+			if got.Columns != tc.columns {
+				t.Fatalf("columns = %d; want %d", got.Columns, tc.columns)
+			}
+			if got.Columns > defaultMaxGridColumns {
+				t.Fatalf("columns = %d; exceeds the maximum %d", got.Columns, defaultMaxGridColumns)
+			}
+			if got.Width > gridCardMaxWidth+0.01 {
+				t.Fatalf("card width = %v; exceeds %v", got.Width, gridCardMaxWidth)
+			}
+		})
+	}
+}
+
+// TestGridCardWidthBounds checks the two rules at every pane width: a card is
+// never wider than 280 pt unless the user's maximum forces fewer columns, and
+// the column count never exceeds that maximum.
 func TestGridCardWidthBounds(t *testing.T) {
 	const gap float32 = 8
 	for pane := float32(320); pane <= 3000; pane += 1 {
 		content := pane - 32
-		for _, cap := range []int{2, 5, 8} {
+		fill := max(int(math.Ceil(float64((content+gap)/(gridCardMaxWidth+gap)))), 1)
+		for _, cap := range []int{2, 3, 5, 8} {
 			m := gridCardMetrics(content, gap, cap)
 			if m.Columns < 1 {
 				t.Fatalf("pane %v cap %d: columns = %d", pane, cap, m.Columns)
 			}
-			// A card never goes below the minimum width, and never past the
-			// maximum unless the pane cannot hold both.
-			fitting := int((content + gap) / (gridCardMinWidth + gap))
-			fewest := int(math.Ceil(float64((content + gap) / (gridCardMaxWidth + gap))))
-			if content >= gridCardMinWidth && m.Width < gridCardMinWidth-0.01 {
-				t.Fatalf("pane %v cap %d: card width %v below %v", pane, cap, m.Width, gridCardMinWidth)
+			if m.Columns > cap {
+				t.Fatalf("pane %v cap %d: columns = %d exceeds the cap", pane, cap, m.Columns)
 			}
-			if fewest <= fitting && m.Width > gridCardMaxWidth+0.01 {
+			if want := min(fill, cap); m.Columns != want {
+				t.Fatalf("pane %v cap %d: columns = %d; want %d", pane, cap, m.Columns, want)
+			}
+			if m.Columns == fill && m.Width > gridCardMaxWidth+0.01 {
 				t.Fatalf("pane %v cap %d: card width %v exceeds %v", pane, cap, m.Width, gridCardMaxWidth)
 			}
 		}
@@ -145,15 +182,17 @@ func TestGridCardFitsFrameworkColumns(t *testing.T) {
 	const gap float32 = 8
 	for pane := float32(320); pane <= 3000; pane += 7 {
 		content := pane - 32
-		m := gridCardMetrics(content, gap, 5)
-		minWidth := m.gridMinWidth(gap)
-		framed := max(1, int((content+gap)/(minWidth+gap)))
-		if framed != m.Columns {
-			t.Fatalf("pane %v: GridView would draw %d columns, metrics say %d", pane, framed, m.Columns)
-		}
-		drawn := (content - gap*float32(framed-1)) / float32(framed)
-		if diff := abs(drawn - m.Width); diff > 0.01 {
-			t.Fatalf("pane %v: GridView width %v, metrics %v", pane, drawn, m.Width)
+		for _, cap := range []int{2, 5, 8} {
+			m := gridCardMetrics(content, gap, cap)
+			minWidth := m.gridMinWidth(gap)
+			framed := max(1, int((content+gap)/(minWidth+gap)))
+			if framed != m.Columns {
+				t.Fatalf("pane %v cap %d: GridView would draw %d columns, metrics say %d", pane, cap, framed, m.Columns)
+			}
+			drawn := (content - gap*float32(framed-1)) / float32(framed)
+			if diff := abs(drawn - m.Width); diff > 0.01 {
+				t.Fatalf("pane %v cap %d: GridView width %v, metrics %v", pane, cap, drawn, m.Width)
+			}
 		}
 	}
 }

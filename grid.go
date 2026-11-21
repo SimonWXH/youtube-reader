@@ -13,11 +13,13 @@ import (
 // rows and builds only the ones in view. These are the card measurements it is
 // given, so a card is a full-bleed 16:9 thumbnail over a fixed text block.
 const (
-	// gridCardMinWidth is the narrowest a card gets before the grid drops a
-	// column.
-	gridCardMinWidth float32 = 200
 	// gridCardMaxWidth is the widest a card gets: a wider column is split.
 	gridCardMaxWidth float32 = 280
+	// gridDecorInset is the room each card leaves inside the GridView's clip
+	// for its selection halo and focus ring, which paint outside the card.
+	// The grid's outer padding is reduced by as much so the cards keep the
+	// width the metrics give them.
+	gridDecorInset float32 = mui.FocusRingGap + mui.FocusRing
 	// gridCardTextBlock is the card's text area below the thumbnail: 8 pt
 	// padding, a two-line 13/18 title (36), 4 pt, an 18 pt footer row and
 	// 8 pt padding. Two points stay clear at the bottom of the card.
@@ -44,22 +46,15 @@ type gridMetrics struct {
 
 // gridCardMetrics reads the card metrics for a grid content width (the pane
 // less the grid's padding) and the grid's 8 pt gap: as many columns as keep
-// every card at least gridCardMinWidth wide, at most the settings cap, and
-// then enough more that no card is wider than gridCardMaxWidth. A pane too
-// narrow to hold both limits keeps its cards at gridCardMinWidth and shows
-// fewer of them.
+// every card at most gridCardMaxWidth wide, clamped to the settings cap. A
+// narrow pane still takes those columns when every card ends up narrower, and
+// the setting wins where it asks for fewer columns than the width rule needs.
 func gridCardMetrics(available, gap float32, maxColumns int) gridMetrics {
 	available = max(available, 1)
 	gap = max(gap, 0)
 	maxColumns = clampInt(maxColumns, minMaxGridColumns, maxMaxGridColumns)
-	fitting := max(int(math.Floor(float64((available+gap)/(gridCardMinWidth+gap)))), 1)
-	columns := clampInt(fitting, 1, maxColumns)
-	// The width limit wins over the cap, even when that takes more columns
-	// than the setting allows, and gives way to the minimum width where a
-	// narrow pane cannot keep both.
-	if fewest := int(math.Ceil(float64((available + gap) / (gridCardMaxWidth + gap)))); fewest > columns && fewest <= fitting {
-		columns = fewest
-	}
+	columns := int(math.Ceil(float64((available + gap) / (gridCardMaxWidth + gap))))
+	columns = clampInt(columns, 1, maxColumns)
 	width := (available - gap*float32(columns-1)) / float32(columns)
 	return gridMetrics{Columns: columns, Width: width, Height: gridCardHeight(width)}
 }
@@ -80,7 +75,7 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 	videos := w.app.VisibleVideos()
 	gap := c.Theme().Space(2)
 	padding := mui.Space(4)
-	ui.Column(c).Grow(1).Padding(padding).Children(func() {
+	ui.Column(c).Grow(1).Padding(padding - gridDecorInset).Children(func() {
 		if len(videos) == 0 {
 			if w.app.SelectedVideoID != "" {
 				w.app.SelectedVideoID = ""
@@ -105,18 +100,20 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 		w.selectedIndex = &target
 		w.grid.Selected = w.selectedIndex
 		metrics := gridCardMetrics(w.gridContentWidth(padding), gap, w.app.settingsSnapshot().MaxGridColumns)
-		// The ring belongs to the chosen card, not to the scrolling area.
+		focusIndex := target
+		if focusIndex < 0 {
+			focusIndex = 0
+		}
+		// The ring belongs to the chosen card, or to the first card while the
+		// grid has the keyboard focus and nothing is chosen yet.
 		grid := ui.GridView(c, &w.grid, len(videos), metrics.gridMinWidth(gap), metrics.Height, func(i int) {
-			w.videoCard(c, t, videos[i], metrics)
-		}).FocusRing(false).Grow(1)
+			w.videoCard(c, t, i, focusIndex, videos[i], metrics)
+		}).Padding(gridDecorInset).FocusRing(false).Grow(1)
 		w.trackGridFocus(c, grid)
 		if grid.Changed() {
 			if w.grid.Selected != nil && *w.grid.Selected < len(videos) {
 				w.app.SelectedVideoID = videos[*w.grid.Selected].ID
 			}
-		}
-		if grid.Submitted() {
-			w.openSelectedVideo(c)
 		}
 	})
 }
@@ -143,18 +140,7 @@ func (w *Window) gridContentWidth(padding float32) float32 {
 	return available - 2*padding
 }
 
-// openSelectedVideo opens the selected video in YouTube, as Return and a
-// double click on its card do, and marks it watched.
-func (w *Window) openSelectedVideo(c *ui.Context) {
-	v, ok := w.app.VideoByID(w.app.SelectedVideoID)
-	if !ok {
-		return
-	}
-	w.app.MarkRead(v)
-	c.OpenURL("https://www.youtube.com/watch?v=" + v.ID)
-}
-
-func (w *Window) videoCard(c *ui.Context, t mui.Tokens, v core.Video, m gridMetrics) {
+func (w *Window) videoCard(c *ui.Context, t mui.Tokens, index, focusIndex int, v core.Video, m gridMetrics) {
 	selected := w.app.SelectedVideoID == v.ID
 	face := t.Surface
 	card := ui.Column(c).Height(m.Height).Margin(-gridCellInset).Radius(mui.RadiusCard).Background(face).Clip().Transition(mui.Fade)
@@ -177,10 +163,11 @@ func (w *Window) videoCard(c *ui.Context, t mui.Tokens, v core.Video, m gridMetr
 	if selected {
 		stroke = t.Accent
 	}
-	// The keyboard focus ring is the grid's, so it shows only once the chosen
-	// card was reached from the keyboard, and it sits outside the selection
-	// stroke and its halo.
-	focused := selected && w.gridKeyboardFocus
+	// The keyboard focus ring is the grid's, so it shows only once the grid
+	// was reached from the keyboard. It sits outside the selection stroke and
+	// its halo, and marks the first card while nothing is chosen, where the
+	// arrows start from.
+	focused := index == focusIndex && w.gridKeyboardFocus
 	// The framework paints the cell's own hover and selection faces under the
 	// card. Cover the corners its smaller radius leaves open so only this card's
 	// faces show.
