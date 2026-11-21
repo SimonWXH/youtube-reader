@@ -32,14 +32,12 @@ type TextStyle struct {
 
 // Apply sets the role's typography on el.
 func (s TextStyle) Apply(el ui.Element) ui.Element {
-	el = el.Font(SFFont).FontSize(s.Size).FixedLineHeight(s.LineHeight).FontWeight(int(s.Weight))
-	if s.Tracking != 0 {
-		el = el.LetterSpacing(s.Tracking)
-	}
+	el = el.Font(SFFont).FontSize(s.Size).FixedLineHeight(s.LineHeight).FontWeight(int(s.Weight)).
+		LetterSpacing(s.Tracking)
 	if s.Tabular {
-		el = el.FontFeatures("tnum")
+		return el.FontFeatures("tnum")
 	}
-	return el
+	return el.FontFeatures()
 }
 
 // The type scale. Use the role that names the thing you are drawing.
