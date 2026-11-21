@@ -17,11 +17,20 @@ func (w *Window) view(c *ui.Context) {
 	selected := w.app.HasSelection()
 	w.sidebarWidth, w.detailsWidth = fitPaneWidths(
 		settings.SidebarWidth, settings.DetailsWidth,
-		selected, total,
+		selected, w.sidebarHidden, total,
 	)
-	w.contentWidth = total - w.sidebarWidth - 2*splitDividerWidth()
+	// Zone A hook: the toolbar's sidebar toggle folds this pane away, so it and
+	// its divider take no room; w.sidebarWidth keeps what it shows with again.
+	layoutSidebar := w.sidebarWidth
+	outerDivider := splitDividerWidth()
+	if w.sidebarHidden {
+		layoutSidebar = 0
+		outerDivider = 0
+	}
+	innerDivider := splitDividerWidth()
+	w.contentWidth = total - layoutSidebar - outerDivider
 	if selected {
-		w.contentWidth -= w.detailsWidth + splitDividerWidth()
+		w.contentWidth -= w.detailsWidth + innerDivider
 	}
 	// MyGo's Split clamps only to its own 40 DIP minimum while a drag is
 	// active. Keep the width it reports within the same bounds used on the
@@ -29,12 +38,10 @@ func (w *Window) view(c *ui.Context) {
 	w.sidebarWidth = boundedSidebarWidth(w.sidebarWidth, selected, total)
 	w.contentWidth = max(minGridWidth, w.contentWidth)
 	if selected {
-		w.contentWidth = min(w.contentWidth, total-w.sidebarWidth-2*splitDividerWidth()-minDetailsWidth)
+		w.contentWidth = min(w.contentWidth, total-layoutSidebar-outerDivider-innerDivider-minDetailsWidth)
 	}
-	var contentSplit ui.Element
-	outerSplit := ui.Split(c, &w.sidebarWidth, func() {
-		w.sidebar(c, tokens)
-	}, func() {
+	var contentSplit, outerSplit ui.Element
+	panes := func() {
 		if !selected {
 			w.gridAvailableWidth = w.contentWidth
 			w.content(c, tokens)
@@ -46,15 +53,23 @@ func (w *Window) view(c *ui.Context) {
 		}, func() {
 			w.drawer(c, tokens)
 		}).Fill()
-	}).Fill()
+	}
+	// Zone A hook: a folded sidebar has no split to drag.
+	if w.sidebarHidden {
+		panes()
+	} else {
+		outerSplit = ui.Split(c, &w.sidebarWidth, func() {
+			w.sidebar(c, tokens)
+		}, panes).Fill()
+	}
 	outerChanged := outerSplit.Changed()
 	contentChanged := contentSplit.Changed()
 	if outerChanged || contentChanged {
-		sidebar := boundedSidebarWidth(w.sidebarWidth, selected, total)
-		details, hasDetails := persistedDetailsWidth(total, w.sidebarWidth, w.contentWidth, selected, contentChanged)
 		_, _ = w.app.updateSettings(func(s *core.Settings) bool {
-			s.SidebarWidth = sidebar
-			if hasDetails {
+			if outerChanged {
+				s.SidebarWidth = boundedSidebarWidth(w.sidebarWidth, selected, total)
+			}
+			if details, hasDetails := persistedDetailsWidth(total, layoutSidebar, w.contentWidth, outerDivider, selected, contentChanged); hasDetails {
 				s.DetailsWidth = details
 			}
 			return true
@@ -65,18 +80,18 @@ func (w *Window) view(c *ui.Context) {
 // persistedDetailsWidth recovers the inner split's new size only when that
 // split exists and reported a change. Without this guard, an outer split
 // drag computes a nonsensical details width from the no-details content pane.
-func persistedDetailsWidth(total, sidebar, content float32, selected, contentChanged bool) (float32, bool) {
+func persistedDetailsWidth(total, layoutSidebar, content, outerDivider float32, selected, contentChanged bool) (float32, bool) {
 	if !selected || !contentChanged {
 		return 0, false
 	}
-	details := total - sidebar - content - 3*splitDividerWidth()
+	details := total - layoutSidebar - content - outerDivider - splitDividerWidth()
 	if details < minDetailsWidth {
 		return 0, false
 	}
 	return clamp(details, minDetailsWidth, maxDetailsWidth), true
 }
 
-func fitPaneWidths(sidebar, details float32, selected bool, total float32) (float32, float32) {
+func fitPaneWidths(sidebar, details float32, selected, sidebarHidden bool, total float32) (float32, float32) {
 	if sidebar <= 0 {
 		sidebar = defaultSidebarWidth
 	}
@@ -85,16 +100,21 @@ func fitPaneWidths(sidebar, details float32, selected bool, total float32) (floa
 	}
 	sidebar = clamp(sidebar, minSidebarWidth, maxSidebarWidth)
 	details = clamp(details, minDetailsWidth, maxDetailsWidth)
-	if !selected {
-		if total <= 0 {
-			return sidebar, details
-		}
-		return clamp(sidebar, minSidebarWidth, min(maxSidebarWidth, total-2*splitDividerWidth()-minGridWidth)), details
-	}
 	if total <= 0 {
 		return sidebar, details
 	}
 	divider := splitDividerWidth()
+	// Zone A hook: a folded sidebar is not drawn, so it reserves no room in
+	// the fit; the width kept here is what it shows again when revealed.
+	if sidebarHidden {
+		if selected {
+			details = clamp(details, minDetailsWidth, min(maxDetailsWidth, total-divider-minGridWidth))
+		}
+		return sidebar, details
+	}
+	if !selected {
+		return clamp(sidebar, minSidebarWidth, min(maxSidebarWidth, total-2*divider-minGridWidth)), details
+	}
 	maxTotal := total - 2*divider
 	if maxTotal < minSidebarWidth+minGridWidth+minDetailsWidth {
 		return minSidebarWidth, minDetailsWidth
@@ -120,7 +140,7 @@ func boundedSidebarWidth(width float32, selected bool, total float32) float32 {
 	if total > 0 {
 		maxGridShare := total - 2*splitDividerWidth() - minGridWidth
 		if selected {
-			maxGridShare -= minDetailsWidth + splitDividerWidth()
+			maxGridShare -= minDetailsWidth
 		}
 		max = min(max, maxGridShare)
 	}
@@ -147,7 +167,8 @@ func clamp(v, min, max float32) float32 {
 }
 
 func (w *Window) drawer(c *ui.Context, t mui.Tokens) {
-	drawer := ui.Column(c).Fill().Padding(24, 20).Gap(16).Background(t.App)
+	drawer := ui.Column(c).Fill().Padding(24, 20).Gap(16).Background(t.App).
+		Role(ui.RoleGroup).Label("Video details")
 	drawer.Draw(func(p *ui.Painter, r ui.Rect) {
 		p.Fill(ui.Rect{X: r.X, Y: r.Y, W: 1, H: r.H}, t.Border, 0)
 	})

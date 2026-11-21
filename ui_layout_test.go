@@ -11,35 +11,86 @@ import (
 	mui "github.com/simon/youtube-reader/ui"
 )
 
+func TestFitFilterStrip(t *testing.T) {
+	const checkbox, countText float32 = 93, 48
+	tests := []struct {
+		inner     float32
+		channel   float32
+		search    float32
+		collapsed bool
+	}{
+		{inner: 600, channel: 160, search: 200},
+		{inner: 500, channel: 160, search: 167},
+		{inner: 430, channel: 36, search: 124},
+		{inner: 380, channel: 36, search: 124},
+		{inner: 350, channel: 36, search: 124},
+		{inner: 340, channel: 36, search: 124},
+		{inner: 332, channel: 36, search: 124, collapsed: true},
+		{inner: 320, channel: 36, search: 124, collapsed: true},
+		{inner: 300, channel: 36, search: 124, collapsed: true},
+		{inner: 288, channel: 36, search: 124, collapsed: true},
+		{inner: 284, channel: 36, search: 124, collapsed: true},
+	}
+	for _, tt := range tests {
+		channel, search, gap, collapsed := fitFilterStrip(tt.inner, checkbox, toolbarControl, countText)
+		if channel != tt.channel || search != tt.search || collapsed != tt.collapsed {
+			t.Fatalf("fitFilterStrip(%v) = %v, %v, collapsed %v; want %v, %v, collapsed %v",
+				tt.inner, channel, search, collapsed, tt.channel, tt.search, tt.collapsed)
+		}
+		if search < searchFieldMin {
+			t.Fatalf("fitFilterStrip(%v) gives the search field %v, below its %v pt intrinsic minimum", tt.inner, search, searchFieldMin)
+		}
+		box := checkbox
+		if collapsed {
+			box = toolbarControl
+		}
+		total := channel + search + box + countText + 4*gap
+		if total > tt.inner+0.01 {
+			t.Fatalf("fitFilterStrip(%v) needs %v with the count still shown", tt.inner, total)
+		}
+	}
+}
+
 func TestFitPaneWidths(t *testing.T) {
 	t.Run("defaults without selection", func(t *testing.T) {
-		sidebar, details := fitPaneWidths(0, 0, false, 1280)
+		sidebar, details := fitPaneWidths(0, 0, false, false, 1280)
 		if sidebar != defaultSidebarWidth || details != defaultDetailsWidth {
 			t.Fatalf("fitPaneWidths = %v, %v; want %v, %v", sidebar, details, defaultSidebarWidth, defaultDetailsWidth)
 		}
 	})
 
 	t.Run("persists chosen widths", func(t *testing.T) {
-		sidebar, details := fitPaneWidths(300, 500, true, 1280)
+		sidebar, details := fitPaneWidths(300, 500, true, false, 1280)
 		if sidebar != 300 || details != 500 {
 			t.Fatalf("fitPaneWidths = %v, %v; want 300, 500", sidebar, details)
 		}
 	})
 
 	t.Run("clamps to minimum and maximum", func(t *testing.T) {
-		sidebar, details := fitPaneWidths(10000, -1, true, 1280)
+		sidebar, details := fitPaneWidths(10000, -1, true, false, 1280)
 		if sidebar != maxSidebarWidth || details != defaultDetailsWidth {
 			t.Fatalf("fitPaneWidths = %v, %v; want %v, %v", sidebar, details, maxSidebarWidth, defaultDetailsWidth)
 		}
 	})
 
 	t.Run("shrinks panes to respect total width", func(t *testing.T) {
-		sidebar, details := fitPaneWidths(maxSidebarWidth, 560, true, 960)
+		sidebar, details := fitPaneWidths(maxSidebarWidth, 560, true, false, 960)
 		if sidebar+details+minGridWidth > 960-2*splitDividerWidth() {
 			t.Fatalf("panes overflow window: sidebar=%v details=%v", sidebar, details)
 		}
 		if sidebar < minSidebarWidth || details < minDetailsWidth {
 			t.Fatalf("panes below minimum: sidebar=%v details=%v", sidebar, details)
+		}
+	})
+
+	t.Run("hidden sidebar reserves no room for the folded pane", func(t *testing.T) {
+		sidebar, details := fitPaneWidths(300, 320, true, true, 960)
+		if sidebar != 300 || details != 320 {
+			t.Fatalf("fitPaneWidths with the sidebar hidden = %v, %v; want the stored 300, 320", sidebar, details)
+		}
+		sidebar, details = fitPaneWidths(300, maxDetailsWidth, true, true, 960)
+		if sidebar != 300 || details != maxDetailsWidth {
+			t.Fatalf("fitPaneWidths with the sidebar hidden = %v, %v; want 300, %v", sidebar, details, maxDetailsWidth)
 		}
 	})
 }
@@ -68,18 +119,23 @@ func TestBoundedSidebarWidth(t *testing.T) {
 
 func TestPersistedDetailsWidth(t *testing.T) {
 	const total float32 = 1280
+	shown, hidden := splitDividerWidth(), float32(0)
 
-	if _, ok := persistedDetailsWidth(total, 400, 850, false, true); ok {
+	if _, ok := persistedDetailsWidth(total, 400, 850, shown, false, true); ok {
 		t.Fatal("details width must not be written when there is no details pane")
 	}
-	if _, ok := persistedDetailsWidth(total, 400, 850, true, false); ok {
+	if _, ok := persistedDetailsWidth(total, 400, 850, shown, true, false); ok {
 		t.Fatal("details width must not be written when the inner split did not change")
 	}
-	got, ok := persistedDetailsWidth(total, 400, 550, true, true)
-	if !ok || got != 327 {
-		t.Fatalf("persistedDetailsWidth = %v, %v; want 327, true", got, ok)
+	got, ok := persistedDetailsWidth(total, 400, 550, shown, true, true)
+	if !ok || got != 328 {
+		t.Fatalf("persistedDetailsWidth = %v, %v; want 328, true", got, ok)
 	}
-	if got, ok := persistedDetailsWidth(total, 400, 990, true, true); ok || got != 0 {
+	got, ok = persistedDetailsWidth(total, 0, 719, hidden, true, true)
+	if !ok || got != maxDetailsWidth {
+		t.Fatalf("persistedDetailsWidth with the sidebar hidden = %v, %v; want %v, true", got, ok, maxDetailsWidth)
+	}
+	if got, ok := persistedDetailsWidth(total, 400, 990, shown, true, true); ok || got != 0 {
 		t.Fatalf("persistedDetailsWidth with too-small details = %v, %v; want 0, false", got, ok)
 	}
 }
