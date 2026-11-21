@@ -499,24 +499,6 @@ func (w *Window) sidebarMenuLabel() string {
 	return "Hide Sidebar"
 }
 
-// openSettings shows the settings page from the App menu or the overflow
-// menu, where the toolbar no longer carries a settings control. The command
-// is not a toggle: choosing it while the page is open leaves it open, and the
-// page's Done button is what closes and saves it.
-func (w *Window) openSettings() {
-	apply := func() {
-		w.app.SettingsOpen = true
-		if w.window != nil {
-			w.window.Focus()
-		}
-	}
-	if w.window != nil {
-		w.window.Update(apply)
-		return
-	}
-	apply()
-}
-
 // setMenuBusy dims the menu's Refresh command while a refresh is running, as
 // the toolbar control is disabled.
 func (w *Window) setMenuBusy(busy bool) {

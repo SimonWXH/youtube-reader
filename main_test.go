@@ -534,27 +534,6 @@ func TestOverflowMenuMirrorsToolbarCommands(t *testing.T) {
 	}
 }
 
-// TestRefreshFailureSurfacesItsMessage checks a refresh that reports a failure
-// reaches the view as a toast: the outcome arrives between frames, so the
-// message has to wait for the next build instead of being dropped.
-func TestRefreshFailureSurfacesItsMessage(t *testing.T) {
-	w := chromeWindow(t)
-	tt := ui.NewTester(w.shell, 1280, 808)
-	tt.Frame()
-
-	w.refreshFinished(RefreshOutcome{
-		Description: "Refresh failed: quota paused",
-		Failures:    []core.RefreshFailure{{Message: "quota paused"}},
-	})
-	if tt.HasText("Refresh failed: quota paused") {
-		t.Fatal("the toast showed before a frame consumed it")
-	}
-	tt.Frame()
-	if !tt.HasText("Refresh failed: quota paused") {
-		t.Fatalf("refresh failure has no toast: %q", tt.Texts())
-	}
-}
-
 // TestMenuKeepsTheStandardBar checks the app menu repeats the native standard
 // menus and their shortcuts, with the app's own commands on top: File closes
 // the window on Command-W and carries the document commands the overflow menu

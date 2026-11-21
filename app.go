@@ -32,7 +32,6 @@ type App struct {
 	Search          string
 	ChannelFilter   string
 	UnreadOnly      bool
-	StatusExpanded  bool
 	SettingsOpen    bool
 	SelectedVideoID string
 	Busy            bool

@@ -56,6 +56,9 @@ func realMain() {
 		// The menu bar carries Settings… at Command-Comma and mirrors every
 		// toolbar command, so the toolbar is never the only way to act.
 		window.installMenu()
+		// The status surface lives in the menu bar: one item over the window
+		// and one popover rather than status copy inside the window.
+		window.status = newStatusBar(window)
 	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
@@ -66,6 +69,7 @@ type Window struct {
 	app    *App
 	window *mygo.Window
 	frame  *ui.Context // the last frame's context, for menu commands
+	status *statusBar
 
 	// pendingToasts are messages raised between frames, as a refresh outcome
 	// is; the next frame shows them, since AddToast only works while building.
@@ -109,6 +113,10 @@ func (w *Window) toast(c *ui.Context, msg string, isError bool) {
 	}
 }
 
+// runRefresh starts one refresh off the main thread. Refresh feedback belongs
+// to the menu bar status item, so a refresh neither toasts nor writes status
+// text into the window; the item and an open popover follow the refresh as it
+// starts and returns.
 func (w *Window) runRefresh(force bool) {
 	if w.app.Busy {
 		return
@@ -118,27 +126,36 @@ func (w *Window) runRefresh(force bool) {
 	if w.window != nil {
 		w.window.Invalidate()
 	}
+	if w.status != nil {
+		w.status.started = time.Now()
+		w.status.refresh()
+		w.status.invalidate()
+	}
 	go func() {
 		outcome := w.app.Refresh(force)
-		if w.window != nil {
-			w.window.Update(func() { w.refreshFinished(outcome) })
-		} else {
-			w.refreshFinished(outcome)
+		if w.window == nil {
+			w.app.Busy = false
+			w.setMenuBusy(false)
+			if w.status != nil {
+				w.status.refresh()
+			}
+			return
 		}
+		w.window.Update(func() {
+			w.app.Busy = false
+			w.setMenuBusy(false)
+			if w.status != nil {
+				w.status.started = time.Time{}
+				w.status.refresh()
+				w.status.invalidate()
+			}
+			if outcome.Changed {
+				for _, n := range outcome.Notified {
+					postNotification(n)
+				}
+			}
+		})
 	}()
-}
-
-func (w *Window) refreshFinished(outcome RefreshOutcome) {
-	w.app.Busy = false
-	w.setMenuBusy(false)
-	if outcome.Description != "" {
-		w.toast(nil, outcome.Description, len(outcome.Failures) > 0)
-	}
-	if outcome.Changed {
-		for _, n := range outcome.Notified {
-			postNotification(n)
-		}
-	}
 }
 
 func postNotification(plan NotificationPlan) {
