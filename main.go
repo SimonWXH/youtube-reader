@@ -359,9 +359,6 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 
 func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup) {
 	key := "group-collapse:" + g.ID
-	if key == "group-collapse:" {
-		key = "group-collapse:name:" + g.Name
-	}
 	collapsed := w.app.GroupCollapsed(g.ID)
 	headline := ui.ButtonBase(c).Key(key).Height(28).FillWidth().Gap(mui.Space(1)).Padding(0, mui.Space(1)).Radius(6).Background(t.Sidebar).TextColor(t.Faint).FontSize(13).Cursor(ui.CursorPointer).Transition(mui.Fade).FocusRingColor(t.Focus).FocusRingOffset(2).Role(ui.RoleDisclosure).Expanded(!collapsed).Label(g.Name)
 	headline.Children(func() {
