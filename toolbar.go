@@ -30,9 +30,10 @@ const (
 // follow the same 24 pt box, 1.5 pt stroke, round joins as the rest of the
 // set.
 var (
-	toolbarIconSidebar   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>`))
-	toolbarIconMore      = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg>`))
-	toolbarIconUnwatched = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 3 3 5-6"/></svg>`))
+	toolbarIconSidebar     = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>`))
+	toolbarIconMore        = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg>`))
+	toolbarIconUnwatched   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>`))
+	toolbarIconUnwatchedOn = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 3 3 5-6"/></svg>`))
 )
 
 // shell is the window root: the toolbar spans the window, as the title bar it
@@ -312,13 +313,19 @@ func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
 			box := ui.CheckboxBase(c.Key("unwatched"), &w.app.UnreadOnly).
 				Size(toolbarControl, toolbarControl).Center().Shrink(0).
 				Label("Unwatched").Tooltip("Unwatched").
-				FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
-			face := t.Muted
+				FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
+				Cursor(ui.CursorPointer)
+			face, glyph, state := t.Muted, toolbarIconUnwatched, "Unwatched off"
 			if w.app.UnreadOnly {
-				face = t.Accent
+				face, glyph, state = t.Accent, toolbarIconUnwatchedOn, "Unwatched on"
 			}
+			box.Draw(func(p *ui.Painter, r ui.Rect) {
+				if box.Pressed() || box.Hovered() {
+					p.Fill(r, t.SurfaceAlt, mui.RadiusControl)
+				}
+			})
 			box.Children(func() {
-				ui.Icon(c, toolbarIconUnwatched).Size(toolbarGlyph, toolbarGlyph).TextColor(face)
+				ui.Icon(c, glyph).Size(toolbarGlyph, toolbarGlyph).TextColor(face).Label(state)
 			})
 		} else {
 			ui.Checkbox(c.Key("unwatched"), &w.app.UnreadOnly, "Unwatched").

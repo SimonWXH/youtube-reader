@@ -195,6 +195,21 @@ func chromeControl(t *testing.T, tt *ui.Tester, name string) ui.AccessInfo {
 	return ui.AccessInfo{}
 }
 
+// unwatchedGlyph checks which glyph the collapsed Unwatched control draws:
+// the empty box when the filter is off, the check when it is on.
+func unwatchedGlyph(t *testing.T, tt *ui.Tester) string {
+	t.Helper()
+	for _, name := range []string{"Unwatched off", "Unwatched on"} {
+		if r, ok := tt.Find(name); ok {
+			if r.W != toolbarGlyph || r.H != toolbarGlyph {
+				t.Fatalf("%s glyph is %v, want the %v pt icon", name, r, toolbarGlyph)
+			}
+			return name
+		}
+	}
+	return ""
+}
+
 // TestToolbarChrome checks the frame the board's A1/A1.1 draws: the 52 pt
 // toolbar with its three 28 pt controls and a title centred on the window,
 // and the 44 pt content strip with its four controls and the Unwatched label.
@@ -373,7 +388,8 @@ func TestCollapsedChannelFilterCarriesTheChoiceInItsTooltip(t *testing.T) {
 
 // TestCollapsedUnwatchedToggleFilters checks the collapsed Unwatched control
 // keeps the check box's role and activation: a click and Space toggle the
-// filter and the count follows.
+// filter and the count follows, and the glyph shows the state in greyscale
+// terms, an empty box while off and a check while on.
 func TestCollapsedUnwatchedToggleFilters(t *testing.T) {
 	w := chromeWindow(t)
 	w.app.SelectedVideoID = "v1"
@@ -385,8 +401,15 @@ func TestCollapsedUnwatchedToggleFilters(t *testing.T) {
 	tt := ui.NewTester(w.shell, 960, 808)
 	tt.Frame()
 
-	if box := chromeControl(t, tt, "Unwatched"); box.Bounds.W != toolbarControl || box.Role != ui.RoleCheckBox {
+	box := chromeControl(t, tt, "Unwatched")
+	if box.Bounds.W != toolbarControl || box.Role != ui.RoleCheckBox {
 		t.Fatalf("Unwatched is %v in role %v, want the collapsed check box", box.Bounds, box.Role)
+	}
+	if box.Checked {
+		t.Fatal("collapsed check box reports checked while the filter is off")
+	}
+	if got := unwatchedGlyph(t, tt); got != "Unwatched off" {
+		t.Fatalf("Unwatched draws %q while off, want the empty box", got)
 	}
 	if !tt.HasText("3 videos") {
 		t.Fatalf("count before filtering is %q", tt.Texts())
@@ -398,6 +421,12 @@ func TestCollapsedUnwatchedToggleFilters(t *testing.T) {
 	if !w.app.UnreadOnly {
 		t.Fatal("clicking the collapsed check box did not enable the filter")
 	}
+	if box = chromeControl(t, tt, "Unwatched"); !box.Checked {
+		t.Fatal("collapsed check box does not report checked while the filter is on")
+	}
+	if got := unwatchedGlyph(t, tt); got != "Unwatched on" {
+		t.Fatalf("Unwatched draws %q while on, want the check", got)
+	}
 	if !tt.HasText("1 video") {
 		t.Fatalf("count after filtering is %q", tt.Texts())
 	}
@@ -405,6 +434,12 @@ func TestCollapsedUnwatchedToggleFilters(t *testing.T) {
 	tt.Frame()
 	if w.app.UnreadOnly {
 		t.Fatal("Space did not clear the collapsed check box")
+	}
+	if box = chromeControl(t, tt, "Unwatched"); box.Checked {
+		t.Fatal("collapsed check box reports checked after Space cleared it")
+	}
+	if got := unwatchedGlyph(t, tt); got != "Unwatched off" {
+		t.Fatalf("Unwatched draws %q after clearing, want the empty box", got)
 	}
 	if !tt.HasText("3 videos") {
 		t.Fatalf("count after clearing is %q", tt.Texts())
