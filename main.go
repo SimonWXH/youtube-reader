@@ -358,12 +358,7 @@ func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup) 
 		key = "group-collapse:name:" + g.Name
 	}
 	collapsed := w.app.GroupCollapsed(g.ID)
-	if collapsed {
-		key += ":collapsed"
-	} else {
-		key += ":expanded"
-	}
-	headline := ui.ButtonBase(c).Key(key).Height(28).FillWidth().Gap(mui.Space(1)).Padding(0, mui.Space(1)).Radius(6).Background(t.Sidebar).TextColor(t.Faint).FontSize(13).Cursor(ui.CursorPointer).Transition(mui.Fade).FocusRingColor(t.Focus).FocusRingOffset(2)
+	headline := ui.ButtonBase(c).Key(key).Height(28).FillWidth().Gap(mui.Space(1)).Padding(0, mui.Space(1)).Radius(6).Background(t.Sidebar).TextColor(t.Faint).FontSize(13).Cursor(ui.CursorPointer).Transition(mui.Fade).FocusRingColor(t.Focus).FocusRingOffset(2).Role(ui.RoleDisclosure).Expanded(!collapsed).Label(g.Name)
 	headline.Children(func() {
 		glyph := mui.IconChevron
 		if !collapsed {
@@ -396,9 +391,8 @@ func (w *Window) channelLink(c *ui.Context, t mui.Tokens, v core.Video) {
 	if v.ChannelID == "" {
 		return
 	}
-	link.Cursor(ui.CursorPointer).Tooltip("Open " + v.ChannelTitle + " on YouTube").OnClick(func() {
-		c.OpenURL(channelURL(v.ChannelID))
-	})
+	open := func() { c.OpenURL(channelURL(v.ChannelID)) }
+	link.Cursor(ui.CursorPointer).Tooltip("Open " + v.ChannelTitle + " on YouTube").Role(ui.RoleLink).Focusable().OnClick(open).OnShortcut(0, ui.KeyEnter, open)
 }
 
 func channelURL(channelID string) string {

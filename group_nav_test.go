@@ -121,6 +121,108 @@ func TestCardChannelNameOpensChannelAndPreservesCardSelection(t *testing.T) {
 	}
 }
 
+func TestGroupHeaderKeyboardToggleKeepsFocus(t *testing.T) {
+	a := &App{
+		Settings: core.Settings{APIKey: "test-key", ExpandedGroups: map[string]bool{}},
+		Groups:   []core.ChannelGroup{{ID: "group-1", Name: "Group", ChannelIDs: []string{"ch-1"}}},
+		Channels: []core.Channel{{ID: "ch-1", Title: "Group channel"}},
+	}
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 840)
+	tt.UseScreenReader()
+	tt.Frame()
+
+	found := false
+	for _, info := range tt.AccessAll() {
+		if info.Name == "Group" && info.Role == ui.RoleDisclosure {
+			found = true
+			if info.Expanded {
+				t.Fatal("new group is exposed as expanded")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("group header is not exposed as a disclosure")
+	}
+
+	var disclosure ui.AccessInfo
+	for i := 0; i < 20; i++ {
+		tt.Key(0, ui.KeyTab)
+		disclosure, _ = tt.AccessByRole(ui.RoleDisclosure, "Group")
+		if disclosure.Focused {
+			break
+		}
+	}
+	if !disclosure.Focused {
+		t.Fatal("Tab did not focus the group header")
+	}
+	tt.Key(0, ui.KeyEnter)
+	if a.GroupCollapsed("group-1") {
+		t.Fatal("Enter did not expand the group")
+	}
+	disclosure, _ = tt.AccessByRole(ui.RoleDisclosure, "Group")
+	if !disclosure.Focused {
+		t.Fatal("focus lost after expanding the group")
+	}
+	if !disclosure.Expanded {
+		t.Fatal("expanded group is not exposed as expanded")
+	}
+	tt.Key(0, ui.KeyEnter)
+	if !a.GroupCollapsed("group-1") {
+		t.Fatal("Enter did not collapse the group")
+	}
+	disclosure, _ = tt.AccessByRole(ui.RoleDisclosure, "Group")
+	if !disclosure.Focused {
+		t.Fatal("focus lost after collapsing the group")
+	}
+	if disclosure.Expanded {
+		t.Fatal("collapsed group is still exposed as expanded")
+	}
+}
+
+func TestCardChannelNameKeyboardOpensChannel(t *testing.T) {
+	video := core.Video{ID: "video-1", ChannelID: "UC_1", ChannelTitle: "The PrimeTime", Title: "Episode"}
+	a := &App{
+		Selected:        "all",
+		Settings:        core.Settings{APIKey: "test-key"},
+		SelectedVideoID: video.ID,
+		Sync: core.SyncState{
+			Favorites:  map[string]core.FavoriteRecord{},
+			ReadStates: map[string]map[string]core.ReadRecord{},
+			Channels:   map[string]core.Channel{"UC_1": {ID: "UC_1", Title: "The PrimeTime"}},
+		},
+		Videos: []core.Video{video},
+	}
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 840)
+	tt.UseScreenReader()
+	tt.Frame()
+
+	link, ok := tt.AccessByRole(ui.RoleLink, "The PrimeTime")
+	if !ok || !link.Focusable {
+		t.Fatalf("channel name is not exposed as a focusable link: %+v, %v", link, ok)
+	}
+
+	for i := 0; i < 20; i++ {
+		tt.Key(0, ui.KeyTab)
+		link, _ = tt.AccessByRole(ui.RoleLink, "The PrimeTime")
+		if link.Focused {
+			break
+		}
+	}
+	if !link.Focused {
+		t.Fatal("Tab did not focus the channel name")
+	}
+	tt.Key(0, ui.KeyEnter)
+	urls := tt.OpenedURLs()
+	if len(urls) != 1 || urls[0] != "https://www.youtube.com/channel/UC_1" {
+		t.Fatalf("opened URLs = %q", urls)
+	}
+	if a.SelectedVideoID != video.ID {
+		t.Fatalf("card selection changed to %q", a.SelectedVideoID)
+	}
+}
+
 func TestCardChannelNameHandlesEmptyChannelID(t *testing.T) {
 	video := core.Video{ID: "video-1", ChannelTitle: "Unknown", Title: "Episode"}
 	a := &App{
