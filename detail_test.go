@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -107,6 +108,84 @@ func TestDescriptionMoreTracksRenderedLines(t *testing.T) {
 	}
 }
 
+// The More disclosure measures the pane width the user actually sees: a folded
+// sidebar gives the pane the whole window, so a description the six-line clamp
+// fits there must not offer a disclosure that reveals nothing.
+func TestDescriptionMoreUsesTheFoldedSidebarPaneWidth(t *testing.T) {
+	const window float32 = 960
+	inner := maxDetailsWidth - 2*mui.Space(4)
+	squeezed := max(0, detailWidthForRoom(maxDetailsWidth, window-minSidebarWidth-splitDividerWidth())-2*mui.Space(4))
+	font := ui.Font{Family: mui.SFFont, Size: mui.Body.Size, Weight: int(mui.Body.Weight)}
+	words := strings.Fields(strings.Repeat("the quick brown fox jumps over a lazy dog while reading the list ", 200))
+	var desc string
+	for n := 1; n <= len(words); n++ {
+		text := strings.Join(words[:n], " ")
+		lines := len(ui.ShapeText(text, font, inner).Lines())
+		if lines == 6 && len(ui.ShapeText(text, font, squeezed).Lines()) > 6 {
+			desc = text
+			break
+		}
+	}
+	if desc == "" {
+		t.Fatalf("no paragraph fits six lines at %v but overflows at %v", inner, squeezed)
+	}
+
+	video := core.Video{ID: "v-folded", Title: "Folded sidebar", Description: desc}
+	a := detailTestApp(t, []core.Video{video}, "")
+	defer a.Close()
+	a.Settings.DetailsWidth = maxDetailsWidth
+
+	w := &Window{app: a, selectedIndex: new(int), sidebarHidden: true}
+	tt := ui.NewTester(w.view, 960, 640)
+	tt.Frame()
+	a.SelectedVideoID = video.ID
+	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
+	tt.Frame()
+
+	if w.detail.shown != maxDetailsWidth {
+		t.Fatalf("pane shows %v; want the stored %v with the sidebar folded", w.detail.shown, maxDetailsWidth)
+	}
+	if n := countText(tt, "More"); n != 0 {
+		t.Fatalf("a description that fits the folded pane offered More %d times", n)
+	}
+}
+
+// A copy the system refuses must report the failure, not "Link copied".
+func TestCopyLinkToastTracksTheClipboardResult(t *testing.T) {
+	video := core.Video{ID: "v-1", Title: "Video"}
+	a := detailTestApp(t, []core.Video{video}, video.ID)
+	defer a.Close()
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.shell, 1280, 840)
+	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
+	tt.Frame()
+
+	tt.FailClipboard(errors.New("clipboard busy"))
+	if err := tt.Click("Copy link"); err != nil {
+		t.Fatalf("click Copy link: %v", err)
+	}
+	tt.Frame()
+	if tt.HasText("Link copied") {
+		t.Fatalf("a refused clipboard write still reported success: %q", tt.Texts())
+	}
+	if !tt.HasText("Couldn't copy link") {
+		t.Fatalf("a refused clipboard write showed no error: %q", tt.Texts())
+	}
+
+	tt.Advance(3 * time.Second)
+	tt.Frame()
+	tt.FailClipboard(nil)
+	if err := tt.Click("Copy link"); err != nil {
+		t.Fatalf("click Copy link: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText("Link copied") {
+		t.Fatalf("a successful clipboard write showed no confirmation: %q", tt.Texts())
+	}
+}
+
 // Closing the error pane keeps the error on screen for the whole close
 // animation rather than sliding out an empty state.
 func TestDetailErrorStaysThroughTheCloseAnimation(t *testing.T) {
@@ -171,6 +250,10 @@ func TestSqueezedDetailDividerKeyMovesThePane(t *testing.T) {
 	}
 
 	tt.Key(0, ui.KeyRight)
+	tt.Frame()
+	if row := float32(960) - w.sidebarWidth - splitDividerWidth(); abs(w.contentWidth+w.detail.shown+splitDividerWidth()-row) > 0.01 {
+		t.Fatalf("grid %v and pane %v do not share the %v row in the key's frame", w.contentWidth, w.detail.shown, row)
+	}
 	tt.Frame()
 
 	if w.detail.shown >= settled {
@@ -258,6 +341,10 @@ func TestDetailDividerKeyStepsFromTheSettledWidth(t *testing.T) {
 	tt.Press(x, 300)
 	tt.Release(x, 300)
 	tt.Key(0, ui.KeyLeft)
+	tt.Frame()
+	if row := float32(1280) - w.sidebarWidth - splitDividerWidth(); abs(w.contentWidth+w.detail.shown+splitDividerWidth()-row) > 0.01 {
+		t.Fatalf("grid %v and pane %v do not share the %v row in the key's frame", w.contentWidth, w.detail.shown, row)
+	}
 	tt.Frame()
 
 	want := defaultDetailsWidth + detailKeyStep

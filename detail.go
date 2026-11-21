@@ -209,7 +209,7 @@ func (w *Window) mainArea(c *ui.Context, t mui.Tokens, shown, sidebar float32) {
 			w.content(c, t)
 		})
 		line := w.detailsDivider(c, t)
-		ui.Column(c).Width(max(w.detail.shown, 0)).Shrink(0).Children(func() {
+		ui.Column(c).Width(max(shown, 0)).Shrink(0).Children(func() {
 			w.drawer(c, t)
 		})
 		w.detailsDividerGrip(c, line, w.contentWidth)
@@ -371,7 +371,7 @@ func (w *Window) detailsDivider(c *ui.Context, t mui.Tokens) ui.Element {
 		if next > room && d.width > next {
 			continue
 		}
-		w.setDetailsWidth(c, next, true)
+		w.setDetailsWidth(next, true)
 	}
 	return line
 }
@@ -397,7 +397,7 @@ func (w *Window) detailsDividerGrip(c *ui.Context, line ui.Element, lineX float3
 		w.persistDetailsWidth()
 	}
 	if handle.DoubleClicked() {
-		w.setDetailsWidth(c, defaultDetailsWidth, true)
+		w.setDetailsWidth(defaultDetailsWidth, true)
 	}
 }
 
@@ -431,12 +431,13 @@ func (w *Window) dragDetails(dx, rowWidth float32) {
 	d.animating = false
 }
 
-// setDetailsWidth commits a width from a key or a double click. The pane
-// follows at once, and the choice is saved because no drag is in flight.
-func (w *Window) setDetailsWidth(c *ui.Context, width float32, persist bool) {
+// setDetailsWidth commits a width from a key or a double click. The frame in
+// flight keeps the width it was laid out with, so the pane and the grid share
+// one width; advanceDetails shows the new one on the next frame. The choice is
+// saved at once because no drag is in flight.
+func (w *Window) setDetailsWidth(width float32, persist bool) {
 	d := &w.detail
 	d.width = clampDetailsWidth(width)
-	d.shown = detailWidthForRoom(d.width, w.detailFitWidth(c))
 	d.animating = false
 	d.overshoot = 0
 	if persist {
@@ -555,7 +556,7 @@ func (w *Window) retryDetails(c *ui.Context) {
 func (w *Window) detailVideo(c *ui.Context, t mui.Tokens, v core.Video) {
 	d := &w.detail
 	innerWidth := max(d.shown-2*mui.Space(4), 0)
-	settledWidth := max(detailWidthForRoom(d.width, windowWidth(c)-minSidebarWidth-splitDividerWidth())-2*mui.Space(4), 0)
+	settledWidth := max(detailWidthForRoom(d.width, w.detailFitWidth(c))-2*mui.Space(4), 0)
 
 	body := ui.Scroll(c.Key(v.ID)).Grow(1).MinWidth(0).Padding(mui.Space(4)).Gap(mui.Space(3))
 	body.Children(func() {
@@ -614,8 +615,13 @@ func (w *Window) detailVideo(c *ui.Context, t mui.Tokens, v core.Video) {
 		}).FillWidth()
 		ui.Row(c).Gap(mui.Space(2)).Children(func() {
 			w.detailAction(c, t, "details-copy-link", "Copy link", false, func() {
-				c.WriteClipboard(youtubeWatchURL(v.ID))
-				w.toast(c, "Link copied", false)
+				c.WriteClipboardThen(youtubeWatchURL(v.ID), func(err error) {
+					if err != nil {
+						w.toast(c, "Couldn't copy link", true)
+						return
+					}
+					w.toast(c, "Link copied", false)
+				})
 			}).Grow(1).Basis(0).MinWidth(0)
 			label, key := "Favorite", "details-favorite"
 			if w.app.Sync.IsFavorite(v.ID) {
