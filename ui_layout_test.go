@@ -190,16 +190,17 @@ func TestDetailDividerKeys(t *testing.T) {
 	if got, _ := detailsWidthForKey(maxDetailsWidth, ui.KeyLeft); got != maxDetailsWidth {
 		t.Fatalf("Left at the maximum = %v, want %v", got, maxDetailsWidth)
 	}
-	// Home and End jump to the bounds from anywhere.
-	if got, _ := detailsWidthForKey(360, ui.KeyHome); got != minDetailsWidth {
-		t.Fatalf("Home = %v, want %v", got, minDetailsWidth)
+	// Home and End follow the divider direction like the arrows: Home widens
+	// to the 480 bound and End narrows to the 280 bound from anywhere.
+	if got, _ := detailsWidthForKey(360, ui.KeyHome); got != maxDetailsWidth {
+		t.Fatalf("Home = %v, want %v", got, maxDetailsWidth)
 	}
-	if got, _ := detailsWidthForKey(360, ui.KeyEnd); got != maxDetailsWidth {
-		t.Fatalf("End = %v, want %v", got, maxDetailsWidth)
+	if got, _ := detailsWidthForKey(360, ui.KeyEnd); got != minDetailsWidth {
+		t.Fatalf("End = %v, want %v", got, minDetailsWidth)
 	}
 	// The double-click reset is the board's default.
-	if got, _ := detailsWidthForKey(defaultDetailsWidth, ui.KeyHome); got != minDetailsWidth {
-		t.Fatalf("Home after reset = %v, want %v", got, minDetailsWidth)
+	if got, _ := detailsWidthForKey(defaultDetailsWidth, ui.KeyHome); got != maxDetailsWidth {
+		t.Fatalf("Home after reset = %v, want %v", got, maxDetailsWidth)
 	}
 	if defaultDetailsWidth < minDetailsWidth || defaultDetailsWidth > maxDetailsWidth {
 		t.Fatalf("reset width %v is outside %v-%v", defaultDetailsWidth, minDetailsWidth, maxDetailsWidth)

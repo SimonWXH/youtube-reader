@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -71,6 +72,63 @@ func TestDescriptionMoreTracksRenderedLines(t *testing.T) {
 	tt.Frame()
 	if !tt.HasText("Show less") {
 		t.Fatal("More must reveal the full description")
+	}
+}
+
+// A selection whose row is gone from the list shows the inline error with
+// Retry, and Retry re-reads the store so a restored row brings the pane back.
+func TestDetailErrorRetryReloadsTheStore(t *testing.T) {
+	ctx := context.Background()
+	a := newTestApp(t, t.TempDir())
+	defer a.Close()
+	a.Selected = "all"
+	video := core.Video{ID: "v-gone", ChannelID: "ch-1", ChannelTitle: "Channel", Title: "A video that vanishes"}
+
+	if err := a.Store.CommitRefresh(ctx, core.RefreshCommit{Videos: []core.Video{video}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.reload(); err != nil {
+		t.Fatal(err)
+	}
+	a.SelectedVideoID = video.ID
+
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 840)
+	tt.Frame()
+	if !tt.HasText("Open on YouTube…") {
+		t.Fatalf("the pane did not open on the selected video: %q", tt.Texts())
+	}
+
+	if err := a.Store.CommitRefresh(ctx, core.RefreshCommit{DeleteIDs: []string{video.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.reload(); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	tt.Frame()
+	if !tt.HasText("Couldn't load this video") {
+		t.Fatalf("a selection missing from the list shows no error: %q", tt.Texts())
+	}
+	if !tt.HasText("Retry") {
+		t.Fatalf("the error offers no Retry: %q", tt.Texts())
+	}
+	if tt.HasText("Open on YouTube…") {
+		t.Fatal("the pane kept the stale content instead of the error")
+	}
+
+	if err := a.Store.CommitRefresh(ctx, core.RefreshCommit{Videos: []core.Video{video}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("Retry"); err != nil {
+		t.Fatalf("click Retry: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText("Open on YouTube…") {
+		t.Fatalf("Retry did not reload the video: %q", tt.Texts())
+	}
+	if a.SelectedVideoID != video.ID {
+		t.Fatalf("selection after Retry = %q, want %q", a.SelectedVideoID, video.ID)
 	}
 }
 

@@ -67,7 +67,8 @@ func initialDetailsWidth(pref float32) float32 {
 
 // detailsWidthForKey reports the pane width a divider key asks for, and
 // whether the key is one of them. The divider sits left of the pane, so
-// Left widens it and Right narrows it; Home and End go to the bounds.
+// Left widens it and Right narrows it; Home and End follow the same
+// direction, going to the widest and narrowest bounds.
 func detailsWidthForKey(width float32, key ui.Key) (float32, bool) {
 	switch key {
 	case ui.KeyLeft:
@@ -75,9 +76,9 @@ func detailsWidthForKey(width float32, key ui.Key) (float32, bool) {
 	case ui.KeyRight:
 		return clampDetailsWidth(width - detailKeyStep), true
 	case ui.KeyHome:
-		return minDetailsWidth, true
-	case ui.KeyEnd:
 		return maxDetailsWidth, true
+	case ui.KeyEnd:
+		return minDetailsWidth, true
 	}
 	return width, false
 }
