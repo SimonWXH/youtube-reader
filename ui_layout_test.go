@@ -51,72 +51,105 @@ func TestFitFilterStrip(t *testing.T) {
 	}
 }
 
-func TestFitPaneWidths(t *testing.T) {
-	t.Run("defaults without selection", func(t *testing.T) {
-		sidebar, details := fitPaneWidths(0, 0, false, false, 1280)
-		if sidebar != defaultSidebarWidth || details != defaultDetailsWidth {
-			t.Fatalf("fitPaneWidths = %v, %v; want %v, %v", sidebar, details, defaultSidebarWidth, defaultDetailsWidth)
+func TestFitPaneAtRest(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		sidebar := boundedSidebarWidth(0, 0, 1280)
+		if sidebar != defaultSidebarWidth {
+			t.Fatalf("sidebar = %v; want %v", sidebar, defaultSidebarWidth)
+		}
+		if got := detailWidthForRoom(defaultDetailsWidth, 1280-minSidebarWidth-splitDividerWidth()); got != defaultDetailsWidth {
+			t.Fatalf("details = %v; want %v", got, defaultDetailsWidth)
 		}
 	})
 
-	t.Run("persists chosen widths", func(t *testing.T) {
-		sidebar, details := fitPaneWidths(300, 460, true, false, 1280)
-		if sidebar != 300 || details != 460 {
-			t.Fatalf("fitPaneWidths = %v, %v; want 300, 460", sidebar, details)
+	t.Run("keeps the chosen widths", func(t *testing.T) {
+		if got := boundedSidebarWidth(400, 0, 1280); got != 400 {
+			t.Fatalf("sidebar = %v; want 400", got)
+		}
+		if got := detailWidthForRoom(460, 1280-minSidebarWidth-splitDividerWidth()); got != 460 {
+			t.Fatalf("details = %v; want 460", got)
 		}
 	})
 
 	t.Run("clamps to minimum and maximum", func(t *testing.T) {
-		sidebar, details := fitPaneWidths(10000, -1, true, false, 1280)
-		if sidebar != maxSidebarWidth || details != defaultDetailsWidth {
-			t.Fatalf("fitPaneWidths = %v, %v; want %v, %v", sidebar, details, maxSidebarWidth, defaultDetailsWidth)
+		if got := boundedSidebarWidth(10000, 0, 1280); got != maxSidebarWidth {
+			t.Fatalf("sidebar = %v; want %v", got, maxSidebarWidth)
 		}
-		if _, details := fitPaneWidths(256, 600, true, false, 1280); details != maxDetailsWidth {
-			t.Fatalf("details = %v; want the %v maximum", details, maxDetailsWidth)
+		if got := detailWidthForRoom(600, 1280-minSidebarWidth-splitDividerWidth()); got != maxDetailsWidth {
+			t.Fatalf("details = %v; want the %v maximum", got, maxDetailsWidth)
 		}
 	})
 
-	t.Run("shrinks panes to respect total width", func(t *testing.T) {
-		sidebar, details := fitPaneWidths(maxSidebarWidth, 560, true, false, 960)
-		if sidebar+details+minGridWidth > 960-2*splitDividerWidth() {
-			t.Fatalf("panes overflow window: sidebar=%v details=%v", sidebar, details)
+	t.Run("leaves the grid its minimum", func(t *testing.T) {
+		// 960 with the widest pane the sidebar squeeze allows: sidebar 180,
+		// pane 458, grid 320.
+		details := detailWidthForRoom(maxDetailsWidth, 960-minSidebarWidth-splitDividerWidth())
+		sidebar := boundedSidebarWidth(maxSidebarWidth, details, 960)
+		if sidebar != minSidebarWidth || details != 458 {
+			t.Fatalf("panes = %v, %v; want %v, 458", sidebar, details, minSidebarWidth)
 		}
-		if sidebar < minSidebarWidth || details < minDetailsWidth {
-			t.Fatalf("panes below minimum: sidebar=%v details=%v", sidebar, details)
+		if grid := 960 - sidebar - 2*splitDividerWidth() - details; grid != minGridWidth {
+			t.Fatalf("grid = %v; want %v", grid, minGridWidth)
 		}
 	})
 
 	t.Run("hidden sidebar reserves no room for the folded pane", func(t *testing.T) {
-		sidebar, details := fitPaneWidths(300, 320, true, true, 960)
-		if sidebar != 300 || details != 320 {
-			t.Fatalf("fitPaneWidths with the sidebar hidden = %v, %v; want the stored 300, 320", sidebar, details)
+		// A folded sidebar and its divider take no room, so the pane may use
+		// what the full row gives it.
+		if got := detailWidthForRoom(maxDetailsWidth, 960); got != maxDetailsWidth {
+			t.Fatalf("details with the sidebar hidden = %v; want %v", got, maxDetailsWidth)
 		}
-		sidebar, details = fitPaneWidths(300, maxDetailsWidth, true, true, 960)
-		if sidebar != 300 || details != maxDetailsWidth {
-			t.Fatalf("fitPaneWidths with the sidebar hidden = %v, %v; want 300, %v", sidebar, details, maxDetailsWidth)
+		if got := detailWidthForRoom(defaultDetailsWidth, 960); got != defaultDetailsWidth {
+			t.Fatalf("details with the sidebar hidden = %v; want %v", got, defaultDetailsWidth)
 		}
 	})
 }
 
 func TestBoundedSidebarWidth(t *testing.T) {
-	// The design board fixes the draggable range at 220 to 320 pt.
-	if minSidebarWidth != 220 || maxSidebarWidth != 320 {
-		t.Fatalf("sidebar bounds = %v/%v, want 220/320", minSidebarWidth, maxSidebarWidth)
+	if got := boundedSidebarWidth(0, 0, 1280); got != defaultSidebarWidth {
+		t.Fatalf("boundedSidebarWidth(0) = %v, want the %v default", got, defaultSidebarWidth)
 	}
-	if got := boundedSidebarWidth(40, false, 1280); got != minSidebarWidth {
+	if got := boundedSidebarWidth(40, 0, 1280); got != minSidebarWidth {
 		t.Fatalf("boundedSidebarWidth(40) = %v, want %v", got, minSidebarWidth)
 	}
-	if got := boundedSidebarWidth(minSidebarWidth, false, 1280); got != minSidebarWidth {
-		t.Fatalf("boundedSidebarWidth(%v) = %v, want the minimum kept", minSidebarWidth, got)
-	}
-	if got := boundedSidebarWidth(maxSidebarWidth, false, 1280); got != maxSidebarWidth {
-		t.Fatalf("boundedSidebarWidth(%v) = %v, want the maximum kept", maxSidebarWidth, got)
-	}
-	if got := boundedSidebarWidth(919, false, 960); got != maxSidebarWidth {
+	if got := boundedSidebarWidth(919, 0, 960); got != maxSidebarWidth {
 		t.Fatalf("boundedSidebarWidth(919) = %v, want %v", got, maxSidebarWidth)
 	}
-	if got := boundedSidebarWidth(1000, true, 1280); got != maxSidebarWidth {
-		t.Fatalf("boundedSidebarWidth(1000, selected) = %v, want %v", got, maxSidebarWidth)
+	// The pane on screen, not the open flag, decides the squeeze: the
+	// sidebar gives up exactly the room the grid needs beyond its minimum.
+	if got := boundedSidebarWidth(maxSidebarWidth, defaultDetailsWidth, 960); got != 298 {
+		t.Fatalf("boundedSidebarWidth(480, 340) = %v, want 298", got)
+	}
+	// Squeezing stops at the sidebar's own minimum; the grid then yields.
+	if got := boundedSidebarWidth(maxSidebarWidth, maxDetailsWidth, 960); got != minSidebarWidth {
+		t.Fatalf("boundedSidebarWidth(480, 480) = %v, want %v", got, minSidebarWidth)
+	}
+}
+
+// TestPaneLayoutTracksTheShownWidth walks the open/close animation: the
+// sidebar must move by exactly the pane unless the grid or the sidebar is at
+// its minimum, so no frame is a hard cut and no frame takes the grid below
+// its minimum while the panes still fit.
+func TestPaneLayoutTracksTheShownWidth(t *testing.T) {
+	const total float32 = 960
+	for _, pref := range []float32{minSidebarWidth, defaultSidebarWidth, maxSidebarWidth} {
+		for _, want := range []float32{minDetailsWidth, defaultDetailsWidth, maxDetailsWidth} {
+			rest := detailWidthForRoom(want, total-minSidebarWidth-splitDividerWidth())
+			prev := boundedSidebarWidth(pref, 0, total)
+			for shown := float32(0.5); shown <= rest; shown += 0.5 {
+				sidebar := boundedSidebarWidth(pref, shown, total)
+				if sidebar > prev+0.01 {
+					t.Fatalf("pref %v want %v: sidebar grew from %v to %v at shown %v", pref, want, prev, sidebar, shown)
+				}
+				if prev-sidebar > 0.51 {
+					t.Fatalf("pref %v want %v: sidebar jumped from %v to %v at shown %v", pref, want, prev, sidebar, shown)
+				}
+				if grid := total - sidebar - 2*splitDividerWidth() - shown; grid < minGridWidth-0.01 {
+					t.Fatalf("pref %v want %v: grid %v below %v at shown %v", pref, want, grid, minGridWidth, shown)
+				}
+				prev = sidebar
+			}
+		}
 	}
 }
 

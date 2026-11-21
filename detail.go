@@ -116,25 +116,10 @@ func (w *Window) view(c *ui.Context) {
 		}
 	}
 	open := selectedID != "" || d.errID != ""
-	visible := open || d.shown > 0
 
-	w.sidebarWidth, w.detailsWidth = fitPaneWidths(
-		settings.SidebarWidth, d.width, visible, w.sidebarHidden, total,
-	)
-	w.sidebarWidth = boundedSidebarWidth(w.sidebarWidth, visible, total)
-
-	shown := w.advanceDetails(c, open, w.detailsWidth)
-
-	// Zone A hook: the toolbar's sidebar toggle folds this pane away, so it and
-	// its divider take no room; w.sidebarWidth keeps what it shows with again.
-	layoutSidebar := w.sidebarWidth
-	outerDivider := splitDividerWidth()
-	if w.sidebarHidden {
-		layoutSidebar = 0
-		outerDivider = 0
-	}
-	rowWidth := total - layoutSidebar - outerDivider
-	shown = clamp(shown, 0, detailWidthForRoom(maxDetailsWidth, rowWidth))
+	fitted := detailWidthForRoom(d.width, w.detailFitWidth(c))
+	shown := w.advanceDetails(c, open, fitted)
+	w.sidebarWidth = boundedSidebarWidth(settings.SidebarWidth, shown, total)
 	d.shown = shown
 
 	var outerSplit ui.Element
@@ -151,7 +136,7 @@ func (w *Window) view(c *ui.Context) {
 	}
 
 	if outerSplit.Changed() {
-		sidebar := boundedSidebarWidth(w.sidebarWidth, visible, total)
+		sidebar := boundedSidebarWidth(w.sidebarWidth, shown, total)
 		_, _ = w.app.updateSettings(func(s *core.Settings) bool {
 			if s.SidebarWidth == sidebar {
 				return false
@@ -268,7 +253,7 @@ func (w *Window) detailsDivider(c *ui.Context, t mui.Tokens) {
 				d.overshoot = 0
 			}
 			if dx != 0 {
-				w.dragDetails(dx, w.detailRowWidth(c))
+				w.dragDetails(dx, w.detailFitWidth(c))
 			}
 		} else if d.dragging {
 			d.dragging = false
@@ -302,8 +287,20 @@ func (w *Window) detailRowWidth(c *ui.Context) float32 {
 	return total - w.sidebarWidth - splitDividerWidth()
 }
 
+// detailFitWidth is the room the grid and pane share at the pane's widest: a
+// visible sidebar reserves only its minimum, so the pane may use what a
+// divider drag could give it, while a folded sidebar reserves nothing.
+func (w *Window) detailFitWidth(c *ui.Context) float32 {
+	total := windowWidth(c)
+	if w.sidebarHidden {
+		return total
+	}
+	return total - minSidebarWidth - splitDividerWidth()
+}
+
 // dragDetails moves the divider by dx DIPs, keeping the pointer on it
-// rather than burning the overshoot when it goes past a bound.
+// rather than burning the overshoot when it goes past a bound. The sidebar
+// yields to its minimum first, so the pane may use all the room that leaves.
 func (w *Window) dragDetails(dx, rowWidth float32) {
 	d := &w.detail
 	room := detailWidthForRoom(maxDetailsWidth, rowWidth)
@@ -320,7 +317,7 @@ func (w *Window) dragDetails(dx, rowWidth float32) {
 func (w *Window) setDetailsWidth(c *ui.Context, width float32, persist bool) {
 	d := &w.detail
 	d.width = clampDetailsWidth(width)
-	d.shown = detailWidthForRoom(d.width, w.detailRowWidth(c))
+	d.shown = detailWidthForRoom(d.width, w.detailFitWidth(c))
 	d.animating = false
 	d.overshoot = 0
 	if persist {
@@ -447,7 +444,7 @@ func (w *Window) detailVideo(c *ui.Context, t mui.Tokens, v core.Video) {
 	d := &w.detail
 	innerWidth := max(d.shown-2*mui.Space(4), 0)
 
-	body := ui.Scroll(c).Grow(1).MinWidth(0).Padding(mui.Space(4)).Gap(mui.Space(3))
+	body := ui.Scroll(c.Key(v.ID)).Grow(1).MinWidth(0).Padding(mui.Space(4)).Gap(mui.Space(3))
 	body.Children(func() {
 		w.detailHero(c, t, v, innerWidth)
 
@@ -464,7 +461,7 @@ func (w *Window) detailVideo(c *ui.Context, t mui.Tokens, v core.Video) {
 				if !d.more {
 					text.MaxLines(6)
 				}
-				if descriptionOverflows(c, desc, innerWidth) {
+				if descriptionOverflows(desc, innerWidth) {
 					more := ui.ButtonBase(c).Key("details-description-more").
 						Height(mui.Body.LineHeight).Padding(0).Radius(mui.RadiusControl).
 						Background(t.App).TextColor(t.Accent).Cursor(ui.CursorPointer).
@@ -637,18 +634,20 @@ func detailMetaText(c *ui.Context, t mui.Tokens, text string) ui.Element {
 }
 
 // descriptionOverflows reports whether the description needs the More
-// disclosure: the text measures taller than the six clamped lines.
-func descriptionOverflows(c *ui.Context, text string, width float32) bool {
+// disclosure: it wraps to more lines than the six the clamped text shows.
+// MeasureText cannot tell: it includes hard newlines and its natural line
+// height is not the fixed 18 pt the clamped text draws, so the shaped line
+// count is the honest measure.
+func descriptionOverflows(text string, width float32) bool {
 	if width <= 0 {
 		return false
 	}
-	_, height := c.MeasureText(width, ui.Span{
-		Text:   text,
-		Font:   mui.SFFont,
+	layout := ui.ShapeText(text, ui.Font{
+		Family: mui.SFFont,
 		Size:   mui.Body.Size,
 		Weight: int(mui.Body.Weight),
-	})
-	return height > mui.Body.LineHeight*6+0.5
+	}, width)
+	return len(layout.Lines()) > 6
 }
 
 // detailDuration writes a YouTube ISO 8601 duration as the short clock
@@ -679,62 +678,24 @@ func youtubeWatchURL(id string) string {
 	return "https://www.youtube.com/watch?v=" + id
 }
 
-// fitPaneWidths keeps the sidebar and detail widths inside their bounds
-// and gives the grid its minimum when the window is narrow.
-func fitPaneWidths(sidebar, details float32, selected, sidebarHidden bool, total float32) (float32, float32) {
-	if sidebar <= 0 {
-		sidebar = defaultSidebarWidth
+// boundedSidebarWidth fits the sidebar beside the pane width that is
+// actually on screen, so the squeeze tracks the open/close animation and the
+// divider drag instead of the flag. The grid keeps its minimum while there is
+// room to give, and the sidebar never goes below its own minimum.
+func boundedSidebarWidth(width, shown, total float32) float32 {
+	if width <= 0 {
+		width = defaultSidebarWidth
 	}
-	if details <= 0 {
-		details = defaultDetailsWidth
-	}
-	sidebar = clamp(sidebar, minSidebarWidth, maxSidebarWidth)
-	details = clamp(details, minDetailsWidth, maxDetailsWidth)
-	if total <= 0 {
-		return sidebar, details
-	}
-	divider := splitDividerWidth()
-	// Zone A hook: a folded sidebar is not drawn, so it reserves no room in
-	// the fit; the width kept here is what it shows again when revealed.
-	if sidebarHidden {
-		if selected {
-			details = clamp(details, minDetailsWidth, min(maxDetailsWidth, total-divider-minGridWidth))
-		}
-		return sidebar, details
-	}
-	if !selected {
-		return clamp(sidebar, minSidebarWidth, min(maxSidebarWidth, total-2*divider-minGridWidth)), details
-	}
-	maxTotal := total - 2*divider
-	if maxTotal < minSidebarWidth+minGridWidth+minDetailsWidth {
-		return minSidebarWidth, minDetailsWidth
-	}
-	if sidebar+details+minGridWidth > maxTotal {
-		excess := sidebar + details + minGridWidth - maxTotal
-		room := sidebar + details - minSidebarWidth - minDetailsWidth
-		sidebarShare := float32(0.5)
-		if room > 0 {
-			sidebarShare = (sidebar - minSidebarWidth) / room
-		}
-		sidebar -= excess * sidebarShare
-		details -= excess * (1 - sidebarShare)
-	}
-	return sidebar, details
-}
-
-// boundedSidebarWidth matches the Split's drag value to the bounds that the
-// next build's fitPaneWidths would enforce, so a drag cannot persist a width
-// that immediately snaps back.
-func boundedSidebarWidth(width float32, selected bool, total float32) float32 {
-	max := maxSidebarWidth
+	limit := maxSidebarWidth
 	if total > 0 {
-		maxGridShare := total - 2*splitDividerWidth() - minGridWidth
-		if selected {
-			maxGridShare -= minDetailsWidth
+		room := total - 2*splitDividerWidth() - minGridWidth
+		if shown > 0 {
+			room -= shown
 		}
-		max = min(max, maxGridShare)
+		limit = min(limit, room)
 	}
-	return clamp(width, minSidebarWidth, max)
+	limit = max(limit, minSidebarWidth)
+	return clamp(width, minSidebarWidth, limit)
 }
 
 func splitDividerWidth() float32 {

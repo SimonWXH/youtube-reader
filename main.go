@@ -85,7 +85,6 @@ type Window struct {
 	sidebarKeyboard    string // sidebar row that arrow navigation focused
 	sidebarWidth       float32
 	contentWidth       float32
-	detailsWidth       float32
 	gridAvailableWidth float32
 	detail             detailState
 }
