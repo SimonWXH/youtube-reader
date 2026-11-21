@@ -274,13 +274,34 @@ func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
 		p.Fill(ui.Rect{X: r.X, Y: r.Y + r.H - mui.Hairline, W: r.W, H: mui.Hairline}, t.BorderSoft, 0)
 	})
 	strip.Children(func() {
-		channel := ui.Select(c.Key("channel-filter"), &selected, options).
-			Width(channelWidth).MinWidth(channelWidth).MaxWidth(channelWidth).Shrink(0).
-			Height(toolbarControl).Padding(0, mui.Space(3)).FontSize(mui.Control.Size)
-		if channel.Changed() {
-			for i, label := range options {
-				if label == selected {
-					w.app.ChannelFilter = ids[i]
+		if channelWidth < channelMenuWidth {
+			channel := ui.PopoverMenuButton(c.Key("channel-filter"), "", func(m *ui.Menu) {
+				for i, label := range options {
+					if m.Item(label).Radio(label == selected).Chosen() {
+						w.app.ChannelFilter = ids[i]
+					}
+				}
+			})
+			channel.Size(channelWidth, toolbarControl).
+				MinWidth(channelWidth).MaxWidth(channelWidth).Shrink(0).Padding(0).
+				Background(ui.Color{}).Border(0, ui.Color{}).
+				Label("Channel filter").Tooltip(selected).
+				FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).Cursor(ui.CursorPointer)
+			channel.Draw(func(p *ui.Painter, r ui.Rect) {
+				if channel.Pressed() || channel.Hovered() {
+					p.Fill(r, t.SurfaceAlt, mui.RadiusControl)
+				}
+			})
+		} else {
+			channel := ui.Select(c.Key("channel-filter"), &selected, options).
+				Width(channelWidth).MinWidth(channelWidth).MaxWidth(channelWidth).Shrink(0).
+				Height(toolbarControl).Padding(0, mui.Space(3)).FontSize(mui.Control.Size).
+				Tooltip(selected)
+			if channel.Changed() {
+				for i, label := range options {
+					if label == selected {
+						w.app.ChannelFilter = ids[i]
+					}
 				}
 			}
 		}
@@ -426,17 +447,15 @@ func (w *Window) installMenu() {
 		mygo.Separator(),
 		{Role: mygo.RoleClose},
 	}}
-	// MyGo's Reload, Force Reload and Toggle DevTools roles are omitted: this
-	// native-UI window has no page for them to act on, and RoleReload's default
-	// accelerator is Command-R, which is already the app's Refresh.
+	// MyGo's Reload, Force Reload, Toggle DevTools and Zoom roles are
+	// omitted: this window draws its own content with Content: ui.View, so
+	// performRole returns before acting on them, and RoleReload's default
+	// accelerator is Command-R, which is already the app's Refresh. A menu
+	// command that cannot act is worse than no command.
 	viewMenu := &mygo.MenuItem{Label: "View", Submenu: []*mygo.MenuItem{
 		w.menuRefresh,
 		mygo.Separator(),
 		w.menuSidebar,
-		mygo.Separator(),
-		{Role: mygo.RoleResetZoom},
-		{Role: mygo.RoleZoomIn},
-		{Role: mygo.RoleZoomOut},
 		mygo.Separator(),
 		{Role: mygo.RoleToggleFullScreen},
 	}}

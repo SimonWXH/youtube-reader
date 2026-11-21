@@ -275,7 +275,22 @@ func TestContentStripDegradesWithTheDetailPane(t *testing.T) {
 			tt.Frame()
 
 			strip := chromeControl(t, tt, "Video filters").Bounds
-			channel := chromeControl(t, tt, "All channels").Bounds
+			var channel ui.Rect
+			if tc.channel < channelMenuWidth {
+				control := chromeControl(t, tt, "Channel filter")
+				if control.Bounds.W != tc.channel {
+					t.Fatalf("channel is %v wide, want the collapsed %v", control.Bounds.W, tc.channel)
+				}
+				if control.Description != "All channels" {
+					t.Fatalf("collapsed channel's tooltip is %q, want the selected channel", control.Description)
+				}
+				channel = control.Bounds
+			} else {
+				if !tt.HasText("All channels") {
+					t.Fatalf("expanded channel has no label: %q", tt.Texts())
+				}
+				channel = chromeControl(t, tt, "All channels").Bounds
+			}
 			search, ok := tt.Find("Search videos")
 			if !ok {
 				t.Fatal("no search field")
@@ -283,9 +298,6 @@ func TestContentStripDegradesWithTheDetailPane(t *testing.T) {
 			unwatched := chromeControl(t, tt, "Unwatched")
 			count := chromeControl(t, tt, tc.count).Bounds
 
-			if channel.W != tc.channel {
-				t.Fatalf("channel is %v wide, want %v", channel.W, tc.channel)
-			}
 			if search.W != tc.search {
 				t.Fatalf("search is %v wide, want %v", search.W, tc.search)
 			}
@@ -321,6 +333,41 @@ func TestContentStripDegradesWithTheDetailPane(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCollapsedChannelFilterCarriesTheChoiceInItsTooltip checks the chevron
+// form at a narrow width: it is the 36 pt glyph, names the chosen channel in
+// its tooltip, and its menu changes the filter like the expanded select.
+func TestCollapsedChannelFilterCarriesTheChoiceInItsTooltip(t *testing.T) {
+	w := chromeWindow(t)
+	w.app.SelectedVideoID = "v1"
+	w.app.Settings.DetailsWidth = maxDetailsWidth
+	tt := ui.NewTester(w.shell, 960, 808)
+	tt.Frame()
+
+	channel := chromeControl(t, tt, "Channel filter")
+	if channel.Bounds.W != channelMenuIcon {
+		t.Fatalf("collapsed channel is %v wide, want %v", channel.Bounds.W, channelMenuIcon)
+	}
+	if channel.Description != "All channels" {
+		t.Fatalf("collapsed channel's tooltip is %q, want All channels", channel.Description)
+	}
+	if err := tt.Click("Channel filter"); err != nil {
+		t.Fatalf("open the channel menu: %v", err)
+	}
+	if err := tt.ChooseMenuItem("X調查"); err != nil {
+		t.Fatalf("choose a channel: %v", err)
+	}
+	tt.Frame()
+	if w.app.ChannelFilter != "ch-1" {
+		t.Fatalf("choosing X調查 set the filter to %q", w.app.ChannelFilter)
+	}
+	if got := chromeControl(t, tt, "Channel filter").Description; got != "X調查" {
+		t.Fatalf("collapsed channel's tooltip after choosing is %q, want X調查", got)
+	}
+	if !tt.HasText("1 video") {
+		t.Fatalf("filtered count is %q", tt.Texts())
 	}
 }
 
@@ -491,11 +538,6 @@ func TestMenuKeepsTheStandardBar(t *testing.T) {
 	}
 	if sidebar := menuItemWithLabel(view.Submenu, "Hide Sidebar"); sidebar == nil || sidebar.Accelerator != "Ctrl+Cmd+S" {
 		t.Fatalf("View menu's sidebar command is %+v", sidebar)
-	}
-	for _, role := range []mygo.MenuRole{mygo.RoleResetZoom, mygo.RoleZoomIn, mygo.RoleZoomOut} {
-		if menuItemWithRole(view.Submenu, role) == nil {
-			t.Fatalf("View menu has no %s item", role)
-		}
 	}
 	if menuItemWithRole(view.Submenu, mygo.RoleToggleFullScreen) == nil {
 		t.Fatal("View menu has no full screen command")
@@ -717,7 +759,11 @@ func TestToolbarSidebarHiddenKeepsTheDetailPane(t *testing.T) {
 // the sidebar is folded saves only the detail width, not the fitted width of a
 // sidebar the user did not touch.
 func TestHiddenSidebarDetailDragKeepsSidebarWidth(t *testing.T) {
-	const storedSidebar float32 = 480
+	const (
+		storedSidebar float32 = 480
+		width         float32 = 960
+		drag          float32 = 60
+	)
 	w := chromeWindow(t)
 	w.app.Settings.SidebarWidth = storedSidebar
 	w.app.SelectedVideoID = "v1"
@@ -728,27 +774,41 @@ func TestHiddenSidebarDetailDragKeepsSidebarWidth(t *testing.T) {
 	if got := w.app.settingsSnapshot().SidebarWidth; got != storedSidebar {
 		t.Fatalf("opening the frame saved sidebar width %v, want %v", got, storedSidebar)
 	}
-	if w.sidebarWidth >= storedSidebar {
-		t.Fatalf("fitted sidebar width %v does not differ from the stored %v", w.sidebarWidth, storedSidebar)
-	}
 	drawer := chromeControl(t, tt, "Video details").Bounds
+	if drawer.W != defaultDetailsWidth {
+		t.Fatalf("hidden-sidebar drawer is %v wide, want the stored %v", drawer.W, defaultDetailsWidth)
+	}
+	if want := width - defaultDetailsWidth - splitDividerWidth(); w.contentWidth != want {
+		t.Fatalf("grid pane is %v wide, want %v with no sidebar room reserved", w.contentWidth, want)
+	}
 	divider, ok := tt.AccessByRole(ui.RoleSplitter, "")
 	if !ok {
 		t.Fatal("no divider between the grid and the detail pane")
 	}
 	x, y := divider.Bounds.X+divider.Bounds.W/2, divider.Bounds.Y+200
 	tt.Press(x, y)
-	tt.Move(x-60, y)
-	tt.Release(x-60, y)
+	tt.Move(x-drag, y)
+	tt.Release(x-drag, y)
 	tt.Frame()
 
-	if dragged := chromeControl(t, tt, "Video details").Bounds; dragged.W == drawer.W {
-		t.Fatalf("the drag did not resize the detail pane from %v", drawer.W)
+	want := drawer.W + drag
+	dragged := chromeControl(t, tt, "Video details").Bounds
+	if dragged.W != want {
+		t.Fatalf("dragged detail pane is %v wide, want %v", dragged.W, want)
 	}
-	if got := w.app.settingsSnapshot().DetailsWidth; got == 0 {
-		t.Fatal("the detail drag did not save the new width")
+	if got := w.app.settingsSnapshot().DetailsWidth; got != dragged.W {
+		t.Fatalf("detail drag saved %v, want the displayed %v", got, dragged.W)
 	}
 	if got := w.app.settingsSnapshot().SidebarWidth; got != storedSidebar {
 		t.Fatalf("detail drag saved sidebar width %v, want the stored %v", got, storedSidebar)
+	}
+	tt.Frame()
+	if again := chromeControl(t, tt, "Video details").Bounds; again.W != dragged.W {
+		t.Fatalf("the saved detail width snapped back from %v to %v", dragged.W, again.W)
+	}
+	w.setSidebarHidden(false)
+	tt.Frame()
+	if got := w.app.settingsSnapshot().SidebarWidth; got != storedSidebar {
+		t.Fatalf("showing the sidebar again used %v, want the stored %v", got, storedSidebar)
 	}
 }

@@ -53,33 +53,44 @@ func TestFitFilterStrip(t *testing.T) {
 
 func TestFitPaneWidths(t *testing.T) {
 	t.Run("defaults without selection", func(t *testing.T) {
-		sidebar, details := fitPaneWidths(0, 0, false, 1280)
+		sidebar, details := fitPaneWidths(0, 0, false, false, 1280)
 		if sidebar != defaultSidebarWidth || details != defaultDetailsWidth {
 			t.Fatalf("fitPaneWidths = %v, %v; want %v, %v", sidebar, details, defaultSidebarWidth, defaultDetailsWidth)
 		}
 	})
 
 	t.Run("persists chosen widths", func(t *testing.T) {
-		sidebar, details := fitPaneWidths(300, 500, true, 1280)
+		sidebar, details := fitPaneWidths(300, 500, true, false, 1280)
 		if sidebar != 300 || details != 500 {
 			t.Fatalf("fitPaneWidths = %v, %v; want 300, 500", sidebar, details)
 		}
 	})
 
 	t.Run("clamps to minimum and maximum", func(t *testing.T) {
-		sidebar, details := fitPaneWidths(10000, -1, true, 1280)
+		sidebar, details := fitPaneWidths(10000, -1, true, false, 1280)
 		if sidebar != maxSidebarWidth || details != defaultDetailsWidth {
 			t.Fatalf("fitPaneWidths = %v, %v; want %v, %v", sidebar, details, maxSidebarWidth, defaultDetailsWidth)
 		}
 	})
 
 	t.Run("shrinks panes to respect total width", func(t *testing.T) {
-		sidebar, details := fitPaneWidths(maxSidebarWidth, 560, true, 960)
+		sidebar, details := fitPaneWidths(maxSidebarWidth, 560, true, false, 960)
 		if sidebar+details+minGridWidth > 960-2*splitDividerWidth() {
 			t.Fatalf("panes overflow window: sidebar=%v details=%v", sidebar, details)
 		}
 		if sidebar < minSidebarWidth || details < minDetailsWidth {
 			t.Fatalf("panes below minimum: sidebar=%v details=%v", sidebar, details)
+		}
+	})
+
+	t.Run("hidden sidebar reserves no room for the folded pane", func(t *testing.T) {
+		sidebar, details := fitPaneWidths(300, 320, true, true, 960)
+		if sidebar != 300 || details != 320 {
+			t.Fatalf("fitPaneWidths with the sidebar hidden = %v, %v; want the stored 300, 320", sidebar, details)
+		}
+		sidebar, details = fitPaneWidths(300, maxDetailsWidth, true, true, 960)
+		if sidebar != 300 || details != maxDetailsWidth {
+			t.Fatalf("fitPaneWidths with the sidebar hidden = %v, %v; want 300, %v", sidebar, details, maxDetailsWidth)
 		}
 	})
 }

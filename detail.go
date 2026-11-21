@@ -17,7 +17,7 @@ func (w *Window) view(c *ui.Context) {
 	selected := w.app.HasSelection()
 	w.sidebarWidth, w.detailsWidth = fitPaneWidths(
 		settings.SidebarWidth, settings.DetailsWidth,
-		selected, total,
+		selected, w.sidebarHidden, total,
 	)
 	// Zone A hook: the toolbar's sidebar toggle folds this pane away, so it and
 	// its divider take no room; w.sidebarWidth keeps what it shows with again.
@@ -91,7 +91,7 @@ func persistedDetailsWidth(total, layoutSidebar, content, outerDivider float32, 
 	return clamp(details, minDetailsWidth, maxDetailsWidth), true
 }
 
-func fitPaneWidths(sidebar, details float32, selected bool, total float32) (float32, float32) {
+func fitPaneWidths(sidebar, details float32, selected, sidebarHidden bool, total float32) (float32, float32) {
 	if sidebar <= 0 {
 		sidebar = defaultSidebarWidth
 	}
@@ -100,16 +100,21 @@ func fitPaneWidths(sidebar, details float32, selected bool, total float32) (floa
 	}
 	sidebar = clamp(sidebar, minSidebarWidth, maxSidebarWidth)
 	details = clamp(details, minDetailsWidth, maxDetailsWidth)
-	if !selected {
-		if total <= 0 {
-			return sidebar, details
-		}
-		return clamp(sidebar, minSidebarWidth, min(maxSidebarWidth, total-2*splitDividerWidth()-minGridWidth)), details
-	}
 	if total <= 0 {
 		return sidebar, details
 	}
 	divider := splitDividerWidth()
+	// Zone A hook: a folded sidebar is not drawn, so it reserves no room in
+	// the fit; the width kept here is what it shows again when revealed.
+	if sidebarHidden {
+		if selected {
+			details = clamp(details, minDetailsWidth, min(maxDetailsWidth, total-divider-minGridWidth))
+		}
+		return sidebar, details
+	}
+	if !selected {
+		return clamp(sidebar, minSidebarWidth, min(maxSidebarWidth, total-2*divider-minGridWidth)), details
+	}
 	maxTotal := total - 2*divider
 	if maxTotal < minSidebarWidth+minGridWidth+minDetailsWidth {
 		return minSidebarWidth, minDetailsWidth
