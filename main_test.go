@@ -745,7 +745,7 @@ func TestToolbarKeyboardOrder(t *testing.T) {
 		t.Fatalf("Right reached %q", focusedName(tt))
 	}
 	tt.Key(0, ui.KeyTab)
-	if !tt.Focused("All") {
+	if !tt.Focused("All videos") {
 		t.Fatalf("Tab left the toolbar for %q", focusedName(tt))
 	}
 }
@@ -823,7 +823,7 @@ func TestToolbarSidebarHiddenKeepsTheDetailPane(t *testing.T) {
 // sidebar the user did not touch.
 func TestHiddenSidebarDetailDragKeepsSidebarWidth(t *testing.T) {
 	const (
-		storedSidebar float32 = 480
+		storedSidebar float32 = 300
 		width         float32 = 960
 		drag          float32 = 60
 	)
