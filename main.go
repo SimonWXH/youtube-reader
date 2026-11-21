@@ -173,9 +173,6 @@ func (w *Window) view(c *ui.Context) {
 	if selected {
 		w.contentWidth -= w.detailsWidth + splitDividerWidth()
 	}
-	w.app.Settings.SidebarWidth = w.sidebarWidth
-	w.app.Settings.DetailsWidth = w.detailsWidth
-
 	// MyGo's Split clamps only to its own 40 DIP minimum while a drag is
 	// active. Keep the width it reports within the same bounds used on the
 	// next build, so a drag cannot save a value that immediately snaps back.
