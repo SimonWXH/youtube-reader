@@ -13,12 +13,12 @@ import (
 
 const (
 	defaultSidebarWidth float32 = 260
-	defaultDetailsWidth float32 = 320
+	defaultDetailsWidth float32 = 340
 
 	minSidebarWidth float32 = 220
 	maxSidebarWidth float32 = 320
 	minDetailsWidth float32 = 280
-	maxDetailsWidth float32 = 560
+	maxDetailsWidth float32 = 480
 	minGridWidth    float32 = 320
 
 	defaultMaxGridColumns = 5
@@ -84,9 +84,11 @@ type Window struct {
 	sidebarFocus       string // sidebar row that takes the focus in the next frame
 	sidebarKeyboard    string // sidebar row that arrow navigation focused
 	sidebarWidth       float32
+	sidebarDragging    bool
+	sidebarOvershoot   float32
 	contentWidth       float32
-	detailsWidth       float32
 	gridAvailableWidth float32
+	detail             detailState
 }
 
 func (w *Window) toast(c *ui.Context, msg string, isError bool) {

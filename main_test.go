@@ -303,7 +303,7 @@ func TestContentStripDegradesWithTheDetailPane(t *testing.T) {
 		collapsed    bool
 	}{
 		{name: "design width", width: 1280, count: "3 videos", channel: channelMenuWidth, search: searchFieldWidth},
-		{name: "minimum width", width: 960, count: "3 videos", channel: channelMenuIcon, search: searchFieldMin},
+		{name: "minimum width", width: 960, count: "3 videos", channel: channelMenuIcon, search: searchFieldMin, collapsed: true},
 		{name: "minimum width, widest drawer", width: 960, count: "3 videos", detailsWidth: maxDetailsWidth, channel: channelMenuIcon, search: searchFieldMin, collapsed: true},
 		{name: "minimum width, typed query", width: 960, query: "First", count: "1 video", channel: channelMenuIcon, search: searchFieldMin},
 	} {
