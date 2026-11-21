@@ -161,12 +161,22 @@ func plural(n int) string {
 func (w *Window) view(c *ui.Context) {
 	t := c.Theme()
 	tokens := mui.NewTokens(t, t.Dark)
-	w.app.Settings.MaxGridColumns = clampInt(w.app.Settings.MaxGridColumns, minMaxGridColumns, maxMaxGridColumns)
+	settings := w.app.settingsSnapshot()
+	if clamped := clampInt(settings.MaxGridColumns, minMaxGridColumns, maxMaxGridColumns); clamped != settings.MaxGridColumns {
+		_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+			if s.MaxGridColumns == settings.MaxGridColumns {
+				s.MaxGridColumns = clamped
+				return true
+			}
+			return false
+		})
+		settings.MaxGridColumns = clamped
+	}
 
 	total := windowWidth(c)
 	selected := w.app.HasSelection()
 	w.sidebarWidth, w.detailsWidth = fitPaneWidths(
-		w.app.Settings.SidebarWidth, w.app.Settings.DetailsWidth,
+		settings.SidebarWidth, settings.DetailsWidth,
 		selected, total,
 	)
 	w.contentWidth = total - w.sidebarWidth - 2*splitDividerWidth()
@@ -200,11 +210,15 @@ func (w *Window) view(c *ui.Context) {
 	outerChanged := outerSplit.Changed()
 	contentChanged := contentSplit.Changed()
 	if outerChanged || contentChanged {
-		w.app.Settings.SidebarWidth = boundedSidebarWidth(w.sidebarWidth, selected, total)
-		if detailsChanged, ok := persistedDetailsWidth(total, w.sidebarWidth, w.contentWidth, selected, contentChanged); ok {
-			w.app.Settings.DetailsWidth = detailsChanged
-		}
-		_ = w.app.SaveSettings()
+		sidebar := boundedSidebarWidth(w.sidebarWidth, selected, total)
+		details, hasDetails := persistedDetailsWidth(total, w.sidebarWidth, w.contentWidth, selected, contentChanged)
+		_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+			s.SidebarWidth = sidebar
+			if hasDetails {
+				s.DetailsWidth = details
+			}
+			return true
+		})
 	}
 }
 
@@ -339,9 +353,10 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 				w.app.StatusExpanded = !w.app.StatusExpanded
 			})
 			if w.app.StatusExpanded {
-				ui.Text(c, "Last: "+orDash(w.app.Settings.LastRefresh)).FontSize(13).TextColor(t.Muted)
-				ui.Text(c, "Next: "+orDash(w.app.Settings.NextRefresh)).FontSize(13).TextColor(t.Muted)
-				for _, f := range w.app.Settings.RecentFailures {
+				statusSettings := w.app.settingsSnapshot()
+				ui.Text(c, "Last: "+orDash(statusSettings.LastRefresh)).FontSize(13).TextColor(t.Muted)
+				ui.Text(c, "Next: "+orDash(statusSettings.NextRefresh)).FontSize(13).TextColor(t.Muted)
+				for _, f := range statusSettings.RecentFailures {
 					ui.Row(c).Gap(8).AlignItems(ui.Start).Children(func() {
 						ui.Icon(c, mui.IconAlert).Size(16, 16)
 						ui.Text(c, f.Message).FontSize(13).TextColor(t.Danger).MaxLines(2).Grow(1)
@@ -392,7 +407,7 @@ func (w *Window) channelLink(c *ui.Context, t mui.Tokens, v core.Video) {
 		return
 	}
 	open := func() { c.OpenURL(channelURL(v.ChannelID)) }
-	link.Cursor(ui.CursorPointer).Tooltip("Open " + v.ChannelTitle + " on YouTube").Role(ui.RoleLink).Focusable().OnClick(open).OnShortcut(0, ui.KeyEnter, open)
+	link.Cursor(ui.CursorPointer).Tooltip("Open "+v.ChannelTitle+" on YouTube").Role(ui.RoleLink).Focusable().OnClick(open).OnShortcut(0, ui.KeyEnter, open)
 }
 
 func channelURL(channelID string) string {
@@ -422,7 +437,7 @@ func (w *Window) content(c *ui.Context, t mui.Tokens) {
 			w.settings(c, t)
 			return
 		}
-		if w.app.Settings.APIKey == "" {
+		if w.app.settingsSnapshot().APIKey == "" {
 			w.emptyState(c, t, "Set up YouTube Reader", "Add a YouTube Data API key in Settings to start following channels.", "setup-settings", "Open Settings", func(*ui.Context) { w.app.SettingsOpen = true })
 			return
 		}
@@ -448,7 +463,7 @@ func (w *Window) emptyState(c *ui.Context, t mui.Tokens, title, body, key, label
 
 func (w *Window) header(c *ui.Context, t mui.Tokens) {
 	title := w.title()
-	subtitle := refreshedLabel(w.app.Settings.LastRefresh)
+	subtitle := refreshedLabel(w.app.settingsSnapshot().LastRefresh)
 	if w.app.SettingsOpen {
 		title = "Settings"
 		subtitle = "Refresh, imports, sync and notifications"
@@ -468,13 +483,13 @@ func (w *Window) header(c *ui.Context, t mui.Tokens) {
 			state := mui.Default
 			if w.app.Busy {
 				state = mui.Loading
-			} else if len(w.app.Settings.RecentFailures) > 0 {
+			} else if len(w.app.settingsSnapshot().RecentFailures) > 0 {
 				state = mui.Error
 			}
 			if state == mui.Loading {
 				ui.Text(c, "Refreshing...").FontSize(13).TextColor(t.Muted)
 			}
-			if len(w.app.Settings.RecentFailures) > 0 && !w.app.Busy {
+			if len(w.app.settingsSnapshot().RecentFailures) > 0 && !w.app.Busy {
 				ui.Text(c, "Refresh issue").FontSize(13).TextColor(t.Danger).Label("Refresh issue")
 			}
 			mui.StatefulButton(c, t, "refresh", "Refresh", mui.IconRefresh, false, state, func() {
@@ -583,7 +598,7 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 		}
 		w.selectedIndex = &target
 		w.grid.Selected = w.selectedIndex
-		minWidth := w.gridMinWidth(c, w.app.Settings.MaxGridColumns)
+		minWidth := w.gridMinWidth(c, w.app.settingsSnapshot().MaxGridColumns)
 		grid := ui.GridView(c, &w.grid, len(videos), minWidth, 302, func(i int) {
 			v := videos[i]
 			selected := w.app.SelectedVideoID == v.ID
@@ -695,33 +710,69 @@ func (w *Window) drawer(c *ui.Context, t mui.Tokens) {
 }
 
 func (w *Window) settings(c *ui.Context, t mui.Tokens) {
+	settings := w.app.settingsSnapshot()
+	apiKey := settings.APIKey
+	backupPath := settings.BackupPath
+	syncPath := settings.SyncPath
+	showShorts := settings.ShowShorts
 	ui.Scroll(c).Grow(1).Children(func() {
 		ui.Column(c).Gap(16).Padding(24, 32, 32).Children(func() {
 			ui.Text(c, "Layout").Bold().FontSize(15)
 			ui.Text(c, "Maximum columns in each row (2-8)").FontSize(14)
-			columns := float64(w.app.Settings.MaxGridColumns)
+			columns := float64(settings.MaxGridColumns)
 			if ui.Stepper(c, &columns, float64(minMaxGridColumns), float64(maxMaxGridColumns), 1).Changed() {
-				w.app.Settings.MaxGridColumns = int(columns)
-				_ = w.app.SaveSettings()
+				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+					if s.MaxGridColumns == int(columns) {
+						return false
+					}
+					s.MaxGridColumns = int(columns)
+					return true
+				})
 			}
 			ui.Divider(c)
 			ui.Text(c, "API key (local only, never synced)").FontSize(14)
-			ui.TextInput(c.Key("api-key"), &w.app.Settings.APIKey).Password().Placeholder("YouTube Data API v3 key").Width(520)
-			ui.Text(c, "Refresh interval").FontSize(14)
-			selected := refreshLabel(w.app.Settings.RefreshMinutes)
-			if ui.Select(c.Key("interval"), &selected, []string{"15 minutes", "30 minutes", "1 hour", "2 hours", "4 hours"}).Width(520).Changed() {
-				w.app.Settings.RefreshMinutes = refreshMinutes(selected)
-				_ = w.app.SaveSettings()
+			apiKeyInput := ui.TextInput(c.Key("api-key"), &apiKey).Password().Placeholder("YouTube Data API v3 key").Width(520)
+			if apiKeyInput.Changed() {
+				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+					if s.APIKey == apiKey {
+						return false
+					}
+					s.APIKey = apiKey
+					return true
+				})
 			}
-			if ui.Checkbox(c.Key("shorts"), &w.app.Settings.ShowShorts, "Show Shorts").FontSize(14).Changed() {
-				_ = w.app.SaveSettings()
+			ui.Text(c, "Refresh interval").FontSize(14)
+			selected := refreshLabel(settings.RefreshMinutes)
+			if ui.Select(c.Key("interval"), &selected, []string{"15 minutes", "30 minutes", "1 hour", "2 hours", "4 hours"}).Width(520).Changed() {
+				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+					if s.RefreshMinutes == refreshMinutes(selected) {
+						return false
+					}
+					s.RefreshMinutes = refreshMinutes(selected)
+					return true
+				})
+			}
+			if ui.Checkbox(c.Key("shorts"), &showShorts, "Show Shorts").FontSize(14).Changed() {
+				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+					if s.ShowShorts == showShorts {
+						return false
+					}
+					s.ShowShorts = showShorts
+					return true
+				})
 			}
 			ui.Divider(c)
 			ui.Text(c, "OPML import").Bold().FontSize(15)
 			mui.StatefulButton(c, t, "import-opml", "Choose OPML file...", nil, false, mui.Default, func() { w.importOPML(c) }).AlignSelf(ui.Start)
 			ui.Text(c, "Favorites backup (standalone JSON, no API key or history)").Bold().FontSize(15)
-			if ui.TextInput(c.Key("backup-path"), &w.app.Settings.BackupPath).Width(520).Changed() {
-				_ = w.app.SaveSettings()
+			if ui.TextInput(c.Key("backup-path"), &backupPath).Width(520).Changed() {
+				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+					if s.BackupPath == backupPath {
+						return false
+					}
+					s.BackupPath = backupPath
+					return true
+				})
 			}
 			ui.Text(c, "Export writes the current favorites to the backup path below. Restore reads a chosen favorites JSON file and merges by stable video ID; newer local favorites win.").FontSize(13).TextColor(t.Muted)
 			ui.Row(c).Gap(8).Children(func() {
@@ -737,9 +788,15 @@ func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 				})
 			})
 			ui.Text(c, "Sync file (single JSON shared with Syncthing)").Bold().FontSize(15)
-			ui.TextInput(c.Key("sync-path"), &w.app.Settings.SyncPath).Width(520)
+			ui.TextInput(c.Key("sync-path"), &syncPath).Width(520)
 			mui.StatefulButton(c, t, "save-paths", "Save paths", nil, false, mui.Default, func() {
-				_ = w.app.SaveSettings()
+				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+					changed := s.APIKey != apiKey || s.BackupPath != backupPath || s.SyncPath != syncPath
+					s.APIKey = apiKey
+					s.BackupPath = backupPath
+					s.SyncPath = syncPath
+					return changed
+				})
 				w.toast(c, "Settings saved", false)
 			}).AlignSelf(ui.Start)
 			ui.Divider(c)
@@ -753,9 +810,12 @@ func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 			ui.Scroll(c).Height(180).Children(func() {
 				for i := range channels {
 					enabled := w.app.notificationEnabled(channels[i].ID)
-					if ui.Checkbox(c.Key("notify-"+channels[i].ID), &enabled, channels[i].Title).Changed() {
-						w.app.Settings.NotificationIDs = toggleID(w.app.Settings.NotificationIDs, channels[i].ID, enabled)
-						_ = w.app.SaveSettings()
+					id := channels[i].ID
+					if ui.Checkbox(c.Key("notify-"+id), &enabled, channels[i].Title).Changed() {
+						_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+							s.NotificationIDs = toggleID(s.NotificationIDs, id, enabled)
+							return true
+						})
 					}
 				}
 			})
@@ -862,7 +922,7 @@ func (w *Window) importOPML(c *ui.Context) {
 }
 
 func (w *Window) restoreFavorites(c *ui.Context) {
-	defaultPath := w.app.Settings.BackupPath
+	defaultPath := w.app.settingsSnapshot().BackupPath
 	if defaultPath == "" {
 		defaultPath = filepath.Join(os.Getenv("HOME"), "Downloads")
 	}

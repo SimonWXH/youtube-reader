@@ -100,6 +100,69 @@ func TestGroupCollapseSettingsStayConcurrentSafe(t *testing.T) {
 	}
 }
 
+func TestSettingsConcurrentReadersAndWritersStayConsistent(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(4)
+	errCh := make(chan error, 4)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			if err := a.SaveSettings(); err != nil {
+				errCh <- fmt.Errorf("save settings: %w", err)
+				return
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			_, _ = a.updateSettings(func(s *core.Settings) bool {
+				s.RecentFailures = []core.RefreshFailure{{At: "2026-03-01T12:00:00Z", Message: fmt.Sprintf("failure %d", i)}}
+				s.NotificationIDs = []string{fmt.Sprintf("channel-%d", i)}
+				s.ExpandedGroups = map[string]bool{fmt.Sprintf("group-%d", i): true}
+				return true
+			})
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			_ = a.settingsSnapshot()
+			_ = a.notificationEnabled("channel-1")
+			_ = a.VisibleVideos()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			if err := a.SetGroupCollapsed(fmt.Sprintf("group-%d", i), i%2 == 0); err != nil {
+				errCh <- fmt.Errorf("set group collapsed: %w", err)
+				return
+			}
+		}
+	}()
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Error(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		t.Fatalf("settings file: %v", err)
+	}
+	var persisted core.Settings
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatalf("unmarshal settings: %v", err)
+	}
+	if len(persisted.ExpandedGroups) == 0 || len(persisted.NotificationIDs) == 0 || len(persisted.RecentFailures) == 0 {
+		t.Fatalf("persisted settings lost state: %+v", persisted)
+	}
+}
+
 func TestCardChannelNameOpensChannelAndPreservesCardSelection(t *testing.T) {
 	video := core.Video{ID: "video-1", ChannelID: "UC_1", ChannelTitle: "The PrimeTime", Title: "Episode"}
 	a := &App{
