@@ -116,11 +116,12 @@ func (w *Window) view(c *ui.Context) {
 		}
 	}
 	open := selectedID != "" || d.errID != ""
+	visible := open || d.shown > 0
 
 	w.sidebarWidth, w.detailsWidth = fitPaneWidths(
-		settings.SidebarWidth, d.width, open, w.sidebarHidden, total,
+		settings.SidebarWidth, d.width, visible, w.sidebarHidden, total,
 	)
-	w.sidebarWidth = boundedSidebarWidth(w.sidebarWidth, open, total)
+	w.sidebarWidth = boundedSidebarWidth(w.sidebarWidth, visible, total)
 
 	shown := w.advanceDetails(c, open, w.detailsWidth)
 
@@ -150,7 +151,7 @@ func (w *Window) view(c *ui.Context) {
 	}
 
 	if outerSplit.Changed() {
-		sidebar := boundedSidebarWidth(w.sidebarWidth, open, total)
+		sidebar := boundedSidebarWidth(w.sidebarWidth, visible, total)
 		_, _ = w.app.updateSettings(func(s *core.Settings) bool {
 			if s.SidebarWidth == sidebar {
 				return false
@@ -522,6 +523,12 @@ func (w *Window) detailVideo(c *ui.Context, t mui.Tokens, v core.Video) {
 	})
 }
 
+// detailHeroSide is the hero bitmap's longest side. It is fixed at the
+// widest pane's 2x, so the open/close animation, a divider drag and a window
+// resize all reuse one decoded image instead of asking netimage for a new
+// size on every frame.
+const detailHeroSide = int(maxDetailsWidth * 2)
+
 // detailHero is the 16:9 header image. While the network image comes it
 // is a neutral surface with one small spinner, so the pane keeps its
 // geometry and never shows invented content.
@@ -535,7 +542,7 @@ func (w *Window) detailHero(c *ui.Context, t mui.Tokens, v core.Video, width flo
 		})
 		return
 	}
-	src, err := netimage.Load(c, v.ThumbnailURL, netimage.Options{MaxSide: max(int(width*2), 1)})
+	src, err := netimage.Load(c, v.ThumbnailURL, netimage.Options{MaxSide: detailHeroSide})
 	switch {
 	case src != nil:
 		frame.Children(func() {
