@@ -679,6 +679,64 @@ func TestToolbarRefreshDimsWhileBusy(t *testing.T) {
 	}
 }
 
+// TestRefreshControlsDimWhenRefreshCannotRun checks both conditions
+// core.RefreshYoutube refuses reach every refresh surface: the toolbar control,
+// the overflow item and the View menu command.
+func TestRefreshControlsDimWhenRefreshCannotRun(t *testing.T) {
+	cases := []struct {
+		name  string
+		block func(*App)
+	}{
+		{"missing key", func(a *App) { a.Settings.APIKey = "" }},
+		{"quota pause", func(a *App) {
+			a.Settings.QuotaPausedUntil = time.Now().Add(24 * time.Hour).Format(time.RFC3339)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := chromeWindow(t)
+			w.menuRefresh = &mygo.MenuItem{Label: "Refresh"}
+			tc.block(w.app)
+			w.syncRefreshMenu()
+			if w.menuRefresh.IsEnabled() {
+				t.Fatal("the View menu's Refresh is enabled while a refresh cannot run")
+			}
+			tt := ui.NewTester(w.shell, 1280, 808)
+			tt.Frame()
+			control := chromeControl(t, tt, "Refresh")
+			if !control.Disabled {
+				t.Fatalf("refresh control is not dimmed: %+v", control)
+			}
+			if control.Description == "" {
+				t.Fatal("the dimmed refresh control shows no reason")
+			}
+			if err := tt.Click("More"); err != nil {
+				t.Fatal(err)
+			}
+			if err := tt.ChooseMenuItem("Refresh"); err == nil || !strings.Contains(err.Error(), "disabled") {
+				t.Fatalf("the overflow Refresh is choosable while a refresh cannot run: %v", err)
+			}
+		})
+	}
+}
+
+// TestSettingsChangeReenablesRefreshImmediately checks the View menu follows a
+// settings write at once instead of waiting for the next refresh or clock tick.
+func TestSettingsChangeReenablesRefreshImmediately(t *testing.T) {
+	w := chromeWindow(t)
+	w.menuRefresh = &mygo.MenuItem{Label: "Refresh"}
+	w.app.Settings.APIKey = ""
+	w.syncRefreshMenu()
+	if w.menuRefresh.IsEnabled() {
+		t.Fatal("Refresh is enabled without an API key")
+	}
+	w.app.Settings.APIKey = "local-key"
+	w.settingsChanged()
+	if !w.menuRefresh.IsEnabled() {
+		t.Fatal("Refresh stayed disabled after the key was saved")
+	}
+}
+
 // TestToolbarKeyboardOrder checks the keyboard model: the toolbar is one stop
 // of Tab with the arrows moving between its controls, and the filter strip
 // follows it in reading order.

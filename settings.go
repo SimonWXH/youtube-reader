@@ -14,6 +14,7 @@ import (
 // settingsChanged rebuilds the menu bar item after a settings write, so the
 // item and its popover never report different states.
 func (w *Window) settingsChanged() {
+	w.syncRefreshMenu()
 	if w.status == nil {
 		return
 	}

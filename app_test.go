@@ -174,6 +174,46 @@ func TestRefreshNoopDoesNotAdvanceLastRefresh(t *testing.T) {
 	}
 }
 
+// TestRefreshBlockedKeepsRecordedFailures proves a refresh the reader refuses
+// for a quota pause or a missing key leaves the failure it reports in place,
+// rather than clearing the very state the user is reading.
+func TestRefreshBlockedKeepsRecordedFailures(t *testing.T) {
+	cases := []struct {
+		name  string
+		block func(*core.Settings)
+	}{
+		{"quota pause", func(s *core.Settings) {
+			s.QuotaPausedUntil = time.Now().Add(24 * time.Hour).Format(time.RFC3339)
+		}},
+		{"missing key", func(s *core.Settings) { s.APIKey = "" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			a := newTestApp(t, dir)
+			defer a.Close()
+			a.Settings.APIKey = "key"
+			failure := core.RefreshFailure{
+				At:      time.Now().UTC().Format(time.RFC3339),
+				Message: "quota paused until 2026-03-02T12:00:00Z",
+			}
+			a.Settings.RecentFailures = []core.RefreshFailure{failure}
+			tc.block(&a.Settings)
+			outcome := a.Refresh(true)
+			if outcome.Changed {
+				t.Fatalf("blocked refresh reported a change: %+v", outcome)
+			}
+			if len(a.Settings.RecentFailures) != 1 || a.Settings.RecentFailures[0].Message != failure.Message {
+				t.Fatalf("blocked refresh cleared the failure: %+v", a.Settings.RecentFailures)
+			}
+			persisted := loadTestSettings(t, filepath.Join(dir, "settings.json"))
+			if len(persisted.RecentFailures) != 1 || persisted.RecentFailures[0].Message != failure.Message {
+				t.Fatalf("blocked refresh cleared the persisted failure: %+v", persisted.RecentFailures)
+			}
+		})
+	}
+}
+
 func TestSaveSettingsPreservesNewerOnDiskStatus(t *testing.T) {
 	dir := t.TempDir()
 	a := newTestApp(t, dir)

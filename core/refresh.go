@@ -37,7 +37,7 @@ type RefreshResult struct {
 // now is injectable for tests; pass time.Now() in production.
 func RefreshYoutube(ctx context.Context, client YouTube, settings Settings, state SyncState, store *Store, existing []Video, revision int64, force bool, now time.Time) RefreshResult {
 	failed := func(err error) RefreshResult {
-		msg := redactKey(err.Error())
+		msg := RedactKey(err.Error())
 		if errors.Is(err, ErrQuota) {
 			msg = "quota paused until " + FormatRFC3339(now.Add(24*time.Hour))
 		}
@@ -108,7 +108,7 @@ func RefreshYoutube(ctx context.Context, client YouTube, settings Settings, stat
 			if errors.Is(err, ErrQuota) {
 				return failed(err)
 			}
-			failures = append(failures, RefreshFailure{At: FormatRFC3339(now), Message: redactKey(ch.Title + ": " + err.Error())})
+			failures = append(failures, RefreshFailure{At: FormatRFC3339(now), Message: RedactKey(ch.Title + ": " + err.Error())})
 			continue
 		}
 		existingIDs := map[string]bool{}
@@ -149,7 +149,7 @@ func RefreshYoutube(ctx context.Context, client YouTube, settings Settings, stat
 			if errors.Is(err, ErrQuota) {
 				return failed(err)
 			}
-			failures = append(failures, RefreshFailure{At: FormatRFC3339(now), Message: redactKey("hydrate: " + err.Error())})
+			failures = append(failures, RefreshFailure{At: FormatRFC3339(now), Message: RedactKey("hydrate: " + err.Error())})
 		} else {
 			byID := map[string]Video{}
 			for _, v := range hydrated {
@@ -189,9 +189,10 @@ func RefreshYoutube(ctx context.Context, client YouTube, settings Settings, stat
 // or the status surface.
 var apiKeyQuery = regexp.MustCompile(`(?i)([?&]key=)[^&\s"]*`)
 
-// redactKey hides the API key from a message taken from a network error, whose
-// text quotes the whole request URL.
-func redactKey(message string) string {
+// RedactKey hides the API key from a message taken from a network error, whose
+// text quotes the whole request URL. It is exported so every reader of a stored
+// failure, including one written by an older build, redacts at display time.
+func RedactKey(message string) string {
 	return apiKeyQuery.ReplaceAllString(message, "${1}[redacted]")
 }
 

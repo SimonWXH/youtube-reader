@@ -139,6 +139,10 @@ type status struct {
 	// offers them. A state with no primary shows no filled button.
 	Primary   statusAction
 	Secondary statusAction
+	// PrimaryDisabled draws the primary in its disabled face: a refresh action
+	// stays visible while a quota pause makes it impossible, so the pause is
+	// what explains it rather than the action vanishing.
+	PrimaryDisabled bool
 	// PausedUntil is when a quota pause ends, zero when refreshes run. A pause
 	// is a warning: it is raised as an alert, never shown in the popover as a
 	// warning of its own.
@@ -173,13 +177,15 @@ func deriveStatus(in statusInput) status {
 	if paused {
 		m.PausedUntil = pausedUntil
 	}
+	pauseShown := false
 
 	switch {
 	case settings.APIKey == "":
 		m.State = statusNotConfigured
 		m.Title = "Set up YouTube Reader"
 		m.Body = "Add a YouTube Data API key in Settings to get started."
-		m.Primary = statusNoAction
+		m.Primary = statusOpenSettings
+		m.Secondary = statusNoAction
 		m.Details = append(m.Details, statusDetail{Symbol: "arrow.triangle.2.circlepath", Label: "Channels", Value: fmt.Sprintf("%d", in.Channels)})
 
 	case in.Refreshing:
@@ -208,18 +214,20 @@ func deriveStatus(in statusInput) status {
 	case len(settings.RecentFailures) > 0:
 		m.State = statusFailed
 		m.Title = "Couldn't refresh subscriptions"
-		m.Body = settings.RecentFailures[0].Message
+		message := core.RedactKey(settings.RecentFailures[0].Message)
+		m.Body = message
 		m.Primary = statusRetry
 		at, hasAt := stampTime(settings.RecentFailures[0].At)
 		switch {
 		case paused:
 			m.Body = "YouTube API quota reached. Refresh resumes on " + pausedUntil.Local().Format("2 Jan, 15:04") + "."
 			m.Primary = statusNoAction
-		case strings.HasPrefix(settings.RecentFailures[0].Message, "quota paused"):
+			pauseShown = true
+		case strings.HasPrefix(message, "quota paused"):
 			// The stored quota failure carries a machine stamp; the pause has
 			// ended, so the row keeps the human sentence instead.
 			m.Body = "YouTube API quota reached. Retry to refresh again."
-		case rejectedKey(settings.RecentFailures[0].Message):
+		case rejectedKey(message):
 			// The API answered, so the connection is not what to check.
 			m.Body = "The YouTube API rejected the key. Check it in Settings, then try again."
 		}
@@ -237,13 +245,20 @@ func deriveStatus(in statusInput) status {
 	default:
 		m.Title = "Up to date"
 		m.Body = "Last refresh " + relativeTime(in.Now, last)
-		if paused {
-			m.Details = append(m.Details, statusDetail{Symbol: "clock", Label: "Next refresh", Value: "Paused until " + pausedUntil.Local().Format("2 Jan, 15:04")})
-		} else if hasNext {
+		if !paused && hasNext {
 			m.Details = append(m.Details, statusDetail{Symbol: "clock", Label: "Next refresh", Value: remainingTime(in.Now, next)})
 		}
 		m.Details = append(m.Details, statusDetail{Symbol: "arrow.triangle.2.circlepath", Label: "Channels", Value: fmt.Sprintf("%d", in.Channels)})
 		m.Details = append(m.Details, statusDetail{Symbol: "play.rectangle", Label: "New videos today", Value: fmt.Sprintf("%d", videosToday(in.Videos, in.Now))})
+	}
+
+	if paused {
+		if !pauseShown {
+			m.Details = append([]statusDetail{{Symbol: "clock", Label: "Next refresh", Value: "Paused until " + pausedUntil.Local().Format("2 Jan, 15:04")}}, m.Details...)
+		}
+		if m.Primary == statusRefreshNow || m.Primary == statusRetry {
+			m.PrimaryDisabled = true
+		}
 	}
 	return m
 }
@@ -482,7 +497,7 @@ func statusGlyphColor(s statusState, tokens mui.Tokens) ui.Color {
 // user sees that the action exists and cannot run twice.
 func statusActionButtons(c *ui.Context, tokens mui.Tokens, m status, actions statusActions) {
 	if m.Primary != statusNoAction {
-		disabled := m.State == statusRefreshing
+		disabled := m.State == statusRefreshing || m.PrimaryDisabled
 		statusButton(c, tokens, "status-primary", statusActionLabel(m.Primary, m.State), true, disabled, func() {
 			switch m.Primary {
 			case statusRefreshNow, statusRetry:
@@ -665,10 +680,11 @@ func (s *statusBar) actions() statusActions {
 // refresh brings the menu bar item up to date and raises the quota warning when
 // a pause begins. It runs on the main thread.
 func (s *statusBar) refresh() {
+	m := s.model(time.Now())
+	s.w.syncRefreshMenu()
 	if s.tray == nil {
 		return
 	}
-	m := s.model(time.Now())
 	if m.State != s.shownIcon {
 		if err := s.tray.SetIcon(statusIcon(m.State), true); err == nil {
 			s.shownIcon = m.State

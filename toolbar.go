@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -166,6 +167,9 @@ func (w *Window) refreshControl(c *ui.Context, t mui.Tokens) {
 		content: func() { ui.Icon(c, mui.IconRefresh).Size(toolbarGlyph, toolbarGlyph) },
 		onClick: func() { w.runRefresh(true) },
 	}
+	if reason := w.app.refreshBlockedReason(time.Now()); reason != "" {
+		spec.tooltip, spec.disabled = reason, true
+	}
 	if w.app.Busy {
 		spec.label, spec.tooltip, spec.disabled = "Refreshing", "Refreshing", true
 		spec.content = func() { ui.Spinner(c).Size(toolbarGlyph, toolbarGlyph).TextColor(t.Muted) }
@@ -190,7 +194,8 @@ func (w *Window) overflowControl(c *ui.Context, t mui.Tokens) {
 // toolbar controls or menu commands, then the secondary ones. Anything that
 // cannot run right now is dimmed, not hidden.
 func (w *Window) overflowMenu(m *ui.Menu) {
-	if m.Item("Refresh").Shortcut(ui.Cmd, ui.KeyR).Disabled(w.app.Busy).Chosen() {
+	blocked := w.app.refreshBlockedReason(time.Now()) != ""
+	if m.Item("Refresh").Shortcut(ui.Cmd, ui.KeyR).Disabled(w.app.Busy || blocked).Chosen() {
 		w.runRefresh(true)
 	}
 	if m.Item("Settings…").Shortcut(ui.Cmd, ui.KeyComma).Chosen() {
@@ -454,10 +459,11 @@ func (w *Window) sidebarMenuLabel() string {
 	return "Hide Sidebar"
 }
 
-// setMenuBusy dims the menu's Refresh command while a refresh is running, as
-// the toolbar control is disabled.
-func (w *Window) setMenuBusy(busy bool) {
+// syncRefreshMenu dims the View menu's Refresh command while a refresh is
+// running or while a quota pause or a missing key makes one impossible, as the
+// toolbar control is dimmed.
+func (w *Window) syncRefreshMenu() {
 	if w.menuRefresh != nil {
-		w.menuRefresh.SetEnabled(!busy)
+		w.menuRefresh.SetEnabled(!w.app.Busy && w.app.refreshBlockedReason(time.Now()) == "")
 	}
 }

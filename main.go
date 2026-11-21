@@ -118,11 +118,11 @@ func (w *Window) toast(c *ui.Context, msg string, isError bool) {
 // text into the window; the item and an open popover follow the refresh as it
 // starts and returns.
 func (w *Window) runRefresh(force bool) {
-	if w.app.Busy {
+	if w.app.Busy || w.app.refreshBlockedReason(time.Now()) != "" {
 		return
 	}
 	w.app.Busy = true
-	w.setMenuBusy(true)
+	w.syncRefreshMenu()
 	if w.window != nil {
 		w.window.Invalidate()
 	}
@@ -135,7 +135,7 @@ func (w *Window) runRefresh(force bool) {
 		outcome := w.app.Refresh(force)
 		if w.window == nil {
 			w.app.Busy = false
-			w.setMenuBusy(false)
+			w.syncRefreshMenu()
 			if w.status != nil {
 				w.status.refresh()
 			}
@@ -143,7 +143,7 @@ func (w *Window) runRefresh(force bool) {
 		}
 		w.window.Update(func() {
 			w.app.Busy = false
-			w.setMenuBusy(false)
+			w.syncRefreshMenu()
 			if w.status != nil {
 				w.status.started = time.Time{}
 				w.status.refresh()
@@ -218,24 +218,24 @@ func (w *Window) content(c *ui.Context, t mui.Tokens) {
 			return
 		}
 		if w.app.settingsSnapshot().APIKey == "" {
-			w.emptyState(c, t, "Set up YouTube Reader", "Add a YouTube Data API key in Settings to start following channels.", "setup-settings", "Open Settings", func(*ui.Context) { w.app.SettingsOpen = true })
+			w.emptyState(c, t, "Set up YouTube Reader", "Add a YouTube Data API key in Settings to start following channels.", "setup-settings", "Open Settings", mui.Default, func(*ui.Context) { w.app.SettingsOpen = true })
 			return
 		}
 		if len(w.app.Sync.Channels) == 0 {
-			w.emptyState(c, t, "Import your channels", "Choose an OPML file from your Mac to import channel groups.", "setup-import", "Import OPML", w.importOPML)
+			w.emptyState(c, t, "Import your channels", "Choose an OPML file from your Mac to import channel groups.", "setup-import", "Import OPML", mui.Default, w.importOPML)
 			return
 		}
 		w.gridArea(c, t)
 	})
 }
 
-func (w *Window) emptyState(c *ui.Context, t mui.Tokens, title, body, key, label string, action func(*ui.Context)) {
+func (w *Window) emptyState(c *ui.Context, t mui.Tokens, title, body, key, label string, state mui.State, action func(*ui.Context)) {
 	ui.Column(c).Grow(1).AlignItems(ui.Center).Center().Gap(20).Padding(32).Children(func() {
 		ui.Column(c).Width(480).AlignItems(ui.Center).Gap(12).Children(func() {
 			ui.Text(c, title).Bold().FontSize(32).FixedLineHeight(38).TextColor(t.Text).TextAlign(ui.Center)
 			ui.Text(c, body).FontSize(15).FixedLineHeight(22).TextColor(t.Muted).TextAlign(ui.Center)
 		})
-		mui.StatefulButton(c, t, key, label, nil, true, mui.Default, func() {
+		mui.StatefulButton(c, t, key, label, nil, true, state, func() {
 			action(c)
 		})
 	})

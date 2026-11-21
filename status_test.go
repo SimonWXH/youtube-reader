@@ -146,14 +146,15 @@ func TestDeriveStatusCopy(t *testing.T) {
 		RecentFailures: []core.RefreshFailure{},
 	}
 	tests := []struct {
-		name      string
-		in        statusInput
-		state     statusState
-		title     string
-		body      string
-		primary   statusAction
-		secondary statusAction
-		details   []string // "Label: Value" for every row, in order
+		name            string
+		in              statusInput
+		state           statusState
+		title           string
+		body            string
+		primary         statusAction
+		secondary       statusAction
+		primaryDisabled bool
+		details         []string // "Label: Value" for every row, in order
 	}{
 		{
 			name: "up to date",
@@ -253,7 +254,7 @@ func TestDeriveStatusCopy(t *testing.T) {
 			state:   statusNotConfigured,
 			title:   "Set up YouTube Reader",
 			body:    "Add a YouTube Data API key in Settings to get started.",
-			primary: statusNoAction, secondary: statusOpenSettings,
+			primary: statusOpenSettings, secondary: statusNoAction,
 			details: []string{"Channels: 3"},
 		},
 		{
@@ -267,8 +268,49 @@ func TestDeriveStatusCopy(t *testing.T) {
 			state:   statusUpToDate,
 			title:   "Up to date",
 			body:    "Last refresh 2 min ago",
-			primary: statusRefreshNow, secondary: statusOpenSettings,
+			primary: statusRefreshNow, secondary: statusOpenSettings, primaryDisabled: true,
 			details: []string{"Next refresh: Paused until 2 Mar, 14:32", "Channels: 42", "New videos today: 0"},
+		},
+		{
+			name: "never refreshed while paused",
+			in: statusInput{Now: now, Online: true, Channels: 3, Settings: core.Settings{
+				APIKey:           "key",
+				QuotaPausedUntil: now.Add(24 * time.Hour).Format(time.RFC3339),
+			}},
+			state:   statusNotRefreshed,
+			title:   "Not refreshed yet",
+			body:    "Refresh to fetch your subscriptions and videos.",
+			primary: statusRefreshNow, secondary: statusOpenSettings, primaryDisabled: true,
+			details: []string{"Next refresh: Paused until 2 Mar, 14:32", "Channels: 3"},
+		},
+		{
+			name: "offline while paused",
+			in: statusInput{Now: now, Online: false, Channels: 42, Settings: core.Settings{
+				APIKey:           "key",
+				LastRefresh:      now.Add(-2 * time.Minute).Format(time.RFC3339),
+				QuotaPausedUntil: now.Add(24 * time.Hour).Format(time.RFC3339),
+			}},
+			state:   statusOffline,
+			title:   "Offline",
+			body:    "Showing cached videos from 14:30",
+			primary: statusRetry, secondary: statusOpenSettings, primaryDisabled: true,
+			details: []string{"Next refresh: Paused until 2 Mar, 14:32", "Last refresh: 2 min ago", "Channels: 42"},
+		},
+		{
+			name: "stored failure redacts the key",
+			in: statusInput{Now: now, Online: true, Channels: 42, Settings: core.Settings{
+				APIKey:      "key",
+				LastRefresh: now.Add(-2 * time.Minute).Format(time.RFC3339),
+				RecentFailures: []core.RefreshFailure{{
+					At:      now.Add(-4 * time.Minute).Format(time.RFC3339),
+					Message: "Get \"https://www.googleapis.com/youtube/v3/channels?part=snippet&key=AIzaSyStored\": dial tcp: no route to host",
+				}},
+			}},
+			state:   statusFailed,
+			title:   "Couldn't refresh subscriptions",
+			body:    "Get \"https://www.googleapis.com/youtube/v3/channels?part=snippet&key=[redacted]\": dial tcp: no route to host",
+			primary: statusRetry, secondary: statusOpenSettings,
+			details: []string{"Failed: 4 min ago", "Channels: 42"},
 		},
 		{
 			name: "refreshing while paused",
@@ -281,8 +323,8 @@ func TestDeriveStatusCopy(t *testing.T) {
 			state:   statusRefreshing,
 			title:   "Refreshing",
 			body:    "42 channels",
-			primary: statusRefreshNow, secondary: statusNoAction,
-			details: []string{"Started: 14:31", "Channels: 42"},
+			primary: statusRefreshNow, secondary: statusNoAction, primaryDisabled: true,
+			details: []string{"Next refresh: Paused until 2 Mar, 14:32", "Started: 14:31", "Channels: 42"},
 		},
 		{
 			name: "quota failure",
@@ -331,6 +373,9 @@ func TestDeriveStatusCopy(t *testing.T) {
 			if got.Primary != tt.primary || got.Secondary != tt.secondary {
 				t.Fatalf("actions = %v / %v, want %v / %v", got.Primary, got.Secondary, tt.primary, tt.secondary)
 			}
+			if got.PrimaryDisabled != tt.primaryDisabled {
+				t.Fatalf("primary disabled = %v, want %v", got.PrimaryDisabled, tt.primaryDisabled)
+			}
 			var details []string
 			for _, d := range got.Details {
 				details = append(details, d.Label+": "+d.Value)
@@ -338,7 +383,8 @@ func TestDeriveStatusCopy(t *testing.T) {
 			if strings.Join(details, " · ") != strings.Join(tt.details, " · ") {
 				t.Fatalf("details = %q, want %q", details, tt.details)
 			}
-			wantPaused := tt.name == "quota paused" || tt.name == "quota failure" || tt.name == "refreshing while paused"
+			wantPaused := tt.name == "quota paused" || tt.name == "quota failure" || tt.name == "refreshing while paused" ||
+				tt.name == "never refreshed while paused" || tt.name == "offline while paused"
 			if paused := !got.PausedUntil.IsZero(); paused != wantPaused {
 				t.Fatalf("paused = %v, want %v", paused, wantPaused)
 			}
@@ -395,6 +441,75 @@ func TestDeriveStatusCopy(t *testing.T) {
 	if got := statusTooltip(fixtures[statusOffline]); got != "Offline - Showing cached videos from 12:27" {
 		t.Fatalf("tooltip = %q", got)
 	}
+}
+
+// TestStatusPausedPrimaryIsDisabled proves the popover's own button follows the
+// model: a refresh action the pause makes impossible takes no input, while an
+// ordinary refresh action still runs.
+func TestStatusPausedPrimaryIsDisabled(t *testing.T) {
+	now := time.Date(2026, 3, 1, 14, 32, 0, 0, time.Local)
+	paused := deriveStatus(statusInput{Now: now, Online: true, Channels: 42, Settings: core.Settings{
+		APIKey:           "key",
+		LastRefresh:      now.Add(-2 * time.Minute).Format(time.RFC3339),
+		QuotaPausedUntil: now.Add(24 * time.Hour).Format(time.RFC3339),
+	}})
+	called := false
+	tt := ui.NewTester(statusPanelView(paused, statusActions{refresh: func() { called = true }}, -1),
+		int(statusPopoverWidth), int(statusPopoverMaxHeight))
+	tt.Frame()
+	button := accessNamed(tt, "Refresh now")
+	if button == nil || !button.Disabled {
+		t.Fatalf("paused primary = %+v, want a disabled Refresh now", button)
+	}
+	if err := tt.Click("Refresh now"); err == nil && called {
+		t.Fatal("a disabled primary started a refresh")
+	}
+
+	healthy := deriveStatus(statusInput{Now: now, Online: true, Channels: 42, Settings: core.Settings{
+		APIKey:      "key",
+		LastRefresh: now.Add(-2 * time.Minute).Format(time.RFC3339),
+	}})
+	called = false
+	tt = ui.NewTester(statusPanelView(healthy, statusActions{refresh: func() { called = true }}, -1),
+		int(statusPopoverWidth), int(statusPopoverMaxHeight))
+	tt.Frame()
+	if err := tt.Click("Refresh now"); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("the healthy primary did not refresh")
+	}
+}
+
+// TestStoredFailureRedactsAPIKey proves a message already on disk from before
+// the write-side redaction still cannot show the key in the popover or the
+// item's hover text.
+func TestStoredFailureRedactsAPIKey(t *testing.T) {
+	const key = "AIzaSyD-stored-failure-key"
+	now := time.Date(2026, 3, 1, 14, 32, 0, 0, time.Local)
+	m := deriveStatus(statusInput{Now: now, Online: true, Channels: 1, Settings: core.Settings{
+		APIKey:      "key",
+		LastRefresh: now.Add(-2 * time.Minute).Format(time.RFC3339),
+		RecentFailures: []core.RefreshFailure{{
+			At:      now.Add(-4 * time.Minute).Format(time.RFC3339),
+			Message: "Get \"https://www.googleapis.com/youtube/v3/channels?part=snippet&key=" + key + "\": dial tcp: no route to host",
+		}},
+	}})
+	if strings.Contains(m.Body, key) || strings.Contains(statusTooltip(m), key) {
+		t.Fatalf("stored failure leaks the key: body=%q tooltip=%q", m.Body, statusTooltip(m))
+	}
+	if !strings.Contains(m.Body, "key=[redacted]") {
+		t.Fatalf("stored failure lost its redaction: %q", m.Body)
+	}
+}
+
+func accessNamed(tt *ui.Tester, name string) *ui.AccessInfo {
+	for _, info := range tt.AccessAll() {
+		if info.Name == name {
+			return &info
+		}
+	}
+	return nil
 }
 
 // TestStatusPopoverCap proves the 420 pt cap: a panel whose rows exceed it
