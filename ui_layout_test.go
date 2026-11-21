@@ -8,6 +8,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/simon/youtube-reader/core"
+	mui "github.com/simon/youtube-reader/ui"
 )
 
 func TestFitPaneWidths(t *testing.T) {
@@ -357,6 +358,19 @@ func TestGridFocusScroll(t *testing.T) {
 	}
 }
 
+// TestCardTitleColor keeps the chosen card's title on the accent its selection
+// stroke and halo use, and every unchosen title on the body text colour.
+func TestCardTitleColor(t *testing.T) {
+	accent, text := ui.Hex("#2f6699"), ui.Hex("#1f2023")
+	tokens := mui.Tokens{Text: text, Accent: accent}
+	if got := cardTitleColor(tokens, true); got != accent {
+		t.Fatalf("chosen card title colour = %v; want the accent %v", got, accent)
+	}
+	if got := cardTitleColor(tokens, false); got != text {
+		t.Fatalf("unchosen card title colour = %v; want the text colour %v", got, text)
+	}
+}
+
 // TestGridTabRevealsFirstCard scrolls the grid away from its first card and
 // checks that tabbing to the grid, with nothing chosen, brings that card back:
 // it is where the keyboard ring lands, and the ring must be visible.
@@ -455,6 +469,9 @@ func TestGridFocusFollowsMovedSelection(t *testing.T) {
 	if a.SelectedVideoID != videos[3].ID {
 		t.Fatalf("the click chose %q; want %q", a.SelectedVideoID, videos[3].ID)
 	}
+	// Choosing a card opens the detail pane, which rebuilds the grid under
+	// the split and leaves no element with the pointer focus. Tab from the
+	// top reaches the grid and shows its ring, as a keyboard user arrives.
 	for range 60 {
 		tt.Key(0, ui.KeyTab)
 		if w.gridKeyboardFocus {
@@ -462,7 +479,7 @@ func TestGridFocusFollowsMovedSelection(t *testing.T) {
 		}
 	}
 	if !w.gridKeyboardFocus {
-		t.Fatal("Tab did not reach the grid")
+		t.Fatalf("Tab did not reach the grid: %q", tt.Texts())
 	}
 	tt.Key(0, ui.KeyEnd)
 	if want := videos[len(videos)-1].ID; a.SelectedVideoID != want {

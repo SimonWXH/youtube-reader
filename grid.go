@@ -175,7 +175,7 @@ func (w *Window) videoCard(c *ui.Context, t mui.Tokens, index, focusIndex int, v
 			mui.Thumbnail(c, t, v.ThumbnailURL, 0, 0)
 		})
 		ui.Column(c).Grow(1).Padding(mui.Space(2)).Gap(mui.Space(1)).Children(func() {
-			mui.CardTitle.Apply(ui.Text(c, v.Title)).
+			mui.CardTitle.Apply(ui.Text(c, v.Title)).TextColor(cardTitleColor(t, selected)).
 				Height(mui.CardTitle.LineHeight * 2).MaxLines(2).Wrap().Label(v.Title)
 			w.videoCardFooter(c, t, v)
 		})
@@ -238,6 +238,15 @@ func (w *Window) channelLink(c *ui.Context, t mui.Tokens, v core.Video) {
 
 func channelURL(channelID string) string {
 	return "https://www.youtube.com/channel/" + channelID
+}
+
+// cardTitleColor is the card title's colour: the accent marks the chosen card
+// along with its stroke and halo, and every other title keeps the body colour.
+func cardTitleColor(t mui.Tokens, selected bool) ui.Color {
+	if selected {
+		return t.Accent
+	}
+	return t.Text
 }
 
 // coverCardCorners paints behind over the square corners a card's radius cuts
