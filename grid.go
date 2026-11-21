@@ -46,16 +46,18 @@ type gridMetrics struct {
 
 // gridCardMetrics reads the card metrics for a grid content width (the pane
 // less the grid's padding) and the grid's 8 pt gap: as many columns as keep
-// every card at most gridCardMaxWidth wide, clamped to the settings cap. A
-// narrow pane still takes those columns when every card ends up narrower, and
-// the setting wins where it asks for fewer columns than the width rule needs.
+// every card at most gridCardMaxWidth wide, clamped to the settings cap. Both
+// limits hold: when the cap asks for fewer columns than the width rule needs,
+// the cards stay at most gridCardMaxWidth wide and the pane's leftover width
+// becomes a trailing margin rather than wider cards.
 func gridCardMetrics(available, gap float32, maxColumns int) gridMetrics {
 	available = max(available, 1)
 	gap = max(gap, 0)
 	maxColumns = clampInt(maxColumns, minMaxGridColumns, maxMaxGridColumns)
 	columns := int(math.Ceil(float64((available + gap) / (gridCardMaxWidth + gap))))
 	columns = clampInt(columns, 1, maxColumns)
-	width := (available - gap*float32(columns-1)) / float32(columns)
+	usable := min(available, float32(columns)*gridCardMaxWidth+gap*float32(columns-1))
+	width := (usable - gap*float32(columns-1)) / float32(columns)
 	return gridMetrics{Columns: columns, Width: width, Height: gridCardHeight(width)}
 }
 
@@ -69,6 +71,12 @@ func gridCardHeight(width float32) float32 {
 // out in exactly these columns at this width.
 func (m gridMetrics) gridMinWidth(gap float32) float32 {
 	return m.Width - gap - gridFitEpsilon
+}
+
+// gridWidth is the width the cards and their gaps take, which is the pane's
+// content width unless the settings cap leaves a trailing margin.
+func (m gridMetrics) gridWidth(gap float32) float32 {
+	return float32(m.Columns)*m.Width + gap*float32(m.Columns-1)
 }
 
 func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
@@ -109,7 +117,7 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 		// grid has the keyboard focus and nothing is chosen yet.
 		grid := ui.GridView(c, &w.grid, len(videos), metrics.gridMinWidth(gap), metrics.Height, func(i int) {
 			w.videoCard(c, t, i, focusIndex, videos[i], metrics)
-		}).Padding(gridDecorInset).FocusRing(false).Grow(1)
+		}).Grow(1).Width(metrics.gridWidth(gap) + 2*gridDecorInset).Padding(gridDecorInset).FocusRing(false)
 		w.trackGridFocus(c, grid, focusIndex, lastIndex)
 		if grid.Changed() {
 			if w.grid.Selected != nil && *w.grid.Selected < len(videos) {
@@ -143,7 +151,7 @@ func gridFocusScroll(focused, wasFocused bool, focusIndex, lastIndex int) bool {
 	return focused && (!wasFocused || focusIndex != lastIndex)
 }
 
-// gridContentWidth is the width the cards have to fill: the grid pane on this
+// gridContentWidth is the width the cards may use: the grid pane on this
 // frame, less the grid's own padding.
 func (w *Window) gridContentWidth(padding float32) float32 {
 	available := w.gridAvailableWidth

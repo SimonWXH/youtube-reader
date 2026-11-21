@@ -154,9 +154,11 @@ func TestShippedGridBounds(t *testing.T) {
 	}
 }
 
-// TestGridCardWidthBounds checks the two rules at every pane width: a card is
-// never wider than 280 pt unless the user's maximum forces fewer columns, and
-// the column count never exceeds that maximum.
+// TestGridCardWidthBounds checks both hard limits at every pane width and
+// every maximum-columns setting: no card is ever wider than 280 pt, and the
+// grid never takes more columns than the setting allows. Where the setting
+// asks for fewer columns than the width rule needs, the leftover width stays
+// as a trailing margin instead of wider cards.
 func TestGridCardWidthBounds(t *testing.T) {
 	const gap float32 = 8
 	for pane := float32(320); pane <= 3000; pane += 1 {
@@ -173,16 +175,130 @@ func TestGridCardWidthBounds(t *testing.T) {
 			if want := min(fill, cap); m.Columns != want {
 				t.Fatalf("pane %v cap %d: columns = %d; want %d", pane, cap, m.Columns, want)
 			}
-			if m.Columns == fill && m.Width > gridCardMaxWidth+0.01 {
+			if m.Width > gridCardMaxWidth+0.01 {
 				t.Fatalf("pane %v cap %d: card width %v exceeds %v", pane, cap, m.Width, gridCardMaxWidth)
+			}
+			if used, want := m.gridWidth(gap), min(content, float32(m.Columns)*gridCardMaxWidth+gap*float32(m.Columns-1)); abs(used-want) > 0.01 {
+				t.Fatalf("pane %v cap %d: grid width %v; want %v", pane, cap, used, want)
+			}
+			if m.gridWidth(gap) > content+0.01 {
+				t.Fatalf("pane %v cap %d: grid width %v overflows the content %v", pane, cap, m.gridWidth(gap), content)
+			}
+			if fill > cap && abs(m.Width-gridCardMaxWidth) > 0.01 {
+				t.Fatalf("pane %v cap %d: capped card width = %v; want exactly %v", pane, cap, m.Width, gridCardMaxWidth)
 			}
 		}
 	}
 }
 
+// TestGridCardCapKeepsCeiling pins both hard limits against the agreed design
+// geometry (sidebar 260, details 340) and a 1200 pt window with the detail pane
+// open. Where the setting's maximum columns binds, the cards stay exactly
+// 280 pt wide and the pane's leftover width is trailing margin.
+func TestGridCardCapKeepsCeiling(t *testing.T) {
+	const gap float32 = 8
+	const padding float32 = 16
+	const designClosedContent float32 = 1280 - 260 - 2 - 2*padding
+	const designOpenContent float32 = 1280 - 260 - 340 - 2 - 2*padding
+	detailOpen1200Content := float32(1200) - defaultSidebarWidth - 2*splitDividerWidth() - defaultDetailsWidth - 2*splitDividerWidth() - 2*padding
+	cases := []struct {
+		name     string
+		content  float32
+		cap      int
+		columns  int
+		width    float32
+		leftover float32
+	}{
+		{"design 1280 detail closed, cap 2", designClosedContent, 2, 2, 280, designClosedContent - 568},
+		{"design 1280 detail closed, cap 3", designClosedContent, 3, 3, 280, designClosedContent - 856},
+		{"design 1280 detail open, cap 2", designOpenContent, 2, 2, 280, designOpenContent - 568},
+		{"design 1280 detail open, cap 3", designOpenContent, 3, 3, 210, 0},
+		{"1200 detail open, cap 2", detailOpen1200Content, 2, 2, 280, detailOpen1200Content - 568},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := gridCardMetrics(tc.content, gap, tc.cap)
+			if got.Columns != tc.columns {
+				t.Fatalf("columns = %d; want %d", got.Columns, tc.columns)
+			}
+			if diff := abs(got.Width - tc.width); diff > 0.5 {
+				t.Fatalf("card width = %v; want %v", got.Width, tc.width)
+			}
+			if leftover := tc.content - got.gridWidth(gap); abs(leftover-tc.leftover) > 0.5 {
+				t.Fatalf("trailing margin = %v; want %v", leftover, tc.leftover)
+			}
+		})
+	}
+}
+
+// TestGridRendersCeilingWhenCapBinds renders the grid in a 1920 pt window,
+// where six 280 pt columns would fit but the shipped five-column setting binds:
+// the cards must stay 280 pt wide and the grid must stay left aligned, leaving
+// the pane's extra width as trailing margin.
+func TestGridRendersCeilingWhenCapBinds(t *testing.T) {
+	videos := make([]core.Video, 30)
+	for i := range videos {
+		videos[i] = core.Video{
+			ID:           fmt.Sprintf("video-%d", i),
+			Title:        fmt.Sprintf("Video %d", i),
+			ChannelID:    "ch-1",
+			ChannelTitle: "Channel",
+			PublishedAt:  time.Now().Add(-time.Duration(i) * time.Hour).UTC().Format(time.RFC3339),
+		}
+	}
+	a := &App{
+		Dir:      t.TempDir(),
+		Selected: "all",
+		Settings: core.Settings{
+			APIKey:         "test-key",
+			ExpandedGroups: map[string]bool{},
+			MaxGridColumns: defaultMaxGridColumns,
+			RefreshMinutes: 60,
+		},
+		Sync: core.SyncState{
+			Favorites:  map[string]core.FavoriteRecord{},
+			ReadStates: map[string]map[string]core.ReadRecord{},
+			Groups:     map[string]core.ChannelGroup{},
+			Channels:   map[string]core.Channel{"ch-1": {ID: "ch-1", Title: "Channel"}},
+		},
+		Channels: []core.Channel{{ID: "ch-1", Title: "Channel"}},
+		Videos:   videos,
+	}
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1920, 840)
+	tt.Frame()
+	first, ok := tt.Find("Video 0")
+	if !ok {
+		t.Fatalf("the grid does not show its first card: %q", tt.Texts())
+	}
+	second, ok := tt.Find("Video 1")
+	if !ok {
+		t.Fatalf("the grid does not show its second card: %q", tt.Texts())
+	}
+	if step := second.X - first.X; abs(step-(gridCardMaxWidth+8)) > 0.5 {
+		t.Fatalf("adjacent cards are %v pt apart; want %v", step, gridCardMaxWidth+8)
+	}
+	if want := defaultSidebarWidth + splitDividerWidth() + 16 + 8; abs(first.X-want) > 1.5 {
+		t.Fatalf("the first card starts at %v; want the grid's 16 pt padding at %v", first.X, want)
+	}
+	fifth, ok := tt.Find("Video 4")
+	if !ok {
+		t.Fatalf("the grid does not show its fifth card: %q", tt.Texts())
+	}
+	if step := fifth.X - first.X; abs(step-4*(gridCardMaxWidth+8)) > 0.5 {
+		t.Fatalf("the fifth card starts %v pt after the first; want %v", step, 4*(gridCardMaxWidth+8))
+	}
+	if sixth, ok := tt.Find("Video 5"); ok && sixth.Y-first.Y < 100 {
+		t.Fatalf("a sixth card shares the first row at y=%v; the row starts at %v", sixth.Y, first.Y)
+	}
+	if right := fifth.X - 8 + gridCardMaxWidth; right > 1920-16 {
+		t.Fatalf("the last card ends at %v; want the trailing margin inside %v", right, 1920-16)
+	}
+}
+
 // TestGridCardFitsFrameworkColumns guards the link between our metrics and
-// ui.GridView, which counts its columns from the minimum width it is given:
-// the two must agree or the cards and their gap change under the design.
+// ui.GridView, which counts its columns from the width and minimum width it is
+// given: the two must agree or the cards and their gap change under the design.
 func TestGridCardFitsFrameworkColumns(t *testing.T) {
 	const gap float32 = 8
 	for pane := float32(320); pane <= 3000; pane += 7 {
@@ -190,11 +306,12 @@ func TestGridCardFitsFrameworkColumns(t *testing.T) {
 		for _, cap := range []int{2, 5, 8} {
 			m := gridCardMetrics(content, gap, cap)
 			minWidth := m.gridMinWidth(gap)
-			framed := max(1, int((content+gap)/(minWidth+gap)))
+			inner := m.gridWidth(gap)
+			framed := max(1, int(math.Floor(float64((inner+gap)/(minWidth+gap)))))
 			if framed != m.Columns {
 				t.Fatalf("pane %v cap %d: GridView would draw %d columns, metrics say %d", pane, cap, framed, m.Columns)
 			}
-			drawn := (content - gap*float32(framed-1)) / float32(framed)
+			drawn := (inner - gap*float32(framed-1)) / float32(framed)
 			if diff := abs(drawn - m.Width); diff > 0.01 {
 				t.Fatalf("pane %v cap %d: GridView width %v, metrics %v", pane, cap, drawn, m.Width)
 			}
