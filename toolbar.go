@@ -3,15 +3,17 @@ package main
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/egoist/mygo/ui"
 	mui "github.com/simon/youtube-reader/ui"
 )
 
+// header draws the window's title row and, outside settings, its filter row.
+// It carries no status copy: a refresh, a failure, and the offline state are
+// the menu bar status item's to report, so the window never says them twice.
 func (w *Window) header(c *ui.Context, t mui.Tokens) {
 	title := w.title()
-	subtitle := refreshedLabel(w.app.settingsSnapshot().LastRefresh)
+	subtitle := ""
 	if w.app.SettingsOpen {
 		title = "Settings"
 		subtitle = "Refresh, imports, sync and notifications"
@@ -28,21 +30,22 @@ func (w *Window) header(c *ui.Context, t mui.Tokens) {
 					ui.Text(c, subtitle).FontSize(13).TextColor(t.Muted).SingleLine()
 				}
 			})
+			// The refresh control keeps its loading face while a refresh runs
+			// and stands down while the machine is offline, where the item shows
+			// the shape and the popover offers Retry.
 			state := mui.Default
-			if w.app.Busy {
+			switch {
+			case w.app.Busy:
 				state = mui.Loading
-			} else if len(w.app.settingsSnapshot().RecentFailures) > 0 {
-				state = mui.Error
+			case !w.online():
+				state = mui.Disabled
 			}
-			if state == mui.Loading {
-				ui.Text(c, "Refreshing...").FontSize(13).TextColor(t.Muted)
-			}
-			if len(w.app.settingsSnapshot().RecentFailures) > 0 && !w.app.Busy {
-				ui.Text(c, "Refresh issue").FontSize(13).TextColor(t.Danger).Label("Refresh issue")
-			}
-			mui.StatefulButton(c, t, "refresh", "Refresh", mui.IconRefresh, false, state, func() {
-				w.runRefresh(c, true)
+			refresh := mui.StatefulButton(c, t, "refresh", "Refresh", mui.IconRefresh, false, state, func() {
+				w.runRefresh(true)
 			})
+			if state == mui.Disabled {
+				refresh.Tooltip("You are offline")
+			}
 			mui.StatefulButton(c, t, "settings", "Settings", mui.IconSettings, false, mui.Default, func() {
 				if w.app.SettingsOpen {
 					_ = w.app.SaveSettings()
@@ -79,27 +82,6 @@ func (w *Window) header(c *ui.Context, t mui.Tokens) {
 			ui.Text(c, fmt.Sprintf("%d videos", len(w.app.VisibleVideos()))).FontSize(13).TextColor(t.Muted).SingleLine()
 		})
 	})
-}
-
-func refreshedLabel(stamp string) string {
-	if stamp == "" {
-		return ""
-	}
-	t, err := time.Parse(time.RFC3339, stamp)
-	if err != nil {
-		return "Refreshed " + stamp
-	}
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return "Refreshed just now"
-	case d < time.Hour:
-		return fmt.Sprintf("Refreshed %d min ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("Refreshed %d hr ago", int(d.Hours()))
-	default:
-		return "Refreshed on " + t.Local().Format("Jan 2, 2006 at 15:04")
-	}
 }
 
 func (w *Window) title() string {

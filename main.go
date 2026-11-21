@@ -54,6 +54,9 @@ func realMain() {
 			Content: ui.View(window.view),
 		})
 		window.window = win
+		// The status surface lives in the menu bar: one item over the window
+		// and one popover rather than status copy inside the window.
+		window.status = newStatusBar(window)
 	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
@@ -63,6 +66,7 @@ func realMain() {
 type Window struct {
 	app                *App
 	window             *mygo.Window
+	status             *statusBar
 	grid               ui.GridState
 	gridKeyboardFocus  bool
 	selectedIndex      *int
@@ -82,29 +86,42 @@ func (w *Window) toast(c *ui.Context, msg string, isError bool) {
 	c.AddToast(toast)
 }
 
-func (w *Window) runRefresh(c *ui.Context, force bool) {
+// runRefresh starts one refresh off the main thread. Refresh feedback belongs
+// to the menu bar status item, so a refresh neither toasts nor writes status
+// text into the window; the item and an open popover follow the refresh as it
+// starts and returns.
+func (w *Window) runRefresh(force bool) {
 	if w.app.Busy {
 		return
 	}
 	w.app.Busy = true
+	if w.status != nil {
+		w.status.started = time.Now()
+		w.status.refresh()
+		w.status.invalidate()
+	}
 	go func() {
 		outcome := w.app.Refresh(force)
-		if w.window != nil {
-			w.window.Update(func() {
-				w.app.Busy = false
-				if outcome.Description != "" {
-					isError := len(outcome.Failures) > 0
-					w.toast(c, outcome.Description, isError)
-				}
-				if outcome.Changed {
-					for _, n := range outcome.Notified {
-						postNotification(n)
-					}
-				}
-			})
-		} else {
+		if w.window == nil {
 			w.app.Busy = false
+			if w.status != nil {
+				w.status.refresh()
+			}
+			return
 		}
+		w.window.Update(func() {
+			w.app.Busy = false
+			if w.status != nil {
+				w.status.started = time.Time{}
+				w.status.refresh()
+				w.status.invalidate()
+			}
+			if outcome.Changed {
+				for _, n := range outcome.Notified {
+					postNotification(n)
+				}
+			}
+		})
 	}()
 }
 
