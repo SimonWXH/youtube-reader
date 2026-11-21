@@ -181,13 +181,15 @@ func (w *Window) videoCard(c *ui.Context, t mui.Tokens, v core.Video, m gridMetr
 	// card was reached from the keyboard, and it sits outside the selection
 	// stroke and its halo.
 	focused := selected && w.gridKeyboardFocus
-	card.DrawOver(func(p *ui.Painter, r ui.Rect) {
+	// The framework paints the cell's own hover and selection faces under the
+	// card. Cover the corners its smaller radius leaves open so only this card's
+	// faces show.
+	card.Draw(func(p *ui.Painter, r ui.Rect) {
 		if hovered || selected {
-			// The framework paints the cell's own hover and selection faces
-			// under the card. Cover the corners its smaller radius leaves open
-			// so only this card's faces show.
 			coverCardCorners(p, r, mui.RadiusCard, t.App, face)
 		}
+	})
+	card.DrawOver(func(p *ui.Painter, r ui.Rect) {
 		p.Stroke(r, stroke, mui.RadiusCard, mui.Hairline)
 		if selected {
 			p.Stroke(outsetRect(r, mui.FocusRing), t.Accent.Alpha(0.24), mui.RadiusCard+mui.FocusRing, mui.FocusRing)
