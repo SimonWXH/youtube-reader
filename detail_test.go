@@ -127,9 +127,6 @@ func TestDetailErrorStaysThroughTheCloseAnimation(t *testing.T) {
 	if !tt.HasText("Couldn't load this video") {
 		t.Fatalf("the error vanished during the close animation: %q", tt.Texts())
 	}
-	if tt.HasText("Select a video to see details") {
-		t.Fatal("the empty state slid out under the closing error")
-	}
 	tt.Advance(300 * time.Millisecond)
 	tt.Frame()
 	if tt.HasText("Couldn't load this video") {
@@ -168,6 +165,82 @@ func TestSqueezedDetailDividerKeyMovesThePane(t *testing.T) {
 	}
 	if want := settled - detailKeyStep; w.detail.width != want {
 		t.Fatalf("pane stores %v after Right; want %v", w.detail.width, want)
+	}
+}
+
+// A divider key steps from the settled width, not from the width the open
+// animation is passing through, so a press during the animation cannot
+// replace the chosen width with the transient one.
+func TestDetailDividerKeyStepsFromTheSettledWidth(t *testing.T) {
+	video := core.Video{ID: "v-1", Title: "Video"}
+	a := detailTestApp(t, []core.Video{video}, "")
+	defer a.Close()
+	a.Settings.DetailsWidth = defaultDetailsWidth
+
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 840)
+	tt.Frame()
+
+	a.SelectedVideoID = video.ID
+	tt.Frame()
+	tt.Advance(60 * time.Millisecond)
+	tt.Frame()
+	if w.detail.shown <= 0 || w.detail.shown >= defaultDetailsWidth-0.5 {
+		t.Fatalf("pane width %v is not mid-animation", w.detail.shown)
+	}
+
+	x := 1280 - w.detail.shown - splitDividerWidth()
+	tt.Press(x, 300)
+	tt.Release(x, 300)
+	tt.Key(0, ui.KeyLeft)
+	tt.Frame()
+
+	want := defaultDetailsWidth + detailKeyStep
+	if w.detail.width != want {
+		t.Fatalf("pane stores %v after Left; want the settled %v", w.detail.width, want)
+	}
+	if w.detail.shown != want {
+		t.Fatalf("pane shows %v after Left; want %v", w.detail.shown, want)
+	}
+	if got := a.Settings.DetailsWidth; got != want {
+		t.Fatalf("pane persisted %v after Left; want %v", got, want)
+	}
+}
+
+// A drag that starts during the open animation bases on the settled width
+// too, so the width the animation is passing through cannot replace the
+// chosen one.
+func TestDetailDragStepsFromTheSettledWidth(t *testing.T) {
+	video := core.Video{ID: "v-1", Title: "Video"}
+	a := detailTestApp(t, []core.Video{video}, "")
+	defer a.Close()
+
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 840)
+	tt.Frame()
+
+	a.SelectedVideoID = video.ID
+	tt.Frame()
+	tt.Advance(60 * time.Millisecond)
+	tt.Frame()
+	if w.detail.shown <= 0 || w.detail.shown >= defaultDetailsWidth-0.5 {
+		t.Fatalf("pane width %v is not mid-animation", w.detail.shown)
+	}
+
+	x := 1280 - w.detail.shown - splitDividerWidth()
+	tt.Press(x, 300)
+	tt.Move(x-8, 300)
+	tt.Release(x-8, 300)
+
+	want := defaultDetailsWidth + detailKeyStep
+	if w.detail.width != want {
+		t.Fatalf("pane stores %v after an 8 pt drag; want the settled %v", w.detail.width, want)
+	}
+	if w.detail.shown != want {
+		t.Fatalf("pane shows %v after the drag; want %v", w.detail.shown, want)
+	}
+	if got := a.Settings.DetailsWidth; got != want {
+		t.Fatalf("pane persisted %v after the drag; want %v", got, want)
 	}
 }
 
@@ -278,14 +351,15 @@ func TestDetailScrollStartsAtTheTopForANewVideo(t *testing.T) {
 	}
 }
 
-// A sidebar drag that the open pane leaves no room for must keep its full
-// travel in the requested width, never the squeezed width on screen, so closing
-// the pane brings the sidebar back to what the user asked for.
+// The open pane squeezes the sidebar, but the squeeze never rewrites the
+// stored width: a drag with no room changes nothing, and one that moves
+// stores exactly the width on screen, so closing the pane keeps the user's
+// last choice.
 func TestSidebarDragKeepsTheRequestedWidthWhenSqueezed(t *testing.T) {
 	a := newTestApp(t, t.TempDir())
 	defer a.Close()
 	a.Selected = "all"
-	a.Settings.SidebarWidth = 340
+	a.Settings.SidebarWidth = maxSidebarWidth
 	a.Settings.DetailsWidth = defaultDetailsWidth
 	a.Videos = []core.Video{{ID: "v-1", Title: "Video"}}
 	a.SelectedVideoID = "v-1"
@@ -295,36 +369,59 @@ func TestSidebarDragKeepsTheRequestedWidthWhenSqueezed(t *testing.T) {
 	tt.Frame()
 
 	shown := detailWidthForRoom(defaultDetailsWidth, 960-minSidebarWidth-splitDividerWidth())
-	visible := boundedSidebarWidth(340, shown, 960)
+	visible := boundedSidebarWidth(maxSidebarWidth, shown, 960)
+	if visible != 298 {
+		t.Fatalf("the room leaves %v for the sidebar; want 298", visible)
+	}
 	if w.sidebarWidth != visible {
 		t.Fatalf("sidebar shows %v; want the room's %v", w.sidebarWidth, visible)
 	}
 
-	const moves float32 = 3
-	const step float32 = 10
 	x := visible
 	tt.Press(x, 320)
-	for i := float32(1); i <= moves; i++ {
-		tt.Move(x+i*step, 320)
-		if grid := 960 - w.sidebarWidth - 2*splitDividerWidth() - w.detail.shown; grid < minGridWidth-0.01 {
-			t.Fatalf("grid %v went below its %v minimum during the drag", grid, minGridWidth)
-		}
+	for i := float32(1); i <= 3; i++ {
+		tt.Move(x+i*10, 320)
 		if w.sidebarWidth != visible {
 			t.Fatalf("the blocked drag resized the sidebar to %v; want %v", w.sidebarWidth, visible)
 		}
+		if w.gridAvailableWidth < minGridWidth-0.01 {
+			t.Fatalf("grid %v fell below its %v minimum during the blocked drag", w.gridAvailableWidth, minGridWidth)
+		}
 	}
-	tt.Release(x+moves*step, 320)
+	tt.Release(x+30, 320)
+	if got := a.Settings.SidebarWidth; got != maxSidebarWidth {
+		t.Fatalf("the blocked drag stored %v; want the requested %v", got, maxSidebarWidth)
+	}
 
-	want := 340 + moves*step
-	if got := a.Settings.SidebarWidth; got != want {
-		t.Fatalf("the blocked drag stored %v; want the requested %v", got, want)
+	// The blocked travel is kept: coming back 10 pt still leaves the pointer
+	// right of the divider, so the divider has not moved yet.
+	tt.Press(x, 320)
+	tt.Move(x+30, 320)
+	tt.Move(x+20, 320)
+	if w.sidebarWidth != visible {
+		t.Fatalf("the divider moved to %v while the pointer was still right of it; want %v", w.sidebarWidth, visible)
 	}
+	tt.Release(x+20, 320)
+
+	tt.Press(x, 320)
+	tt.Move(x-10, 320)
+	moved := visible - 10
+	if w.sidebarWidth != moved {
+		t.Fatalf("the first narrow step left the sidebar at %v; want %v", w.sidebarWidth, moved)
+	}
+	if w.gridAvailableWidth < minGridWidth-0.01 {
+		t.Fatalf("grid %v fell below its %v minimum during the narrowing drag", w.gridAvailableWidth, minGridWidth)
+	}
+	if got := a.Settings.SidebarWidth; got != moved {
+		t.Fatalf("the narrowing drag stored %v; want the visible %v", got, moved)
+	}
+	tt.Release(x-10, 320)
 
 	a.SelectedVideoID = ""
 	tt.Frame()
 	tt.Advance(300 * time.Millisecond)
 	tt.Frame()
-	if w.sidebarWidth != want {
-		t.Fatalf("sidebar reopened at %v; want the remembered %v", w.sidebarWidth, want)
+	if w.sidebarWidth != moved {
+		t.Fatalf("sidebar reopened at %v; want the chosen %v", w.sidebarWidth, moved)
 	}
 }

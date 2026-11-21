@@ -84,6 +84,8 @@ type Window struct {
 	sidebarFocus       string // sidebar row that takes the focus in the next frame
 	sidebarKeyboard    string // sidebar row that arrow navigation focused
 	sidebarWidth       float32
+	sidebarDragging    bool
+	sidebarOvershoot   float32
 	contentWidth       float32
 	gridAvailableWidth float32
 	detail             detailState

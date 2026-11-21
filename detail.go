@@ -123,29 +123,25 @@ func (w *Window) view(c *ui.Context) {
 
 	fitted := detailWidthForRoom(d.width, w.detailFitWidth(c))
 	shown := w.advanceDetails(c, open, fitted)
-	request := clampSidebarWidth(settings.SidebarWidth)
-	w.sidebarWidth = boundedSidebarWidth(request, shown, total)
+	w.sidebarWidth = boundedSidebarWidth(settings.SidebarWidth, shown, total)
+	sidebar := w.sidebarWidth
 	d.shown = shown
 
-	before := w.sidebarWidth
-	var outerSplit ui.Element
-	panes := func() {
-		w.mainArea(c, tokens, shown)
-	}
-	// Zone A hook: a folded sidebar has no split to drag.
-	if w.sidebarHidden {
-		panes()
-	} else {
-		outerSplit = ui.Split(c, &w.sidebarWidth, func() {
-			w.sidebar(c, tokens)
-		}, panes).Fill()
-	}
-
-	if outerSplit.Changed() {
-		request = clampSidebarWidth(request + w.sidebarWidth - before)
-		w.sidebarWidth = boundedSidebarWidth(request, shown, total)
-		w.persistSidebarWidth(request)
-	}
+	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
+		// Zone A hook: a folded sidebar has no column and no split to drag.
+		layoutSidebar := sidebar
+		if w.sidebarHidden {
+			layoutSidebar = 0
+		} else {
+			ui.Column(c).Width(sidebar).Shrink(0).Clip().Children(func() {
+				w.sidebar(c, tokens)
+			})
+			w.sidebarDivider(c, tokens, sidebar, shown, total)
+		}
+		ui.Column(c).Grow(1).MinWidth(0).Clip().Children(func() {
+			w.mainArea(c, tokens, shown, layoutSidebar)
+		})
+	})
 
 	if d.returnFocus {
 		d.returnFocus = false
@@ -163,8 +159,11 @@ func (w *Window) view(c *ui.Context) {
 // mainArea lays the grid and the detail pane in the same row, so the pane
 // is in flow: the grid gives up exactly the pane's width plus the 1 pt
 // divider, and re-columns every frame of the animation.
-func (w *Window) mainArea(c *ui.Context, t mui.Tokens, shown float32) {
-	rowWidth := w.detailRowWidth(c)
+func (w *Window) mainArea(c *ui.Context, t mui.Tokens, shown, sidebar float32) {
+	rowWidth := windowWidth(c) - sidebar
+	if !w.sidebarHidden {
+		rowWidth -= splitDividerWidth()
+	}
 	if shown <= 0 {
 		w.contentWidth = max(rowWidth, 0)
 		w.gridAvailableWidth = w.contentWidth
@@ -230,6 +229,85 @@ func (w *Window) advanceDetails(c *ui.Context, open bool, fitted float32) float3
 	return d.shown
 }
 
+// sidebarDividerGrip is the drag handle's width over the 1 pt line, the
+// split's 6 pt value. It is the handle's size, not a spacing step.
+const sidebarDividerGrip float32 = 6
+
+// sidebarKeyStep is the sidebar width an arrow key asks for.
+var sidebarKeyStep = mui.Space(2.5)
+
+// sidebarDivider is the 1 pt line between the navigation column and the
+// content. A press focuses it, a drag resizes the sidebar from the width on
+// screen, and the arrows step it. The squeeze from the open detail pane
+// bounds the drag, but never the stored width: the drag keeps its own
+// overshoot past the bound and writes only widths the user can see.
+func (w *Window) sidebarDivider(c *ui.Context, t mui.Tokens, shown, detailShown, total float32) {
+	var handle ui.Element
+	line := ui.Box(c).Key("sidebar-divider").Width(splitDividerWidth()).FillHeight().
+		Focusable().Role(ui.RoleSplitter).Label("Resize sidebar").
+		Range(float64(minSidebarWidth), float64(maxSidebarWidth), float64(shown)).
+		Step(float64(sidebarKeyStep)).FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
+	line.Children(func() {
+		handle = ui.Box(c).Absolute().Top(0).FillHeight().Width(sidebarDividerGrip).
+			Left(-(sidebarDividerGrip - splitDividerWidth()) / 2).Cursor(ui.CursorResizeEW)
+		dx, _, held := handle.Dragged()
+		switch {
+		case held:
+			line.Focus()
+			if dx != 0 {
+				w.dragSidebar(dx, shown, detailShown, total)
+			}
+		case w.sidebarDragging:
+			w.sidebarDragging = false
+			w.sidebarOvershoot = 0
+		}
+	})
+	line.Draw(func(p *ui.Painter, r ui.Rect) {
+		ink := t.Border
+		if handle.Hovered() || w.sidebarDragging {
+			ink = t.Accent
+		}
+		p.Fill(r, ink, 0)
+	})
+	if line.Shortcut(0, ui.KeyLeft) {
+		w.setSidebarWidth(shown-sidebarKeyStep, detailShown, total)
+	}
+	if line.Shortcut(0, ui.KeyRight) {
+		w.setSidebarWidth(shown+sidebarKeyStep, detailShown, total)
+	}
+}
+
+// dragSidebar moves the divider by dx DIPs from the width on screen, keeping
+// the pointer's blocked travel so coming back moves the divider only once the
+// pointer is over it again.
+func (w *Window) dragSidebar(dx, shown, detailShown, total float32) {
+	if !w.sidebarDragging {
+		w.sidebarDragging = true
+		w.sidebarOvershoot = 0
+	}
+	room := boundedSidebarWidth(maxSidebarWidth, detailShown, total)
+	want := shown + dx + w.sidebarOvershoot
+	next := clamp(want, minSidebarWidth, room)
+	w.sidebarOvershoot = want - next
+	if next == shown {
+		return
+	}
+	w.sidebarWidth = next
+	w.persistSidebarWidth(next)
+}
+
+// setSidebarWidth commits a divider key's width, keeping it inside the range
+// the split's arrows used: the pane's room bounds the widest it can show.
+func (w *Window) setSidebarWidth(width, detailShown, total float32) {
+	room := boundedSidebarWidth(maxSidebarWidth, detailShown, total)
+	next := clamp(width, minSidebarWidth, room)
+	if next == w.sidebarWidth {
+		return
+	}
+	w.sidebarWidth = next
+	w.persistSidebarWidth(next)
+}
+
 // detailsDivider is the 1 pt separator. Its focusable line sits between
 // the grid and the pane in tree order, so Tab goes grid then divider then
 // pane; a 9 pt transparent handle centered on it carries the drag, the
@@ -265,29 +343,19 @@ func (w *Window) detailsDivider(c *ui.Context, t mui.Tokens) {
 			w.setDetailsWidth(c, defaultDetailsWidth, true)
 		}
 	})
-	visible := min(d.width, d.shown)
-	if next, ok := detailsWidthForKey(visible, ui.KeyLeft); ok && line.Shortcut(0, ui.KeyLeft) {
+	settled := detailWidthForRoom(d.width, w.detailFitWidth(c))
+	if next, ok := detailsWidthForKey(settled, ui.KeyLeft); ok && line.Shortcut(0, ui.KeyLeft) {
 		w.setDetailsWidth(c, next, true)
 	}
-	if next, ok := detailsWidthForKey(visible, ui.KeyRight); ok && line.Shortcut(0, ui.KeyRight) {
+	if next, ok := detailsWidthForKey(settled, ui.KeyRight); ok && line.Shortcut(0, ui.KeyRight) {
 		w.setDetailsWidth(c, next, true)
 	}
-	if next, ok := detailsWidthForKey(visible, ui.KeyHome); ok && line.Shortcut(0, ui.KeyHome) {
+	if next, ok := detailsWidthForKey(settled, ui.KeyHome); ok && line.Shortcut(0, ui.KeyHome) {
 		w.setDetailsWidth(c, next, true)
 	}
-	if next, ok := detailsWidthForKey(visible, ui.KeyEnd); ok && line.Shortcut(0, ui.KeyEnd) {
+	if next, ok := detailsWidthForKey(settled, ui.KeyEnd); ok && line.Shortcut(0, ui.KeyEnd) {
 		w.setDetailsWidth(c, next, true)
 	}
-}
-
-// detailRowWidth is the room the grid and pane share: a folded sidebar and
-// its divider are not drawn, so they give their width back.
-func (w *Window) detailRowWidth(c *ui.Context) float32 {
-	total := windowWidth(c)
-	if w.sidebarHidden {
-		return total
-	}
-	return total - w.sidebarWidth - splitDividerWidth()
 }
 
 // detailFitWidth is the room the grid and pane share at the pane's widest: a
@@ -307,7 +375,8 @@ func (w *Window) detailFitWidth(c *ui.Context) float32 {
 func (w *Window) dragDetails(dx, rowWidth float32) {
 	d := &w.detail
 	room := detailWidthForRoom(maxDetailsWidth, rowWidth)
-	want := d.shown - dx + d.overshoot
+	settled := detailWidthForRoom(d.width, rowWidth)
+	want := settled - dx + d.overshoot
 	next := clamp(want, minDetailsWidth, room)
 	d.overshoot = want - next
 	width := want
@@ -376,8 +445,6 @@ func (w *Window) drawer(c *ui.Context, t mui.Tokens) {
 			w.detailError(c, t)
 		case d.hasVideo:
 			w.detailVideo(c, t, d.video)
-		default:
-			w.detailEmpty(c, t)
 		}
 	})
 }
@@ -409,13 +476,6 @@ func (w *Window) detailHeader(c *ui.Context, t mui.Tokens) {
 		close.OnClick(func() {
 			w.closeDetails(c)
 		})
-	})
-}
-
-func (w *Window) detailEmpty(c *ui.Context, t mui.Tokens) {
-	ui.Column(c).Grow(1).Center().AlignItems(ui.Center).Padding(mui.Space(6)).Children(func() {
-		mui.EmptyBody.Apply(ui.Text(c, "Select a video to see details")).TextColor(t.Muted).
-			TextAlign(ui.Center).MaxLines(3).Wrap()
 	})
 }
 
