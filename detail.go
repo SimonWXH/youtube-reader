@@ -810,7 +810,7 @@ func boundedSidebarWidth(width, shown, total float32) float32 {
 }
 
 // clampSidebarWidth keeps the user's requested sidebar width inside the
-// board's 180-480 range, with zero meaning the 256 default.
+// board's 220-320 range, with zero meaning the 260 default.
 func clampSidebarWidth(width float32) float32 {
 	if width <= 0 {
 		width = defaultSidebarWidth

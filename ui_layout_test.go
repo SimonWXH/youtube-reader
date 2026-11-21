@@ -63,8 +63,8 @@ func TestFitPaneAtRest(t *testing.T) {
 	})
 
 	t.Run("keeps the chosen widths", func(t *testing.T) {
-		if got := boundedSidebarWidth(400, 0, 1280); got != 400 {
-			t.Fatalf("sidebar = %v; want 400", got)
+		if got := boundedSidebarWidth(300, 0, 1280); got != 300 {
+			t.Fatalf("sidebar = %v; want 300", got)
 		}
 		if got := detailWidthForRoom(460, 1280-minSidebarWidth-splitDividerWidth()); got != 460 {
 			t.Fatalf("details = %v; want 460", got)
@@ -81,12 +81,12 @@ func TestFitPaneAtRest(t *testing.T) {
 	})
 
 	t.Run("leaves the grid its minimum", func(t *testing.T) {
-		// 960 with the widest pane the sidebar squeeze allows: sidebar 180,
-		// pane 458, grid 320.
+		// 960 with the widest pane the sidebar squeeze allows: sidebar 220,
+		// pane 418, grid 320.
 		details := detailWidthForRoom(maxDetailsWidth, 960-minSidebarWidth-splitDividerWidth())
 		sidebar := boundedSidebarWidth(maxSidebarWidth, details, 960)
-		if sidebar != minSidebarWidth || details != 458 {
-			t.Fatalf("panes = %v, %v; want %v, 458", sidebar, details, minSidebarWidth)
+		if sidebar != minSidebarWidth || details != 418 {
+			t.Fatalf("panes = %v, %v; want %v, 418", sidebar, details, minSidebarWidth)
 		}
 		if grid := 960 - sidebar - 2*splitDividerWidth() - details; grid != minGridWidth {
 			t.Fatalf("grid = %v; want %v", grid, minGridWidth)
@@ -208,21 +208,21 @@ func TestDetailDividerKeys(t *testing.T) {
 }
 
 func TestDetailWidthForRoom(t *testing.T) {
-	// 1280: sidebar 256 + 1 pt divider leaves 1023; the pane may use 480
+	// 1280: sidebar 260 + 1 pt divider leaves 1019; the pane may use 480
 	// and still leave the grid its 320 minimum.
-	if got := detailWidthForRoom(480, 1023); got != 480 {
-		t.Fatalf("detailWidthForRoom(480, 1023) = %v, want 480", got)
+	if got := detailWidthForRoom(480, 1019); got != 480 {
+		t.Fatalf("detailWidthForRoom(480, 1019) = %v, want 480", got)
 	}
-	// 960 at the 180 pt sidebar minimum leaves 779: at most 458 for the
+	// 960 at the 220 pt sidebar minimum leaves 739: at most 418 for the
 	// pane before the grid drops below 320.
-	if got := detailWidthForRoom(480, 779); got != 458 {
-		t.Fatalf("detailWidthForRoom(480, 779) = %v, want 458", got)
+	if got := detailWidthForRoom(480, 739); got != 418 {
+		t.Fatalf("detailWidthForRoom(480, 739) = %v, want 418", got)
 	}
-	if got := detailWidthForRoom(280, 779); got != minDetailsWidth {
-		t.Fatalf("detailWidthForRoom(280, 779) = %v, want %v", got, minDetailsWidth)
+	if got := detailWidthForRoom(280, 739); got != minDetailsWidth {
+		t.Fatalf("detailWidthForRoom(280, 739) = %v, want %v", got, minDetailsWidth)
 	}
-	if got := detailWidthForRoom(100, 779); got != minDetailsWidth {
-		t.Fatalf("detailWidthForRoom(100, 779) = %v, want %v", got, minDetailsWidth)
+	if got := detailWidthForRoom(100, 739); got != minDetailsWidth {
+		t.Fatalf("detailWidthForRoom(100, 739) = %v, want %v", got, minDetailsWidth)
 	}
 }
 
