@@ -216,9 +216,10 @@ func (w *Window) mainArea(c *ui.Context, t mui.Tokens, shown, sidebar float32) {
 	})
 }
 
-// advanceDetails drives the board's 240 ms layout-width transition. Only
-// open and close animate: a window resize, a drag, or a key snaps, and
-// Reduce Motion goes straight to the target.
+// advanceDetails drives the board's 240 ms layout-width transition. Only the
+// open and close transitions animate: a drag or a key snaps, a resize in
+// flight retargets the transition, and Reduce Motion goes straight to the
+// target.
 func (w *Window) advanceDetails(c *ui.Context, open bool, fitted float32) float32 {
 	d := &w.detail
 	target := float32(0)
