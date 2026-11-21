@@ -289,6 +289,7 @@ func TestGroupHeaderKeyboardToggleKeepsFocus(t *testing.T) {
 func TestCardChannelNameKeyboardOpensChannel(t *testing.T) {
 	video := core.Video{ID: "video-1", ChannelID: "UC_1", ChannelTitle: "The PrimeTime", Title: "Episode"}
 	a := &App{
+		Dir:             t.TempDir(),
 		Selected:        "all",
 		Settings:        core.Settings{APIKey: "test-key"},
 		SelectedVideoID: video.ID,
@@ -332,6 +333,7 @@ func TestCardChannelNameKeyboardOpensChannel(t *testing.T) {
 func TestCardChannelNameHandlesEmptyChannelID(t *testing.T) {
 	video := core.Video{ID: "video-1", ChannelTitle: "Unknown", Title: "Episode"}
 	a := &App{
+		Dir:      t.TempDir(),
 		Selected: "all",
 		Settings: core.Settings{APIKey: "test-key"},
 		Sync: core.SyncState{

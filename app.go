@@ -105,11 +105,31 @@ func (a *App) updateSettings(fn func(*core.Settings) bool) (bool, error) {
 	if !fn(&a.Settings) {
 		return false, nil
 	}
+	a.mergeNewerDiskStatus()
 	data, err := a.settingsBytes(cloneSettings(a.Settings))
 	if err != nil {
 		return true, err
 	}
 	return true, a.saveSettings(data)
+}
+
+// mergeNewerDiskStatus takes the refresh status the background helper wrote to
+// settings.json over the stale copy kept in memory. Every settings write goes
+// through it, so a local preference change cannot clobber failures or a quota
+// pause the helper persisted in the meantime. The caller holds settingsMu.
+func (a *App) mergeNewerDiskStatus() {
+	data, err := os.ReadFile(filepath.Join(a.Dir, "settings.json"))
+	if err != nil {
+		return
+	}
+	var disk core.Settings
+	if json.Unmarshal(data, &disk) != nil || !settingsStatusTime(disk).After(settingsStatusTime(a.Settings)) {
+		return
+	}
+	a.Settings.LastRefresh = disk.LastRefresh
+	a.Settings.NextRefresh = disk.NextRefresh
+	a.Settings.RecentFailures = disk.RecentFailures
+	a.Settings.QuotaPausedUntil = disk.QuotaPausedUntil
 }
 
 type RefreshOutcome = core.RefreshResult
@@ -221,16 +241,7 @@ func (a *App) Close() {
 func (a *App) SaveSettings() error {
 	a.settingsMu.Lock()
 	defer a.settingsMu.Unlock()
-	path := filepath.Join(a.Dir, "settings.json")
-	if data, err := os.ReadFile(path); err == nil {
-		var disk core.Settings
-		if json.Unmarshal(data, &disk) == nil && settingsStatusTime(disk).After(settingsStatusTime(a.Settings)) {
-			a.Settings.LastRefresh = disk.LastRefresh
-			a.Settings.NextRefresh = disk.NextRefresh
-			a.Settings.RecentFailures = disk.RecentFailures
-			a.Settings.QuotaPausedUntil = disk.QuotaPausedUntil
-		}
-	}
+	a.mergeNewerDiskStatus()
 	data, err := a.settingsBytes(cloneSettings(a.Settings))
 	if err != nil {
 		return err

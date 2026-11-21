@@ -788,7 +788,15 @@ func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 				})
 			})
 			ui.Text(c, "Sync file (single JSON shared with Syncthing)").Bold().FontSize(15)
-			ui.TextInput(c.Key("sync-path"), &syncPath).Width(520)
+			if ui.TextInput(c.Key("sync-path"), &syncPath).Width(520).Changed() {
+				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+					if s.SyncPath == syncPath {
+						return false
+					}
+					s.SyncPath = syncPath
+					return true
+				})
+			}
 			mui.StatefulButton(c, t, "save-paths", "Save paths", nil, false, mui.Default, func() {
 				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
 					changed := s.APIKey != apiKey || s.BackupPath != backupPath || s.SyncPath != syncPath
