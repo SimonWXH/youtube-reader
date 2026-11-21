@@ -65,11 +65,11 @@ func (w *Window) view(c *ui.Context) {
 	outerChanged := outerSplit.Changed()
 	contentChanged := contentSplit.Changed()
 	if outerChanged || contentChanged {
-		sidebar := boundedSidebarWidth(w.sidebarWidth, selected, total)
-		details, hasDetails := persistedDetailsWidth(total, layoutSidebar, w.contentWidth, outerDivider, selected, contentChanged)
 		_, _ = w.app.updateSettings(func(s *core.Settings) bool {
-			s.SidebarWidth = sidebar
-			if hasDetails {
+			if outerChanged {
+				s.SidebarWidth = boundedSidebarWidth(w.sidebarWidth, selected, total)
+			}
+			if details, hasDetails := persistedDetailsWidth(total, layoutSidebar, w.contentWidth, outerDivider, selected, contentChanged); hasDetails {
 				s.DetailsWidth = details
 			}
 			return true

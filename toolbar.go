@@ -23,15 +23,16 @@ const (
 	channelMenuIcon    float32 = 36
 	searchFieldWidth   float32 = 200
 	searchFieldMin     float32 = 124
-	countIconWidth     float32 = 16
 )
 
-// The two toolbar glyphs the shared ui/icons.go does not have yet: the
-// sidebar toggle and the overflow menu. They follow the same 24 pt box,
-// 1.5 pt stroke, round joins as the rest of the set.
+// The toolbar glyphs the shared ui/icons.go does not have yet: the sidebar
+// toggle, the overflow menu, and the collapsed Unwatched check box. They
+// follow the same 24 pt box, 1.5 pt stroke, round joins as the rest of the
+// set.
 var (
-	toolbarIconSidebar = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>`))
-	toolbarIconMore    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg>`))
+	toolbarIconSidebar   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>`))
+	toolbarIconMore      = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg>`))
+	toolbarIconUnwatched = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 3 3 5-6"/></svg>`))
 )
 
 // shell is the window root: the toolbar spans the window, as the title bar it
@@ -254,7 +255,8 @@ func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
 			selected = options[i]
 		}
 	}
-	count := fmt.Sprintf("%d videos", len(w.app.VisibleVideos()))
+	n := len(w.app.VisibleVideos())
+	count := fmt.Sprintf("%d video%s", n, plural(n))
 	labelWidth, _ := c.MeasureText(0, ui.Span{Text: "Unwatched", Size: mui.Control.Size, Weight: int(mui.Control.Weight)})
 	countWidth, _ := c.MeasureText(0, ui.Span{Text: count, Size: mui.Metadata.Size, Weight: int(mui.Metadata.Weight)})
 	checkboxWidth := mui.Space(4) + mui.Space(2) + labelWidth
@@ -262,8 +264,8 @@ func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
 	if available <= 0 {
 		available = windowWidth(c)
 	}
-	channelWidth, searchWidth, gap, iconOnly := fitFilterStrip(
-		max(0, available-2*mui.Space(4)), checkboxWidth, countWidth+2,
+	channelWidth, searchWidth, gap, collapsed := fitFilterStrip(
+		max(0, available-2*mui.Space(4)), checkboxWidth, toolbarControl, countWidth+2,
 	)
 	strip := ui.Row(c).Height(contentStripHeight).Shrink(0).FillWidth().
 		Padding(0, mui.Space(4)).AlignItems(ui.Center).Gap(gap).
@@ -285,14 +287,23 @@ func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
 		ui.SearchField(c.Key("search"), &w.app.Search).
 			Width(searchWidth).MinWidth(searchWidth).MaxWidth(searchWidth).Shrink(0).
 			Height(toolbarControl).FontSize(mui.Control.Size).Label("Search videos")
-		ui.Checkbox(c.Key("unwatched"), &w.app.UnreadOnly, "Unwatched").
-			Shrink(0).FontSize(mui.Control.Size).Label("Unwatched")
-		ui.Spacer(c)
-		if iconOnly {
-			ui.Icon(c, mui.IconPlay).Size(countIconWidth, countIconWidth).Shrink(0).
-				TextColor(t.Muted).Label(count).Tooltip(count)
-			return
+		if collapsed {
+			box := ui.CheckboxBase(c.Key("unwatched"), &w.app.UnreadOnly).
+				Size(toolbarControl, toolbarControl).Center().Shrink(0).
+				Label("Unwatched").Tooltip("Unwatched").
+				FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
+			face := t.Muted
+			if w.app.UnreadOnly {
+				face = t.Accent
+			}
+			box.Children(func() {
+				ui.Icon(c, toolbarIconUnwatched).Size(toolbarGlyph, toolbarGlyph).TextColor(face)
+			})
+		} else {
+			ui.Checkbox(c.Key("unwatched"), &w.app.UnreadOnly, "Unwatched").
+				Shrink(0).FontSize(mui.Control.Size).Label("Unwatched")
 		}
+		ui.Spacer(c)
 		mui.Metadata.Apply(ui.Text(c, count)).
 			TextColor(t.Muted).SingleLine().Shrink(0)
 	})
@@ -301,11 +312,18 @@ func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
 // fitFilterStrip gives the filter controls their widths for the room the grid
 // pane has: the search field shrinks first, but never below the width its
 // contents need, then the channel menu collapses to its glyph form, then the
-// gaps tighten, and only then does the count become its glyph. The row never
-// clips its controls or runs under the detail pane.
-func fitFilterStrip(inner, checkbox, count float32) (channel, search, gap float32, iconOnly bool) {
+// Unwatched check box collapses to its icon, and then the gaps tighten. The
+// count always stays visible as text. The row never clips its controls or
+// runs under the detail pane.
+func fitFilterStrip(inner, checkbox, checkboxIcon, count float32) (channel, search, gap float32, collapsed bool) {
 	channel, search, gap = channelMenuWidth, searchFieldWidth, mui.Space(2)
-	need := func() float32 { return channel + search + checkbox + count + 4*gap }
+	need := func() float32 {
+		box := checkbox
+		if collapsed {
+			box = checkboxIcon
+		}
+		return channel + search + box + count + 4*gap
+	}
 	deficit := need() - inner
 	if deficit <= 0 {
 		return channel, search, gap, false
@@ -321,15 +339,15 @@ func fitFilterStrip(inner, checkbox, count float32) (channel, search, gap float3
 		deficit = need() - inner
 	}
 	if deficit > 0 {
+		collapsed = true
+		deficit = need() - inner
+	}
+	if deficit > 0 {
 		d := min(deficit, 4*(gap-mui.Space(1)))
 		gap -= d / 4
 		deficit -= d
 	}
-	if deficit > 0 {
-		iconOnly = true
-		count = countIconWidth
-	}
-	return channel, search, gap, iconOnly
+	return channel, search, gap, collapsed
 }
 
 func refreshedLabel(stamp string) string {
@@ -408,10 +426,18 @@ func (w *Window) installMenu() {
 		mygo.Separator(),
 		{Role: mygo.RoleClose},
 	}}
+	// MyGo's Reload, Force Reload and Toggle DevTools roles are omitted: this
+	// native-UI window has no page for them to act on, and RoleReload's default
+	// accelerator is Command-R, which is already the app's Refresh.
 	viewMenu := &mygo.MenuItem{Label: "View", Submenu: []*mygo.MenuItem{
 		w.menuRefresh,
 		mygo.Separator(),
 		w.menuSidebar,
+		mygo.Separator(),
+		{Role: mygo.RoleResetZoom},
+		{Role: mygo.RoleZoomIn},
+		{Role: mygo.RoleZoomOut},
+		mygo.Separator(),
 		{Role: mygo.RoleToggleFullScreen},
 	}}
 	mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
@@ -454,6 +480,9 @@ func (w *Window) sidebarMenuLabel() string {
 func (w *Window) openSettings() {
 	apply := func() {
 		w.app.SettingsOpen = true
+		if w.window != nil {
+			w.window.Focus()
+		}
 	}
 	if w.window != nil {
 		w.window.Update(apply)

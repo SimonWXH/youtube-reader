@@ -246,7 +246,8 @@ func TestToolbarChrome(t *testing.T) {
 // TestContentStripDegradesWithTheDetailPane checks the filter strip keeps all
 // four controls on one line at the 960 pt minimum with the detail pane open:
 // the search keeps its intrinsic minimum, the channel collapses to its glyph,
-// and the count drops to its glyph only when the grid reaches its minimum.
+// and the Unwatched check box collapses to its icon while the count stays
+// visible as digits.
 func TestContentStripDegradesWithTheDetailPane(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
@@ -256,12 +257,12 @@ func TestContentStripDegradesWithTheDetailPane(t *testing.T) {
 		count        string
 		channel      float32
 		search       float32
-		iconOnly     bool
+		collapsed    bool
 	}{
 		{name: "design width", width: 1280, count: "3 videos", channel: channelMenuWidth, search: searchFieldWidth},
 		{name: "minimum width", width: 960, count: "3 videos", channel: channelMenuIcon, search: searchFieldMin},
-		{name: "minimum width, widest drawer", width: 960, count: "3 videos", detailsWidth: maxDetailsWidth, channel: channelMenuIcon, search: searchFieldMin, iconOnly: true},
-		{name: "minimum width, typed query", width: 960, query: "First", count: "1 videos", channel: channelMenuIcon, search: searchFieldMin},
+		{name: "minimum width, widest drawer", width: 960, count: "3 videos", detailsWidth: maxDetailsWidth, channel: channelMenuIcon, search: searchFieldMin, collapsed: true},
+		{name: "minimum width, typed query", width: 960, query: "First", count: "1 video", channel: channelMenuIcon, search: searchFieldMin},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := chromeWindow(t)
@@ -279,7 +280,7 @@ func TestContentStripDegradesWithTheDetailPane(t *testing.T) {
 			if !ok {
 				t.Fatal("no search field")
 			}
-			unwatched := chromeControl(t, tt, "Unwatched").Bounds
+			unwatched := chromeControl(t, tt, "Unwatched")
 			count := chromeControl(t, tt, tc.count).Bounds
 
 			if channel.W != tc.channel {
@@ -288,18 +289,24 @@ func TestContentStripDegradesWithTheDetailPane(t *testing.T) {
 			if search.W != tc.search {
 				t.Fatalf("search is %v wide, want %v", search.W, tc.search)
 			}
-			if tc.iconOnly != (count.W == countIconWidth && count.H == countIconWidth) {
-				t.Fatalf("count is %v, icon-only want %v", count, tc.iconOnly)
+			if unwatched.Role != ui.RoleCheckBox {
+				t.Fatalf("Unwatched role = %v, want a check box", unwatched.Role)
 			}
-			for _, box := range []ui.Rect{channel, search, unwatched, count} {
+			if tc.collapsed != (unwatched.Bounds.W == toolbarControl) {
+				t.Fatalf("Unwatched is %v wide, collapsed want %v", unwatched.Bounds, tc.collapsed)
+			}
+			if count.W <= toolbarControl {
+				t.Fatalf("count is %v, want visible digits", count)
+			}
+			for _, box := range []ui.Rect{channel, search, unwatched.Bounds, count} {
 				if box.X < strip.X || box.X+box.W > strip.X+strip.W ||
 					box.Y < strip.Y || box.Y+box.H > strip.Y+strip.H {
 					t.Fatalf("%v leaves the strip %v", box, strip)
 				}
 			}
-			if channel.X+channel.W > search.X || search.X+search.W > unwatched.X ||
-				unwatched.X+unwatched.W > count.X {
-				t.Fatalf("filter controls overlap: %v %v %v %v", channel, search, unwatched, count)
+			if channel.X+channel.W > search.X || search.X+search.W > unwatched.Bounds.X ||
+				unwatched.Bounds.X+unwatched.Bounds.W > count.X {
+				t.Fatalf("filter controls overlap: %v %v %v %v", channel, search, unwatched.Bounds, count)
 			}
 			if right := strip.X + strip.W - mui.Space(4); count.X+count.W < right-mui.Space(2) {
 				t.Fatalf("count ends at %v, strip's right inset is %v", count.X+count.W, right)
@@ -309,11 +316,51 @@ func TestContentStripDegradesWithTheDetailPane(t *testing.T) {
 				if clear.X < search.X || clear.X+clear.W > search.X+search.W {
 					t.Fatalf("clear button %v leaves the search field %v", clear, search)
 				}
-				if clear.X+clear.W > unwatched.X {
-					t.Fatalf("clear button %v runs into the Unwatched check box %v", clear, unwatched)
+				if clear.X+clear.W > unwatched.Bounds.X {
+					t.Fatalf("clear button %v runs into the Unwatched check box %v", clear, unwatched.Bounds)
 				}
 			}
 		})
+	}
+}
+
+// TestCollapsedUnwatchedToggleFilters checks the collapsed Unwatched control
+// keeps the check box's role and activation: a click and Space toggle the
+// filter and the count follows.
+func TestCollapsedUnwatchedToggleFilters(t *testing.T) {
+	w := chromeWindow(t)
+	w.app.SelectedVideoID = "v1"
+	w.app.Settings.DetailsWidth = maxDetailsWidth
+	w.app.Sync.ReadStates = map[string]map[string]core.ReadRecord{
+		"v2": {"device": {VideoID: "v2", Read: true}},
+		"v3": {"device": {VideoID: "v3", Read: true}},
+	}
+	tt := ui.NewTester(w.shell, 960, 808)
+	tt.Frame()
+
+	if box := chromeControl(t, tt, "Unwatched"); box.Bounds.W != toolbarControl || box.Role != ui.RoleCheckBox {
+		t.Fatalf("Unwatched is %v in role %v, want the collapsed check box", box.Bounds, box.Role)
+	}
+	if !tt.HasText("3 videos") {
+		t.Fatalf("count before filtering is %q", tt.Texts())
+	}
+	if err := tt.Click("Unwatched"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if !w.app.UnreadOnly {
+		t.Fatal("clicking the collapsed check box did not enable the filter")
+	}
+	if !tt.HasText("1 video") {
+		t.Fatalf("count after filtering is %q", tt.Texts())
+	}
+	tt.Key(0, ui.KeySpace)
+	tt.Frame()
+	if w.app.UnreadOnly {
+		t.Fatal("Space did not clear the collapsed check box")
+	}
+	if !tt.HasText("3 videos") {
+		t.Fatalf("count after clearing is %q", tt.Texts())
 	}
 }
 
@@ -445,6 +492,11 @@ func TestMenuKeepsTheStandardBar(t *testing.T) {
 	if sidebar := menuItemWithLabel(view.Submenu, "Hide Sidebar"); sidebar == nil || sidebar.Accelerator != "Ctrl+Cmd+S" {
 		t.Fatalf("View menu's sidebar command is %+v", sidebar)
 	}
+	for _, role := range []mygo.MenuRole{mygo.RoleResetZoom, mygo.RoleZoomIn, mygo.RoleZoomOut} {
+		if menuItemWithRole(view.Submenu, role) == nil {
+			t.Fatalf("View menu has no %s item", role)
+		}
+	}
 	if menuItemWithRole(view.Submenu, mygo.RoleToggleFullScreen) == nil {
 		t.Fatal("View menu has no full screen command")
 	}
@@ -459,6 +511,21 @@ func TestMenuKeepsTheStandardBar(t *testing.T) {
 	if help.Submenu == nil || help.Type != mygo.MenuItemSubmenu {
 		t.Fatalf("Help is not a submenu: %+v", help)
 	}
+
+	bound := map[string]string{}
+	var walk func([]*mygo.MenuItem)
+	walk = func(menuItems []*mygo.MenuItem) {
+		for _, item := range menuItems {
+			if item.Accelerator != "" {
+				if label, ok := bound[item.Accelerator]; ok {
+					t.Fatalf("%q is bound to both %q and %q", item.Accelerator, label, item.Label)
+				}
+				bound[item.Accelerator] = item.Label
+			}
+			walk(item.Submenu)
+		}
+	}
+	walk(items)
 }
 
 func menuItemWithLabel(items []*mygo.MenuItem, label string) *mygo.MenuItem {
@@ -509,14 +576,16 @@ func TestSettingsCommandAlwaysOpensThePage(t *testing.T) {
 
 	tt := ui.NewTester(w.shell, 1280, 808)
 	tt.Frame()
-	if err := tt.Click("More"); err != nil {
-		t.Fatal(err)
-	}
-	if err := tt.ChooseMenuItem("Settings…"); err != nil {
-		t.Fatal(err)
-	}
-	if !w.app.SettingsOpen {
-		t.Fatal("the overflow menu's Settings… closed the page")
+	for i := 0; i < 2; i++ {
+		if err := tt.Click("More"); err != nil {
+			t.Fatal(err)
+		}
+		if err := tt.ChooseMenuItem("Settings…"); err != nil {
+			t.Fatal(err)
+		}
+		if !w.app.SettingsOpen {
+			t.Fatalf("the overflow menu's Settings… closed the page on press %d", i+1)
+		}
 	}
 }
 
@@ -641,5 +710,45 @@ func TestToolbarSidebarHiddenKeepsTheDetailPane(t *testing.T) {
 	}
 	if got := w.app.settingsSnapshot().DetailsWidth; got != target {
 		t.Fatalf("dragged detail pane saved %v, want %v", got, target)
+	}
+}
+
+// TestHiddenSidebarDetailDragKeepsSidebarWidth checks a detail-pane drag while
+// the sidebar is folded saves only the detail width, not the fitted width of a
+// sidebar the user did not touch.
+func TestHiddenSidebarDetailDragKeepsSidebarWidth(t *testing.T) {
+	const storedSidebar float32 = 480
+	w := chromeWindow(t)
+	w.app.Settings.SidebarWidth = storedSidebar
+	w.app.SelectedVideoID = "v1"
+	w.sidebarHidden = true
+	tt := ui.NewTester(w.shell, 960, 808)
+	tt.Frame()
+
+	if got := w.app.settingsSnapshot().SidebarWidth; got != storedSidebar {
+		t.Fatalf("opening the frame saved sidebar width %v, want %v", got, storedSidebar)
+	}
+	if w.sidebarWidth >= storedSidebar {
+		t.Fatalf("fitted sidebar width %v does not differ from the stored %v", w.sidebarWidth, storedSidebar)
+	}
+	drawer := chromeControl(t, tt, "Video details").Bounds
+	divider, ok := tt.AccessByRole(ui.RoleSplitter, "")
+	if !ok {
+		t.Fatal("no divider between the grid and the detail pane")
+	}
+	x, y := divider.Bounds.X+divider.Bounds.W/2, divider.Bounds.Y+200
+	tt.Press(x, y)
+	tt.Move(x-60, y)
+	tt.Release(x-60, y)
+	tt.Frame()
+
+	if dragged := chromeControl(t, tt, "Video details").Bounds; dragged.W == drawer.W {
+		t.Fatalf("the drag did not resize the detail pane from %v", drawer.W)
+	}
+	if got := w.app.settingsSnapshot().DetailsWidth; got == 0 {
+		t.Fatal("the detail drag did not save the new width")
+	}
+	if got := w.app.settingsSnapshot().SidebarWidth; got != storedSidebar {
+		t.Fatalf("detail drag saved sidebar width %v, want the stored %v", got, storedSidebar)
 	}
 }

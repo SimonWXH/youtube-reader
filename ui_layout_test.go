@@ -12,40 +12,41 @@ import (
 )
 
 func TestFitFilterStrip(t *testing.T) {
-	const checkbox, countText float32 = 92, 48
+	const checkbox, countText float32 = 93, 48
 	tests := []struct {
-		inner   float32
-		channel float32
-		search  float32
-		icon    bool
+		inner     float32
+		channel   float32
+		search    float32
+		collapsed bool
 	}{
 		{inner: 600, channel: 160, search: 200},
-		{inner: 500, channel: 160, search: 168},
+		{inner: 500, channel: 160, search: 167},
 		{inner: 430, channel: 36, search: 124},
 		{inner: 380, channel: 36, search: 124},
+		{inner: 350, channel: 36, search: 124},
 		{inner: 340, channel: 36, search: 124},
-		{inner: 332, channel: 36, search: 124},
-		{inner: 320, channel: 36, search: 124},
-		{inner: 300, channel: 36, search: 124, icon: true},
-		{inner: 288, channel: 36, search: 124, icon: true},
-		{inner: 284, channel: 36, search: 124, icon: true},
+		{inner: 332, channel: 36, search: 124, collapsed: true},
+		{inner: 320, channel: 36, search: 124, collapsed: true},
+		{inner: 300, channel: 36, search: 124, collapsed: true},
+		{inner: 288, channel: 36, search: 124, collapsed: true},
+		{inner: 284, channel: 36, search: 124, collapsed: true},
 	}
 	for _, tt := range tests {
-		channel, search, gap, icon := fitFilterStrip(tt.inner, checkbox, countText)
-		if channel != tt.channel || search != tt.search || icon != tt.icon {
-			t.Fatalf("fitFilterStrip(%v) = %v, %v, icon %v; want %v, %v, icon %v",
-				tt.inner, channel, search, icon, tt.channel, tt.search, tt.icon)
+		channel, search, gap, collapsed := fitFilterStrip(tt.inner, checkbox, toolbarControl, countText)
+		if channel != tt.channel || search != tt.search || collapsed != tt.collapsed {
+			t.Fatalf("fitFilterStrip(%v) = %v, %v, collapsed %v; want %v, %v, collapsed %v",
+				tt.inner, channel, search, collapsed, tt.channel, tt.search, tt.collapsed)
 		}
-		if search < 124 {
-			t.Fatalf("fitFilterStrip(%v) gives the search field %v, below its 124 pt intrinsic minimum", tt.inner, search)
+		if search < searchFieldMin {
+			t.Fatalf("fitFilterStrip(%v) gives the search field %v, below its %v pt intrinsic minimum", tt.inner, search, searchFieldMin)
 		}
-		count := countText
-		if icon {
-			count = countIconWidth
+		box := checkbox
+		if collapsed {
+			box = toolbarControl
 		}
-		total := channel + search + checkbox + count + 4*gap
+		total := channel + search + box + countText + 4*gap
 		if total > tt.inner+0.01 {
-			t.Fatalf("fitFilterStrip(%v) needs %v", tt.inner, total)
+			t.Fatalf("fitFilterStrip(%v) needs %v with the count still shown", tt.inner, total)
 		}
 	}
 }
