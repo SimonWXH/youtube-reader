@@ -12,8 +12,8 @@ const MonoFont = "monospace"
 // Weight names the three weights the type roles use. MyGo accepts 100-900, but
 // new surfaces stay within Regular, Medium, and Semibold: hierarchy comes from
 // a step in size and a step in weight, never from Light or Thin. The existing
-// Bold call sites in detail.go, main.go, and settings.go are
-// pre-migration and move to these roles with their zone.
+// Bold call sites in main.go, toolbar.go, and settings.go are pre-migration
+// and move to these roles with their zone.
 type Weight int
 
 // Weights.
@@ -57,8 +57,7 @@ func (s TextStyle) Apply(el ui.Element) ui.Element {
 // EmptyBody, and MonospacePath. PopoverTitle and PopoverBody are spec-derived
 // additions alongside those roles: spec section 6 names a popover title at 13
 // Semibold and a popover body at 12 Regular. Call sites that still draw other
-// sizes or weights are pre-migration exceptions and do not change the roles:
-// detail.go draws the description at 14/21 and the drawer title at 20/26 Bold.
+// sizes or weights are pre-migration exceptions and do not change the roles.
 var (
 	// Body is the default reading size for detail descriptions and prose.
 	Body = TextStyle{Size: 13, LineHeight: 18, Weight: Regular}
