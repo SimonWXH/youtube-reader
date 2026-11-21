@@ -128,19 +128,23 @@ func (w *Window) view(c *ui.Context) {
 	d.shown = shown
 
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
-		// Zone A hook: a folded sidebar has no column and no split to drag.
+		// Zone A hook: a folded sidebar has no column, split or grip.
 		layoutSidebar := sidebar
+		var line ui.Element
 		if w.sidebarHidden {
 			layoutSidebar = 0
 		} else {
 			ui.Column(c).Width(sidebar).Shrink(0).Clip().Children(func() {
 				w.sidebar(c, tokens)
 			})
-			w.sidebarDivider(c, tokens, sidebar, shown, total)
+			line = w.sidebarDivider(c, tokens, sidebar, shown, total)
 		}
 		ui.Column(c).Grow(1).MinWidth(0).Clip().Children(func() {
 			w.mainArea(c, tokens, shown, layoutSidebar)
 		})
+		if !w.sidebarHidden {
+			w.sidebarDividerGrip(c, tokens, line, sidebar, shown, total)
+		}
 	})
 
 	if d.returnFocus {
@@ -177,10 +181,11 @@ func (w *Window) mainArea(c *ui.Context, t mui.Tokens, shown, sidebar float32) {
 		ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 			w.content(c, t)
 		})
-		w.detailsDivider(c, t)
+		line := w.detailsDivider(c, t)
 		ui.Column(c).Width(max(w.detail.shown, 0)).Shrink(0).Children(func() {
 			w.drawer(c, t)
 		})
+		w.detailsDividerGrip(c, line, w.contentWidth)
 	})
 }
 
@@ -237,37 +242,18 @@ const sidebarDividerGrip float32 = 6
 var sidebarKeyStep = mui.Space(2.5)
 
 // sidebarDivider is the 1 pt line between the navigation column and the
-// content. A press focuses it, a drag resizes the sidebar from the width on
-// screen, and the arrows step it. The squeeze from the open detail pane
-// bounds the drag, but never the stored width: the drag keeps its own
-// overshoot past the bound and writes only widths the user can see.
-func (w *Window) sidebarDivider(c *ui.Context, t mui.Tokens, shown, detailShown, total float32) {
-	var handle ui.Element
+// content. A press focuses it and the arrows step it. The squeeze from the
+// open detail pane bounds the drag, but never the stored width: the drag
+// keeps its own overshoot past the bound and writes only widths the user can
+// see. The drag handle is committed after the content column so its whole
+// area, on either side of the line, receives the pointer.
+func (w *Window) sidebarDivider(c *ui.Context, t mui.Tokens, shown, detailShown, total float32) ui.Element {
 	line := ui.Box(c).Key("sidebar-divider").Width(splitDividerWidth()).FillHeight().
 		Focusable().Role(ui.RoleSplitter).Label("Resize sidebar").
 		Range(float64(minSidebarWidth), float64(maxSidebarWidth), float64(shown)).
 		Step(float64(sidebarKeyStep)).FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
-	line.Children(func() {
-		handle = ui.Box(c).Absolute().Top(0).FillHeight().Width(sidebarDividerGrip).
-			Left(-(sidebarDividerGrip - splitDividerWidth()) / 2).Cursor(ui.CursorResizeEW)
-		dx, _, held := handle.Dragged()
-		switch {
-		case held:
-			line.Focus()
-			if dx != 0 {
-				w.dragSidebar(dx, shown, detailShown, total)
-			}
-		case w.sidebarDragging:
-			w.sidebarDragging = false
-			w.sidebarOvershoot = 0
-		}
-	})
 	line.Draw(func(p *ui.Painter, r ui.Rect) {
-		ink := t.Border
-		if handle.Hovered() || w.sidebarDragging {
-			ink = t.Accent
-		}
-		p.Fill(r, ink, 0)
+		p.Fill(r, t.Border, 0)
 	})
 	if line.Shortcut(0, ui.KeyLeft) {
 		w.setSidebarWidth(shown-sidebarKeyStep, detailShown, total)
@@ -275,6 +261,32 @@ func (w *Window) sidebarDivider(c *ui.Context, t mui.Tokens, shown, detailShown,
 	if line.Shortcut(0, ui.KeyRight) {
 		w.setSidebarWidth(shown+sidebarKeyStep, detailShown, total)
 	}
+	return line
+}
+
+// sidebarDividerGrip carries the drag, the col-resize cursor and the hover
+// ink for the line. It is built after the content column, over both sides of
+// the seam, so a press 2 pt either side of the line works.
+func (w *Window) sidebarDividerGrip(c *ui.Context, t mui.Tokens, line ui.Element, width, detailShown, total float32) {
+	handle := ui.Box(c).Absolute().Top(0).FillHeight().Width(sidebarDividerGrip).
+		Left(width - (sidebarDividerGrip-splitDividerWidth())/2).Cursor(ui.CursorResizeEW)
+	dx, _, held := handle.Dragged()
+	switch {
+	case held:
+		line.Focus()
+		if dx != 0 {
+			w.dragSidebar(dx, width, detailShown, total)
+		}
+	case w.sidebarDragging:
+		w.sidebarDragging = false
+		w.sidebarOvershoot = 0
+	}
+	handle.Draw(func(p *ui.Painter, r ui.Rect) {
+		if handle.Hovered() || w.sidebarDragging {
+			x := r.X + (sidebarDividerGrip-splitDividerWidth())/2
+			p.Fill(ui.Rect{X: x, Y: r.Y, W: splitDividerWidth(), H: r.H}, t.Accent, 0)
+		}
+	})
 }
 
 // dragSidebar moves the divider by dx DIPs from the width on screen, keeping
@@ -310,9 +322,9 @@ func (w *Window) setSidebarWidth(width, detailShown, total float32) {
 
 // detailsDivider is the 1 pt separator. Its focusable line sits between
 // the grid and the pane in tree order, so Tab goes grid then divider then
-// pane; a 9 pt transparent handle centered on it carries the drag, the
-// col-resize cursor, the double-click reset and the keyboard steps.
-func (w *Window) detailsDivider(c *ui.Context, t mui.Tokens) {
+// pane. The drag handle is committed after the pane, over both sides of the
+// seam, so its whole 9 pt area receives the pointer.
+func (w *Window) detailsDivider(c *ui.Context, t mui.Tokens) ui.Element {
 	d := &w.detail
 	line := ui.Box(c).Key("details-divider").Width(splitDividerWidth()).FillHeight().
 		Background(t.Border).Focusable().Role(ui.RoleSplitter).Label("Resize details pane").
@@ -321,40 +333,43 @@ func (w *Window) detailsDivider(c *ui.Context, t mui.Tokens) {
 		OnShortcut(0, ui.KeyEscape, func() {
 			w.closeDetails(c)
 		})
-	line.Children(func() {
-		handle := ui.Box(c).Absolute().Top(0).FillHeight().Width(detailsDividerGrip).
-			Left(-(detailsDividerGrip - splitDividerWidth()) / 2).Cursor(ui.CursorResizeEW)
-
-		dx, _, held := handle.Dragged()
-		if held {
-			line.Focus()
-			if !d.dragging {
-				d.dragging = true
-				d.overshoot = 0
-			}
-			if dx != 0 {
-				w.dragDetails(dx, w.detailFitWidth(c))
-			}
-		} else if d.dragging {
-			d.dragging = false
-			w.persistDetailsWidth()
-		}
-		if handle.DoubleClicked() {
-			w.setDetailsWidth(c, defaultDetailsWidth, true)
-		}
-	})
 	settled := detailWidthForRoom(d.width, w.detailFitWidth(c))
-	if next, ok := detailsWidthForKey(settled, ui.KeyLeft); ok && line.Shortcut(0, ui.KeyLeft) {
+	room := detailWidthForRoom(maxDetailsWidth, w.detailFitWidth(c))
+	for _, key := range []ui.Key{ui.KeyLeft, ui.KeyRight, ui.KeyHome, ui.KeyEnd} {
+		next, ok := detailsWidthForKey(settled, key)
+		if !ok || !line.Shortcut(0, key) {
+			continue
+		}
+		if next > room && d.width > next {
+			continue
+		}
 		w.setDetailsWidth(c, next, true)
 	}
-	if next, ok := detailsWidthForKey(settled, ui.KeyRight); ok && line.Shortcut(0, ui.KeyRight) {
-		w.setDetailsWidth(c, next, true)
+	return line
+}
+
+// detailsDividerGrip carries the drag, the col-resize cursor and the
+// double-click reset for the line.
+func (w *Window) detailsDividerGrip(c *ui.Context, line ui.Element, lineX float32) {
+	d := &w.detail
+	handle := ui.Box(c).Absolute().Top(0).FillHeight().Width(detailsDividerGrip).
+		Left(lineX - (detailsDividerGrip-splitDividerWidth())/2).Cursor(ui.CursorResizeEW)
+	dx, _, held := handle.Dragged()
+	if held {
+		line.Focus()
+		if !d.dragging {
+			d.dragging = true
+			d.overshoot = 0
+		}
+		if dx != 0 {
+			w.dragDetails(dx, w.detailFitWidth(c))
+		}
+	} else if d.dragging {
+		d.dragging = false
+		w.persistDetailsWidth()
 	}
-	if next, ok := detailsWidthForKey(settled, ui.KeyHome); ok && line.Shortcut(0, ui.KeyHome) {
-		w.setDetailsWidth(c, next, true)
-	}
-	if next, ok := detailsWidthForKey(settled, ui.KeyEnd); ok && line.Shortcut(0, ui.KeyEnd) {
-		w.setDetailsWidth(c, next, true)
+	if handle.DoubleClicked() {
+		w.setDetailsWidth(c, defaultDetailsWidth, true)
 	}
 }
 

@@ -157,6 +157,19 @@ func TestSqueezedDetailDividerKeyMovesThePane(t *testing.T) {
 	x := 960 - w.detail.shown - splitDividerWidth()
 	tt.Press(x, 300)
 	tt.Release(x, 300)
+	tt.Key(0, ui.KeyLeft)
+	tt.Frame()
+
+	if w.detail.width != maxDetailsWidth {
+		t.Fatalf("Left at the squeezed max stored %v; want the request %v", w.detail.width, maxDetailsWidth)
+	}
+	if w.detail.shown != settled {
+		t.Fatalf("Left at the squeezed max moved the pane to %v; want %v", w.detail.shown, settled)
+	}
+	if got := a.Settings.DetailsWidth; got != maxDetailsWidth {
+		t.Fatalf("Left at the squeezed max persisted %v; want %v", got, maxDetailsWidth)
+	}
+
 	tt.Key(0, ui.KeyRight)
 	tt.Frame()
 
@@ -165,6 +178,58 @@ func TestSqueezedDetailDividerKeyMovesThePane(t *testing.T) {
 	}
 	if want := settled - detailKeyStep; w.detail.width != want {
 		t.Fatalf("pane stores %v after Right; want %v", w.detail.width, want)
+	}
+}
+
+// Each divider's declared grip must take a press on both sides of its 1 pt
+// line, not only exactly on the seam: the pane-facing half used to belong to
+// the pane committed after it.
+func TestDividersTakePressesOnBothSidesOfTheSeam(t *testing.T) {
+	video := core.Video{ID: "v-1", Title: "Video"}
+	a := detailTestApp(t, []core.Video{video}, video.ID)
+	defer a.Close()
+	a.Settings.SidebarWidth = maxSidebarWidth
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 840)
+	tt.Frame()
+
+	seam := 1280 - w.detail.shown - splitDividerWidth()
+	tt.Press(seam+3, 300)
+	tt.Move(seam+3-detailKeyStep, 300)
+	tt.Release(seam+3-detailKeyStep, 300)
+	want := defaultDetailsWidth + detailKeyStep
+	if w.detail.width != want {
+		t.Fatalf("a press 3 pt right of the seam stored %v; want %v", w.detail.width, want)
+	}
+
+	seam = 1280 - w.detail.shown - splitDividerWidth()
+	tt.Press(seam-3, 300)
+	tt.Move(seam-3+detailKeyStep, 300)
+	tt.Release(seam-3+detailKeyStep, 300)
+	want = defaultDetailsWidth
+	if w.detail.width != want {
+		t.Fatalf("a press 3 pt left of the seam stored %v; want %v", w.detail.width, want)
+	}
+
+	sidebarSeam := w.sidebarWidth
+	tt.Press(sidebarSeam+2, 300)
+	tt.Move(sidebarSeam+2-10, 300)
+	tt.Release(sidebarSeam+2-10, 300)
+	sidebarWant := sidebarSeam - 10
+	if w.sidebarWidth != sidebarWant {
+		t.Fatalf("a press 2 pt right of the sidebar seam left it at %v; want %v", w.sidebarWidth, sidebarWant)
+	}
+
+	sidebarSeam = w.sidebarWidth
+	tt.Press(sidebarSeam-2, 300)
+	tt.Move(sidebarSeam-2-10, 300)
+	tt.Release(sidebarSeam-2-10, 300)
+	sidebarWant = sidebarSeam - 10
+	if w.sidebarWidth != sidebarWant {
+		t.Fatalf("a press 2 pt left of the sidebar seam left it at %v; want %v", w.sidebarWidth, sidebarWant)
+	}
+	if got := a.Settings.SidebarWidth; got != sidebarWant {
+		t.Fatalf("the sidebar seam press persisted %v; want %v", got, sidebarWant)
 	}
 }
 
