@@ -20,7 +20,12 @@ const (
 	toolbarGlyph       float32 = 16
 	contentStripHeight float32 = 44
 	channelMenuWidth   float32 = 160
+	channelMenuFloor   float32 = 96
+	channelMenuMin     float32 = 80
 	searchFieldWidth   float32 = 200
+	searchFieldFloor   float32 = 120
+	searchFieldMin     float32 = 80
+	countIconWidth     float32 = 16
 )
 
 // The two toolbar glyphs the shared ui/icons.go does not have yet: the
@@ -39,6 +44,10 @@ func (w *Window) shell(c *ui.Context) {
 	t := c.Theme()
 	tokens := mui.NewTokens(t, t.Dark)
 	w.frame = c
+	for _, toast := range w.pendingToasts {
+		c.AddToast(toast)
+	}
+	w.pendingToasts = nil
 	ui.Column(c).Fill().Background(tokens.App).Children(func() {
 		w.toolbar(c, tokens)
 		w.view(c)
@@ -156,7 +165,7 @@ func (w *Window) refreshControl(c *ui.Context, t mui.Tokens) {
 		label:   "Refresh",
 		tooltip: "Refresh",
 		content: func() { ui.Icon(c, mui.IconRefresh).Size(toolbarGlyph, toolbarGlyph) },
-		onClick: func() { w.runRefresh(c, true) },
+		onClick: func() { w.runRefresh(true) },
 	}
 	switch {
 	case w.app.Busy:
@@ -190,7 +199,7 @@ func (w *Window) overflowMenu(m *ui.Menu) {
 	m.Item(w.statusLabel()).Disabled(true)
 	m.Separator()
 	if m.Item("Refresh").Shortcut(ui.Cmd, ui.KeyR).Disabled(w.app.Busy).Chosen() {
-		w.runRefresh(w.frame, true)
+		w.runRefresh(true)
 	}
 	if m.Item("Settings…").Shortcut(ui.Cmd, ui.KeyComma).Chosen() {
 		w.toggleSettings()
@@ -200,14 +209,18 @@ func (w *Window) overflowMenu(m *ui.Menu) {
 		w.importOPML(w.frame)
 	}
 	if m.Item("Export Favorites…").Chosen() {
-		if err := w.app.ExportFavorites(); err != nil {
-			w.toast(w.frame, "Export failed: "+err.Error(), true)
-		} else {
-			w.toast(w.frame, "Favorites exported", false)
-		}
+		w.exportFavorites(w.frame)
 	}
 	if m.Item("Restore Favorites…").Chosen() {
 		w.restoreFavorites(w.frame)
+	}
+}
+
+func (w *Window) exportFavorites(c *ui.Context) {
+	if err := w.app.ExportFavorites(); err != nil {
+		w.toast(c, "Export failed: "+err.Error(), true)
+	} else {
+		w.toast(c, "Favorites exported", false)
 	}
 }
 
@@ -231,26 +244,38 @@ func (w *Window) statusLabel() string {
 // field, the unwatched check box, and the count of what is shown, right
 // aligned in tabular figures.
 func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
+	options := []string{"All channels"}
+	ids := []string{""}
+	for _, ch := range w.app.Channels {
+		options = append(options, ch.Title)
+		ids = append(ids, ch.ID)
+	}
+	selected := "All channels"
+	for i, id := range ids {
+		if id == w.app.ChannelFilter {
+			selected = options[i]
+		}
+	}
+	count := fmt.Sprintf("%d videos", len(w.app.VisibleVideos()))
+	labelWidth, _ := c.MeasureText(0, ui.Span{Text: "Unwatched", Size: mui.Control.Size, Weight: int(mui.Control.Weight)})
+	countWidth, _ := c.MeasureText(0, ui.Span{Text: count, Size: mui.Metadata.Size, Weight: int(mui.Metadata.Weight)})
+	checkboxWidth := mui.Space(4) + mui.Space(2) + labelWidth
+	available := w.contentWidth
+	if available <= 0 {
+		available = windowWidth(c)
+	}
+	channelWidth, searchWidth, gap, iconOnly := fitFilterStrip(
+		max(0, available-2*mui.Space(4)), checkboxWidth, countWidth+2,
+	)
 	strip := ui.Row(c).Height(contentStripHeight).Shrink(0).FillWidth().
-		Padding(0, mui.Space(4)).AlignItems(ui.Center).Gap(mui.Space(2)).
+		Padding(0, mui.Space(4)).AlignItems(ui.Center).Gap(gap).
 		Role(ui.RoleGroup).Label("Video filters")
 	strip.Draw(func(p *ui.Painter, r ui.Rect) {
 		p.Fill(ui.Rect{X: r.X, Y: r.Y + r.H - mui.Hairline, W: r.W, H: mui.Hairline}, t.BorderSoft, 0)
 	})
 	strip.Children(func() {
-		options := []string{"All channels"}
-		ids := []string{""}
-		for _, ch := range w.app.Channels {
-			options = append(options, ch.Title)
-			ids = append(ids, ch.ID)
-		}
-		selected := "All channels"
-		for i, id := range ids {
-			if id == w.app.ChannelFilter {
-				selected = options[i]
-			}
-		}
-		channel := ui.Select(c.Key("channel-filter"), &selected, options).Width(channelMenuWidth).
+		channel := ui.Select(c.Key("channel-filter"), &selected, options).
+			Width(channelWidth).MinWidth(channelWidth).MaxWidth(channelWidth).Shrink(0).
 			Height(toolbarControl).Padding(0, mui.Space(3)).FontSize(mui.Control.Size)
 		if channel.Changed() {
 			for i, label := range options {
@@ -259,14 +284,59 @@ func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
 				}
 			}
 		}
-		ui.SearchField(c.Key("search"), &w.app.Search).Width(searchFieldWidth).
+		ui.SearchField(c.Key("search"), &w.app.Search).
+			Width(searchWidth).MinWidth(searchWidth).MaxWidth(searchWidth).Shrink(0).
 			Height(toolbarControl).FontSize(mui.Control.Size).Label("Search videos")
 		ui.Checkbox(c.Key("unwatched"), &w.app.UnreadOnly, "Unwatched").
-			FontSize(mui.Control.Size).Label("Unwatched")
+			Shrink(0).FontSize(mui.Control.Size).Label("Unwatched")
 		ui.Spacer(c)
-		mui.Metadata.Apply(ui.Text(c, fmt.Sprintf("%d videos", len(w.app.VisibleVideos())))).
-			TextColor(t.Muted).SingleLine()
+		if iconOnly {
+			ui.Icon(c, mui.IconPlay).Size(countIconWidth, countIconWidth).Shrink(0).
+				TextColor(t.Muted).Label(count).Tooltip(count)
+			return
+		}
+		mui.Metadata.Apply(ui.Text(c, count)).
+			TextColor(t.Muted).SingleLine().Shrink(0)
 	})
+}
+
+// fitFilterStrip gives the filter controls their widths for the room the grid
+// pane has: the search field shrinks first, then the channel menu, then the
+// count becomes its glyph. The gaps tighten only after all three, so the row
+// never clips its controls or runs under the detail pane.
+func fitFilterStrip(inner, checkbox, count float32) (channel, search, gap float32, iconOnly bool) {
+	channel, search, gap = channelMenuWidth, searchFieldWidth, mui.Space(2)
+	need := func() float32 { return channel + search + checkbox + count + 4*gap }
+	deficit := need() - inner
+	if deficit <= 0 {
+		return channel, search, gap, false
+	}
+	shrink := func(deficit float32, value *float32, floor float32) float32 {
+		d := min(deficit, *value-floor)
+		*value -= d
+		return deficit - d
+	}
+	deficit = shrink(deficit, &search, searchFieldFloor)
+	if deficit > 0 {
+		deficit = shrink(deficit, &channel, channelMenuFloor)
+	}
+	if deficit > 0 {
+		iconOnly = true
+		count = countIconWidth
+		deficit = need() - inner
+	}
+	if deficit > 0 {
+		d := min(deficit, 4*(gap-mui.Space(1)))
+		gap -= d / 4
+		deficit -= d
+	}
+	if deficit > 0 {
+		deficit = shrink(deficit, &search, searchFieldMin)
+	}
+	if deficit > 0 {
+		shrink(deficit, &channel, channelMenuMin)
+	}
+	return channel, search, gap, iconOnly
 }
 
 func refreshedLabel(stamp string) string {
@@ -311,9 +381,10 @@ func (w *Window) title() string {
 	return "YouTube Reader"
 }
 
-// installMenu builds the app's menu bar: Settings… at Command-Comma in the
-// App menu, and every toolbar command mirrored, so the toolbar is a shortcut
-// surface and never the only way to run a command.
+// installMenu builds the native standard menu bar, App through Help, with
+// Settings… at Command-Comma in the App menu, the app's document commands and
+// Close Window in File, and every toolbar command mirrored, so the toolbar is
+// a shortcut surface and never the only way to run a command.
 func (w *Window) installMenu() {
 	settings := &mygo.MenuItem{Label: "Settings…", Accelerator: "Cmd+,", Click: func(*mygo.MenuItem, *mygo.Window) {
 		w.toggleSettings()
@@ -322,7 +393,7 @@ func (w *Window) installMenu() {
 		w.setSidebarHidden(!w.sidebarHidden)
 	}}
 	w.menuRefresh = &mygo.MenuItem{Label: "Refresh", Accelerator: "Cmd+R", Click: func(*mygo.MenuItem, *mygo.Window) {
-		w.runRefresh(nil, true)
+		w.runRefresh(true)
 	}}
 	appMenu := &mygo.MenuItem{Label: mygo.App.Name(), Submenu: []*mygo.MenuItem{
 		{Role: mygo.RoleAbout},
@@ -337,6 +408,13 @@ func (w *Window) installMenu() {
 		mygo.Separator(),
 		{Role: mygo.RoleQuit},
 	}}
+	fileMenu := &mygo.MenuItem{Label: "File", Submenu: []*mygo.MenuItem{
+		{Label: "Import OPML…", Click: func(*mygo.MenuItem, *mygo.Window) { w.importOPML(nil) }},
+		{Label: "Export Favorites…", Click: func(*mygo.MenuItem, *mygo.Window) { w.exportFavorites(nil) }},
+		{Label: "Restore Favorites…", Click: func(*mygo.MenuItem, *mygo.Window) { w.restoreFavorites(nil) }},
+		mygo.Separator(),
+		{Role: mygo.RoleClose},
+	}}
 	viewMenu := &mygo.MenuItem{Label: "View", Submenu: []*mygo.MenuItem{
 		w.menuRefresh,
 		mygo.Separator(),
@@ -345,6 +423,7 @@ func (w *Window) installMenu() {
 	}}
 	mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
 		appMenu,
+		fileMenu,
 		{Role: mygo.RoleEditMenu},
 		viewMenu,
 		{Role: mygo.RoleWindowMenu},

@@ -11,6 +11,39 @@ import (
 	mui "github.com/simon/youtube-reader/ui"
 )
 
+func TestFitFilterStrip(t *testing.T) {
+	const checkbox, countText float32 = 92, 48
+	tests := []struct {
+		inner   float32
+		channel float32
+		search  float32
+		icon    bool
+	}{
+		{inner: 600, channel: channelMenuWidth, search: searchFieldWidth},
+		{inner: 500, channel: channelMenuWidth, search: 168},
+		{inner: 430, channel: 138, search: searchFieldFloor},
+		{inner: 380, channel: channelMenuFloor, search: searchFieldFloor, icon: true},
+		{inner: 340, channel: channelMenuFloor, search: searchFieldFloor, icon: true},
+		{inner: 300, channel: channelMenuFloor, search: searchFieldMin, icon: true},
+		{inner: 288, channel: 84, search: searchFieldMin, icon: true},
+	}
+	for _, tt := range tests {
+		channel, search, gap, icon := fitFilterStrip(tt.inner, checkbox, countText)
+		if channel != tt.channel || search != tt.search || icon != tt.icon {
+			t.Fatalf("fitFilterStrip(%v) = %v, %v, icon %v; want %v, %v, icon %v",
+				tt.inner, channel, search, icon, tt.channel, tt.search, tt.icon)
+		}
+		count := countText
+		if icon {
+			count = countIconWidth
+		}
+		total := channel + search + checkbox + count + 4*gap
+		if total > tt.inner+0.01 {
+			t.Fatalf("fitFilterStrip(%v) needs %v", tt.inner, total)
+		}
+	}
+}
+
 func TestFitPaneWidths(t *testing.T) {
 	t.Run("defaults without selection", func(t *testing.T) {
 		sidebar, details := fitPaneWidths(0, 0, false, 1280)

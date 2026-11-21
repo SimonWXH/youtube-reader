@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/simon/youtube-reader/core"
+	mui "github.com/simon/youtube-reader/ui"
 )
 
 func TestRefreshedLabel(t *testing.T) {
@@ -241,6 +243,59 @@ func TestToolbarChrome(t *testing.T) {
 	}
 }
 
+// TestContentStripDegradesWithTheDetailPane checks the filter strip keeps all
+// four controls on one line at the 960 pt minimum with the detail pane open:
+// the search and channel keep their narrow floors and the count becomes its
+// glyph rather than running under the drawer.
+func TestContentStripDegradesWithTheDetailPane(t *testing.T) {
+	for _, tc := range []struct {
+		width    int
+		channel  float32
+		search   float32
+		iconOnly bool
+	}{
+		{width: 1280, channel: channelMenuWidth, search: searchFieldWidth},
+		{width: 960, channel: channelMenuFloor, search: searchFieldFloor, iconOnly: true},
+	} {
+		w := chromeWindow(t)
+		w.app.SelectedVideoID = "v1"
+		tt := ui.NewTester(w.shell, tc.width, 808)
+		tt.Frame()
+
+		strip := chromeControl(t, tt, "Video filters").Bounds
+		channel := chromeControl(t, tt, "All channels").Bounds
+		search, ok := tt.Find("Search videos")
+		if !ok {
+			t.Fatalf("%d: no search field", tc.width)
+		}
+		unwatched := chromeControl(t, tt, "Unwatched").Bounds
+		count := chromeControl(t, tt, "3 videos").Bounds
+
+		if channel.W != tc.channel {
+			t.Fatalf("%d: channel is %v wide, want %v", tc.width, channel.W, tc.channel)
+		}
+		if search.W != tc.search {
+			t.Fatalf("%d: search is %v wide, want %v", tc.width, search.W, tc.search)
+		}
+		if tc.iconOnly != (count.W == countIconWidth && count.H == countIconWidth) {
+			t.Fatalf("%d: count is %v, icon-only want %v", tc.width, count, tc.iconOnly)
+		}
+		for _, box := range []ui.Rect{channel, search, unwatched, count} {
+			if box.X < strip.X || box.X+box.W > strip.X+strip.W ||
+				box.Y < strip.Y || box.Y+box.H > strip.Y+strip.H {
+				t.Fatalf("%d: %v leaves the strip %v", tc.width, box, strip)
+			}
+		}
+		if channel.X+channel.W > search.X || search.X+search.W > unwatched.X ||
+			unwatched.X+unwatched.W > count.X {
+			t.Fatalf("%d: filter controls overlap: %v %v %v %v", tc.width, channel, search, unwatched, count)
+		}
+		if right := strip.X + strip.W - mui.Space(4); count.X+count.W < right-mui.Space(2) {
+			t.Fatalf("%d: count ends at %v, strip's right inset is %v", tc.width, count.X+count.W, right)
+		}
+	}
+}
+
 // TestToolbarSidebarToggleFoldsSidebar checks the leading control really
 // hides the sidebar pane, and that the grid reflows rather than leaving a
 // gap for it.
@@ -299,6 +354,112 @@ func TestOverflowMenuMirrorsToolbarCommands(t *testing.T) {
 	if items := tt.Menu(); items != nil {
 		t.Fatalf("Escape left the overflow menu open: %q", items)
 	}
+}
+
+// TestRefreshFailureSurfacesItsMessage checks a refresh that reports a failure
+// reaches the view as a toast: the outcome arrives between frames, so the
+// message has to wait for the next build instead of being dropped.
+func TestRefreshFailureSurfacesItsMessage(t *testing.T) {
+	w := chromeWindow(t)
+	tt := ui.NewTester(w.shell, 1280, 808)
+	tt.Frame()
+
+	w.refreshFinished(RefreshOutcome{
+		Description: "Refresh failed: quota paused",
+		Failures:    []core.RefreshFailure{{Message: "quota paused"}},
+	})
+	if tt.HasText("Refresh failed: quota paused") {
+		t.Fatal("the toast showed before a frame consumed it")
+	}
+	tt.Frame()
+	if !tt.HasText("Refresh failed: quota paused") {
+		t.Fatalf("refresh failure has no toast: %q", tt.Texts())
+	}
+}
+
+// TestMenuKeepsTheStandardBar checks the app menu repeats the native standard
+// menus and their shortcuts, with the app's own commands on top: File closes
+// the window on Command-W and carries the document commands the overflow menu
+// offers, while View and the App menu mirror the toolbar.
+func TestMenuKeepsTheStandardBar(t *testing.T) {
+	w := chromeWindow(t)
+	w.installMenu()
+	items := mygo.App.Menu().Items()
+
+	app := items[0]
+	for _, role := range []mygo.MenuRole{mygo.RoleAbout, mygo.RoleServices, mygo.RoleHide, mygo.RoleQuit} {
+		if menuItemWithRole(app.Submenu, role) == nil {
+			t.Fatalf("App menu has no %s item", role)
+		}
+	}
+	if settings := menuItemWithLabel(app.Submenu, "Settings…"); settings == nil || settings.Accelerator != "Cmd+," {
+		t.Fatalf("App menu's Settings… is %+v", settings)
+	}
+
+	file := menuItemWithLabel(items, "File")
+	if file == nil {
+		t.Fatalf("no File menu in %v", menuLabels(items))
+	}
+	closeItem := menuItemWithRole(file.Submenu, mygo.RoleClose)
+	if closeItem == nil || closeItem.Accelerator != "CmdOrCtrl+W" {
+		t.Fatalf("File menu's Close Window is %+v", closeItem)
+	}
+	for _, label := range []string{"Import OPML…", "Export Favorites…", "Restore Favorites…"} {
+		if menuItemWithLabel(file.Submenu, label) == nil {
+			t.Fatalf("File menu has no %q: %v", label, menuLabels(file.Submenu))
+		}
+	}
+
+	if menuItemWithRole(items, mygo.RoleEditMenu) == nil {
+		t.Fatal("no Edit menu")
+	}
+
+	view := menuItemWithLabel(items, "View")
+	if view == nil {
+		t.Fatalf("no View menu in %v", menuLabels(items))
+	}
+	if refresh := menuItemWithLabel(view.Submenu, "Refresh"); refresh == nil || refresh.Accelerator != "Cmd+R" {
+		t.Fatalf("View menu's Refresh is %+v", refresh)
+	}
+	if sidebar := menuItemWithLabel(view.Submenu, "Hide Sidebar"); sidebar == nil || sidebar.Accelerator != "Ctrl+Cmd+S" {
+		t.Fatalf("View menu's sidebar command is %+v", sidebar)
+	}
+	if menuItemWithRole(view.Submenu, mygo.RoleToggleFullScreen) == nil {
+		t.Fatal("View menu has no full screen command")
+	}
+
+	if menuItemWithRole(items, mygo.RoleWindowMenu) == nil {
+		t.Fatal("no Window menu")
+	}
+	if menuItemWithRole(items, mygo.RoleHelp) == nil {
+		t.Fatal("no Help menu")
+	}
+}
+
+func menuItemWithLabel(items []*mygo.MenuItem, label string) *mygo.MenuItem {
+	for _, item := range items {
+		if item.Label == label {
+			return item
+		}
+	}
+	return nil
+}
+
+func menuItemWithRole(items []*mygo.MenuItem, role mygo.MenuRole) *mygo.MenuItem {
+	for _, item := range items {
+		if item.Role == role {
+			return item
+		}
+	}
+	return nil
+}
+
+func menuLabels(items []*mygo.MenuItem) []string {
+	labels := make([]string, len(items))
+	for i, item := range items {
+		labels[i] = item.Label
+	}
+	return labels
 }
 
 // TestToolbarRefreshDimsWhileBusy checks the unavailable state the board
