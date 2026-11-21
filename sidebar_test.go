@@ -284,6 +284,47 @@ func TestSidebarArrowFocusRingAfterPointerClick(t *testing.T) {
 	}
 }
 
+// TestSidebarArrowFocusRingSurvivesWindowBlur proves the ring on the
+// arrow-focused row comes back with the window: switching away and back must
+// not leave a focused row with no indicator until the next arrow press.
+func TestSidebarArrowFocusRingSurvivesWindowBlur(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		a := sidebarTestApp(t, true)
+		w := &Window{app: a, selectedIndex: new(int)}
+		tt := ui.NewTester(w.view, 1280, 808)
+		tt.SetDark(dark)
+		tt.Frame()
+		tokens := mui.NewTokens(nil, dark)
+
+		if err := tt.Click("Favorites"); err != nil {
+			t.Fatalf("dark=%v: click Favorites: %v", dark, err)
+		}
+		tt.Key(0, ui.KeyDown)
+		if a.Selected != "channel:ch-a" {
+			t.Fatalf("dark=%v: Down after a click selected %q, want channel:ch-a", dark, a.Selected)
+		}
+		first, last, ok := ringLines(t, tt, tokens, int(defaultSidebarWidth))
+		if !ok {
+			t.Fatalf("dark=%v: arrow focus has no ring before the window loses focus", dark)
+		}
+
+		tt.SetFocused(false)
+		tt.Frame()
+		if _, _, ok := ringLines(t, tt, tokens, int(defaultSidebarWidth)); ok {
+			t.Fatalf("dark=%v: the inactive window still paints the keyboard ring", dark)
+		}
+		tt.SetFocused(true)
+		tt.Frame()
+		againFirst, againLast, ok := ringLines(t, tt, tokens, int(defaultSidebarWidth))
+		if !ok {
+			t.Fatalf("dark=%v: the arrow-focused row lost its ring when the window came back", dark)
+		}
+		if againFirst != first || againLast != last {
+			t.Fatalf("dark=%v: ring moved from %d-%d to %d-%d across a window blur", dark, first, last, againFirst, againLast)
+		}
+	}
+}
+
 // TestSidebarReturnOpensFocusedRow proves Return activates the row that has
 // the keyboard focus, not the row the selection happens to be on.
 func TestSidebarReturnOpensFocusedRow(t *testing.T) {

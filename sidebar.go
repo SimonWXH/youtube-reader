@@ -46,7 +46,7 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 		})
 		w.statusSection(c, t, nav)
 	})
-	if w.sidebarKeyboard != "" && nav.focused != w.sidebarKeyboard {
+	if nav.focused != "" && nav.focused != w.sidebarKeyboard {
 		w.sidebarKeyboard = ""
 	}
 	// Up and Down move the sidebar's selection. MyGo routes a shortcut to the
