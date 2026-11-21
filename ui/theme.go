@@ -58,7 +58,7 @@ type Tokens struct {
 	Warning    ui.Color // Warning is quota-paused and offline notices.
 	Success    ui.Color // Success is the up-to-date mark.
 	Focus      ui.Color // Focus draws the 2 pt ring.
-	Shadow     ui.Color // Shadow is the only shadow ink, used by the single popover elevation.
+	Shadow     ui.Color // Shadow is a legacy shadow ink; the L1 popover ink is specified with the elevation geometry.
 }
 
 // NewTokens derives a palette from the system theme. Dark mode uses its own
@@ -134,22 +134,18 @@ const (
 	FocusRingGap float32 = 3
 )
 
-// ShadowStyle is the app's one raised-surface shadow geometry. Cards, rows,
-// and forms stay flat (L0); only popovers and overflow menus are raised (L1);
-// modal alerts are drawn by the system (L2).
-type ShadowStyle struct {
-	OffsetY float32
-	Blur    float32
-	Spread  float32
-}
-
-// Elevation is the single L1 shadow, drawn with the token's Shadow ink.
-var Elevation = ShadowStyle{OffsetY: 14, Blur: 34, Spread: -10}
-
-// Apply draws the elevation on el with the token's Shadow ink.
-func (s ShadowStyle) Apply(el ui.Element, ink ui.Color) ui.Element {
-	return el.Shadow(0, s.OffsetY, s.Blur, s.Spread, ink)
-}
+// Elevation. Cards, rows, and forms stay flat (L0); only popovers and overflow
+// menus are raised (L1) with offset 14 pt, blur 34 pt, spread -10 pt; modal
+// alerts are drawn by the system (L2). The L1 shadow ink is owned by design
+// board B3 and must be painted exactly as: light 0 0 0 0.5px rgba(0,0,0,.12)
+// plus 0 14px 34px -10px rgba(24,26,28,.28); dark 0 0 0 0.5px rgba(0,0,0,.5)
+// plus 0 14px 34px -10px rgba(0,0,0,.65); with a 0.5 pt stroke. Tokens.Shadow
+// is not the L1 ink.
+const (
+	ElevationOffsetY float32 = 14
+	ElevationBlur    float32 = 34
+	ElevationSpread  float32 = -10
+)
 
 // State is one of the eight defined interactive states.
 type State uint8
@@ -178,7 +174,7 @@ type ControlFace struct {
 func (t Tokens) Face(state State, primary, quiet bool) ControlFace {
 	switch {
 	case state == Disabled:
-		return ControlFace{t.SurfaceAlt, t.BorderSoft, t.Faint}
+		return ControlFace{t.SurfaceAlt, t.Border, t.Faint}
 	case state == Loading:
 		return ControlFace{t.SurfaceAlt, t.Border, t.Muted}
 	case state == Error:
