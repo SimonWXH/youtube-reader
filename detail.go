@@ -19,7 +19,13 @@ func (w *Window) view(c *ui.Context) {
 		settings.SidebarWidth, settings.DetailsWidth,
 		selected, total,
 	)
-	w.contentWidth = total - w.sidebarWidth - 2*splitDividerWidth()
+	// Zone A hook: the toolbar's sidebar toggle folds this pane away, so it and
+	// its divider take no room; w.sidebarWidth keeps what it shows with again.
+	layoutSidebar := w.sidebarWidth
+	if w.sidebarHidden {
+		layoutSidebar = 0
+	}
+	w.contentWidth = total - layoutSidebar - 2*splitDividerWidth()
 	if selected {
 		w.contentWidth -= w.detailsWidth + splitDividerWidth()
 	}
@@ -29,12 +35,10 @@ func (w *Window) view(c *ui.Context) {
 	w.sidebarWidth = boundedSidebarWidth(w.sidebarWidth, selected, total)
 	w.contentWidth = max(minGridWidth, w.contentWidth)
 	if selected {
-		w.contentWidth = min(w.contentWidth, total-w.sidebarWidth-2*splitDividerWidth()-minDetailsWidth)
+		w.contentWidth = min(w.contentWidth, total-layoutSidebar-2*splitDividerWidth()-minDetailsWidth)
 	}
-	var contentSplit ui.Element
-	outerSplit := ui.Split(c, &w.sidebarWidth, func() {
-		w.sidebar(c, tokens)
-	}, func() {
+	var contentSplit, outerSplit ui.Element
+	panes := func() {
 		if !selected {
 			w.gridAvailableWidth = w.contentWidth
 			w.content(c, tokens)
@@ -46,7 +50,15 @@ func (w *Window) view(c *ui.Context) {
 		}, func() {
 			w.drawer(c, tokens)
 		}).Fill()
-	}).Fill()
+	}
+	// Zone A hook: a folded sidebar has no split to drag.
+	if w.sidebarHidden {
+		panes()
+	} else {
+		outerSplit = ui.Split(c, &w.sidebarWidth, func() {
+			w.sidebar(c, tokens)
+		}, panes).Fill()
+	}
 	outerChanged := outerSplit.Changed()
 	contentChanged := contentSplit.Changed()
 	if outerChanged || contentChanged {
