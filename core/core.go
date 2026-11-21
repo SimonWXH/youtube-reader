@@ -68,6 +68,11 @@ type Settings struct {
 	QuotaPausedUntil string           `json:"quotaPausedUntil,omitempty"`
 	LastHandoffID    string           `json:"lastHandoffID,omitempty"`
 	HelperInstalled  bool             `json:"helperInstalled,omitempty"`
+
+	// Local UI preferences. These stay in settings.json and are never synced.
+	SidebarWidth   float32 `json:"sidebarWidth,omitempty"`
+	DetailsWidth   float32 `json:"detailsWidth,omitempty"`
+	MaxGridColumns int     `json:"maxGridColumns,omitempty"`
 }
 
 type FavoriteRecord struct {

@@ -63,6 +63,9 @@ func defaultSettings() core.Settings {
 		BackupPath:      filepath.Join(dir, "favorites-backup.json"),
 		NotificationIDs: []string{},
 		RecentFailures:  []core.RefreshFailure{},
+		SidebarWidth:    defaultSidebarWidth,
+		DetailsWidth:    defaultDetailsWidth,
+		MaxGridColumns:  defaultMaxGridColumns,
 	}
 }
 
@@ -83,6 +86,9 @@ func LoadApp() (*App, error) {
 	}
 	if settings.BackupPath == "" {
 		settings.BackupPath = filepath.Join(dir, "favorites-backup.json")
+	}
+	if settings.MaxGridColumns < minMaxGridColumns || settings.MaxGridColumns > maxMaxGridColumns {
+		settings.MaxGridColumns = defaultMaxGridColumns
 	}
 	device := core.StableDeviceID()
 	lock, err := core.AcquireLock(localLockDir())
@@ -744,6 +750,10 @@ func (a *App) VisibleVideos() []core.Video {
 		sort.Slice(out, func(i, j int) bool { return out[i].FavoritedAt > out[j].FavoritedAt })
 	}
 	return out
+}
+
+func (a *App) HasSelection() bool {
+	return a.SelectedVideoID != ""
 }
 
 func (a *App) VideoByID(id string) (core.Video, bool) {
