@@ -42,9 +42,30 @@ type detailState struct {
 	errID        string
 	errDismissed bool
 	more         bool
+	content      detailContent
+	pane         ui.Handle
+	close        ui.Handle
 
 	returnFocus bool
 	returnIndex int
+}
+
+type detailContent uint8
+
+const (
+	detailContentNone detailContent = iota
+	detailContentVideo
+	detailContentError
+)
+
+func (d *detailState) contentKind() detailContent {
+	switch {
+	case d.errID != "":
+		return detailContentError
+	case d.hasVideo:
+		return detailContentVideo
+	}
+	return detailContentNone
 }
 
 // detailCloseIcon is the pane header's close glyph. It follows the shared
@@ -120,6 +141,12 @@ func (w *Window) view(c *ui.Context) {
 		}
 	}
 	open := selectedID != "" || (d.errID != "" && !d.errDismissed)
+
+	content := d.contentKind()
+	if open && d.content != detailContentNone && d.content != content && d.pane.FocusWithin(c) {
+		d.close.Focus()
+	}
+	d.content = content
 
 	fitted := detailWidthForRoom(d.width, w.detailFitWidth(c))
 	shown := w.advanceDetails(c, open, fitted)
@@ -449,7 +476,7 @@ func (w *Window) closeDetails(c *ui.Context) {
 
 func (w *Window) drawer(c *ui.Context, t mui.Tokens) {
 	d := &w.detail
-	pane := ui.Column(c).Fill().Background(t.App).Clip().
+	pane := ui.Column(c).Fill().Background(t.App).Clip().Bind(&d.pane).
 		Role(ui.RoleGroup).Label("Video details").OnShortcut(0, ui.KeyEscape, func() {
 		w.closeDetails(c)
 	})
@@ -476,7 +503,7 @@ func (w *Window) detailHeader(c *ui.Context, t mui.Tokens) {
 			Radius(mui.RadiusControl).Border(0, ui.Color{}).Background(ui.Color{}).
 			TextColor(t.Muted).Cursor(ui.CursorPointer).Transition(mui.Fade).
 			FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
-			Role(ui.RoleButton).Label("Close details").Tooltip("Close details")
+			Role(ui.RoleButton).Label("Close details").Tooltip("Close details").Bind(&w.detail.close)
 		close.Children(func() {
 			ui.Icon(c, detailCloseIcon).Size(mui.Space(4), mui.Space(4))
 		})

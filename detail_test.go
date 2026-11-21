@@ -272,6 +272,30 @@ func TestDetailDividerKeyStepsFromTheSettledWidth(t *testing.T) {
 	}
 }
 
+// Reduce Motion honors the system setting: the pane is already at its
+// settled width in the frame the selection lands, with no width animation.
+func TestDetailReduceMotionSkipsTheWidthAnimation(t *testing.T) {
+	video := core.Video{ID: "v-1", Title: "Video"}
+	a := detailTestApp(t, []core.Video{video}, "")
+	defer a.Close()
+
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTesterWith(w.view, 1280, 840, ui.TesterOptions{
+		Preferences: ui.Preferences{ReduceMotion: true},
+	})
+	tt.Frame()
+
+	a.SelectedVideoID = video.ID
+	tt.Frame()
+
+	if w.detail.shown != defaultDetailsWidth {
+		t.Fatalf("Reduce Motion opened the pane at %v; want the settled %v", w.detail.shown, defaultDetailsWidth)
+	}
+	if w.detail.animating {
+		t.Fatal("Reduce Motion still animated the pane's width")
+	}
+}
+
 // A drag that starts during the open animation bases on the settled width
 // too, so the width the animation is passing through cannot replace the
 // chosen one.
@@ -370,6 +394,13 @@ func TestDetailErrorRetryReloadsTheStore(t *testing.T) {
 	}
 	if a.SelectedVideoID != video.ID {
 		t.Fatalf("selection after Retry = %q, want %q", a.SelectedVideoID, video.ID)
+	}
+	close, ok := tt.AccessByRole(ui.RoleButton, "Close details")
+	if !ok {
+		t.Fatalf("the recovered pane has no close button: %v", tt.Texts())
+	}
+	if !close.Focused {
+		t.Fatal("Retry left the keyboard focus outside the rebuilt pane")
 	}
 }
 
