@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/simon/youtube-reader/core"
@@ -10,7 +9,7 @@ import (
 )
 
 func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
-	nav := &sidebarNav{w: w, focus: w.sidebarFocus, targets: map[string]string{}}
+	nav := &sidebarNav{w: w, focus: w.sidebarFocus, actions: map[string]func(){}}
 	w.sidebarFocus = ""
 	counts := w.sidebarCounts()
 
@@ -22,12 +21,12 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 				Key: "all", Label: "All videos", Glyph: mui.IconPlay, Count: fmt.Sprintf("%d", counts.total),
 				Selected: w.app.Selected == "all",
 				OnClick:  func() { w.app.Selected = "all" },
-			}, "all")
+			})
 			nav.row(c, t, mui.SidebarRow{
 				Key: "favorites", Label: "Favorites", Glyph: mui.IconStar, Count: fmt.Sprintf("%d", counts.favorites),
 				Selected: w.app.Selected == "favorites",
 				OnClick:  func() { w.app.Selected = "favorites" },
-			}, "favorites")
+			})
 			for _, g := range w.app.Groups {
 				w.groupSection(c, t, g, nav, counts)
 			}
@@ -42,11 +41,14 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 					Count:    fmt.Sprintf("%d", counts.perChannel[ch.ID]),
 					Selected: w.app.Selected == "channel:"+ch.ID,
 					OnClick:  func() { w.app.Selected = "channel:" + ch.ID },
-				}, "channel:"+ch.ID)
+				})
 			}
 		})
 		w.statusSection(c, t, nav)
 	})
+	if w.sidebarKeyboard != "" && nav.focused != w.sidebarKeyboard {
+		w.sidebarKeyboard = ""
+	}
 	// Up and Down move the sidebar's selection. MyGo routes a shortcut to the
 	// element whose subtree holds the focus, so the keys work from any row
 	// and never leak into the grid or the toolbar.
@@ -61,34 +63,67 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 type sidebarNav struct {
 	w       *Window
 	keys    []string          // every focusable row, in visual order
-	targets map[string]string // row key -> the selection it opens
+	actions map[string]func() // row key -> the action its click runs
 	focus   string            // row to take the focus in this frame
 	at      int               // index of the focused row, -1 for none
+	focused string            // row that actually has the focus this frame
 }
 
-// row builds a row and adds it to the keyboard order. target is the
-// selection the row opens, empty for a row that folds or toggles instead.
-func (n *sidebarNav) row(c *ui.Context, t mui.Tokens, r mui.SidebarRow, target string) {
-	n.observe(r.Build(c, t), r.Key, target)
-}
-
-// observe records a built row and applies a pending arrow-key move to it.
-func (n *sidebarNav) observe(el ui.Element, key, target string) {
-	if target != "" {
-		n.targets[key] = target
+// row builds a row and adds it to the keyboard order. A row with an action
+// opens the same selection whether it is clicked, opened with Return, or
+// reached with Up or Down. The fold rows toggle, so the arrows skip them.
+func (n *sidebarNav) row(c *ui.Context, t mui.Tokens, r mui.SidebarRow) {
+	key := r.Key
+	if r.OnClick != nil {
+		action := r.OnClick
+		r.OnClick = func() {
+			n.clearKeyboardFocus()
+			action()
+		}
+		if !r.Fold {
+			n.actions[key] = action
+		}
 	}
+	el := r.Build(c, t)
 	if n.focus == key {
 		el.Focus()
+		if el.Focused() {
+			n.w.sidebarKeyboard = key
+		}
 	}
+	if n.w.sidebarKeyboard == key && el.Focused() {
+		// The row owns the ring for arrow-driven focus: the raised layer
+		// keeps its 3 pt offset above the next row's background on the same
+		// frame as the move.
+		el.ZIndex(1)
+		el.DrawOver(func(p *ui.Painter, box ui.Rect) {
+			if n.w.sidebarKeyboard != key || !el.Focused() {
+				return
+			}
+			d := mui.FocusRingGap + mui.FocusRing
+			p.Stroke(ui.Rect{X: box.X - d, Y: box.Y - d, W: box.W + 2*d, H: box.H + 2*d}, t.Focus, mui.RadiusControl+d, mui.FocusRing)
+		})
+	}
+	n.observe(el, key)
+}
+
+// observe records a built row and notes which row has the focus this frame.
+func (n *sidebarNav) observe(el ui.Element, key string) {
 	if el.Focused() {
 		n.at = len(n.keys)
+		n.focused = key
 	}
 	n.keys = append(n.keys, key)
 }
 
+func (n *sidebarNav) clearKeyboardFocus() {
+	n.w.sidebarFocus = ""
+	n.w.sidebarKeyboard = ""
+}
+
 // move returns the Up or Down handler: it walks from the focused row in the
-// direction delta, stops at the first row that navigates, and puts the focus
-// on it for the next frame so the row scrolls itself into view.
+// direction delta, stops at the first row that navigates, and runs that row's
+// action so the arrows and the pointer share one activation path.
 func (n *sidebarNav) move(delta int) func() {
 	return func() {
 		if n.at < 0 {
@@ -96,12 +131,12 @@ func (n *sidebarNav) move(delta int) func() {
 		}
 		for i := n.at + delta; i >= 0 && i < len(n.keys); i += delta {
 			key := n.keys[i]
-			target, ok := n.targets[key]
+			action, ok := n.actions[key]
 			if !ok {
 				continue
 			}
 			n.w.sidebarFocus = key
-			n.w.app.Selected = target
+			action()
 			return
 		}
 	}
@@ -114,7 +149,7 @@ func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, 
 		Key: key, Label: g.Name, Count: fmt.Sprintf("%d", counts.group(g.ChannelIDs)),
 		Fold: true, Expanded: !collapsed,
 		OnClick: func() { _ = w.app.SetGroupCollapsed(g.ID, !collapsed) },
-	}, "")
+	})
 	if collapsed {
 		return
 	}
@@ -126,7 +161,7 @@ func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, 
 			Count:    fmt.Sprintf("%d", counts.perChannel[id]),
 			Selected: w.app.Selected == "channel:"+id,
 			OnClick:  func() { w.app.Selected = "channel:" + id },
-		}, "channel:"+id)
+		})
 	}
 }
 
@@ -141,7 +176,7 @@ func (w *Window) statusSection(c *ui.Context, t mui.Tokens, nav *sidebarNav) {
 		if failures := len(w.app.settingsSnapshot().RecentFailures); failures > 0 {
 			status.Count = fmt.Sprintf("%d", failures)
 		}
-		nav.row(c, t, status, "")
+		nav.row(c, t, status)
 		if !w.app.StatusExpanded {
 			return
 		}
@@ -171,7 +206,11 @@ func sectionHeader(c *ui.Context, t mui.Tokens, title string) {
 // sidebarCounts is the trailing count of every sidebar row: videos per
 // channel, the total for All videos, favorites for Favorites, and the sum
 // of a group's channels for the group row. Every count runs the grid's
-// visibility rule, so a count matches the videos its destination shows.
+// permanent visibility rule, ShowShorts and membership in the destination,
+// so a count matches the videos its destination shows once the transient
+// filter bar is cleared. ChannelFilter, Search and UnreadOnly are tools
+// applied on top of a destination, not part of it, so they never change a
+// count.
 type sidebarCounts struct {
 	total      int
 	favorites  int
@@ -180,15 +219,18 @@ type sidebarCounts struct {
 
 func (w *Window) sidebarCounts() sidebarCounts {
 	showShorts := w.app.settingsSnapshot().ShowShorts
-	q := strings.ToLower(w.app.Search)
+	favorites := make(map[string]bool, len(w.app.Sync.Favorites))
+	for id := range w.app.Sync.Favorites {
+		favorites[id] = true
+	}
 	counts := sidebarCounts{perChannel: make(map[string]int, len(w.app.Channels))}
 	for _, v := range w.app.Videos {
-		if !w.app.videoVisible(v, nil, showShorts, q) {
+		if !w.app.videoVisible(v, nil, showShorts) {
 			continue
 		}
 		counts.total++
 		counts.perChannel[v.ChannelID]++
-		if _, ok := w.app.Sync.Favorites[v.ID]; ok {
+		if w.app.videoVisible(v, favorites, showShorts) {
 			counts.favorites++
 		}
 	}

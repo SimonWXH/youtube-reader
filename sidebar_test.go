@@ -112,7 +112,8 @@ func absDiff(a, b int) int {
 // TestSidebarCountsMatchTheirDestination pins the invariant the sidebar
 // comment states: each row's count equals the videos its destination shows.
 // The scenarios cover a favorite that is only in the sync file, a favorited
-// Short while Shorts are hidden, and the channel, unread and search filters.
+// Short while Shorts are hidden, a favorite whose video leaves the store, and
+// that the transient filter bar stays out of the counts.
 func TestSidebarCountsMatchTheirDestination(t *testing.T) {
 	favorite := core.Video{ID: "fav", ChannelID: "ch-a", Title: "Favourite"}
 	plain := core.Video{ID: "plain", ChannelID: "ch-b", Title: "Plain"}
@@ -152,17 +153,23 @@ func TestSidebarCountsMatchTheirDestination(t *testing.T) {
 
 	a.Settings.ShowShorts = false
 	a.UnreadOnly = true
-	check("unread only", 2, 1, 1, 1)
+	check("unread only stays out of counts", 3, 2, 1, 2)
 
 	a.UnreadOnly = false
 	a.Settings.ShowShorts = true
 	a.Search = "short"
-	check("search", 1, 1, 1, 0)
+	check("search stays out of counts", 4, 3, 2, 2)
 
 	a.Search = ""
 	a.Settings.ShowShorts = false
 	a.ChannelFilter = "ch-b"
-	check("channel filter", 2, 1, 0, 2)
+	check("channel filter stays out of counts", 3, 2, 1, 2)
+
+	// A refresh that drops the channel leaves its favorite in the sync file
+	// but removes the video from the store, so neither count includes it.
+	a.ChannelFilter = ""
+	a.Videos = []core.Video{favorite, plain, shortFavorite}
+	check("favorite left the store", 2, 1, 1, 1)
 }
 
 // TestSidebarWidthMatchesDesign checks the agreed 220 to 320 pt range that
@@ -236,6 +243,44 @@ func TestSidebarArrowKeysWalkSelection(t *testing.T) {
 	tt.Key(0, ui.KeyDown)
 	if a.Selected != "channel:ch-a" {
 		t.Fatalf("Down from the fold row selected %q, want channel:ch-a", a.Selected)
+	}
+}
+
+// TestSidebarArrowFocusRingAfterPointerClick proves the keyboard focus reads
+// after a pointer press, which clears MyGo's focus-visible flag: clicking a
+// row must not leave the next arrow move without a ring.
+func TestSidebarArrowFocusRingAfterPointerClick(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		a := sidebarTestApp(t, true)
+		w := &Window{app: a, selectedIndex: new(int)}
+		tt := ui.NewTester(w.view, 1280, 808)
+		tt.SetDark(dark)
+		tt.Frame()
+		tokens := mui.NewTokens(nil, dark)
+
+		if err := tt.Click("Favorites"); err != nil {
+			t.Fatalf("dark=%v: click Favorites: %v", dark, err)
+		}
+		tt.Frame()
+		if a.Selected != "favorites" {
+			t.Fatalf("dark=%v: click selected %q, want favorites", dark, a.Selected)
+		}
+		if _, _, ok := ringLines(t, tt, tokens, int(defaultSidebarWidth)); ok {
+			t.Fatalf("dark=%v: pointer focus painted a keyboard ring", dark)
+		}
+
+		tt.Key(0, ui.KeyDown)
+		if a.Selected != "channel:ch-a" {
+			t.Fatalf("dark=%v: Down after a click selected %q, want channel:ch-a", dark, a.Selected)
+		}
+		tt.Frame()
+		first, last, ok := ringLines(t, tt, tokens, int(defaultSidebarWidth))
+		if !ok {
+			t.Fatalf("dark=%v: Down after a click moved the focus without a ring", dark)
+		}
+		if last-first < int(mui.SidebarRowHeight) {
+			t.Fatalf("dark=%v: ring spans %d px, want at least one %v pt row", dark, last-first, mui.SidebarRowHeight)
+		}
 	}
 }
 

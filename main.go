@@ -66,6 +66,7 @@ type Window struct {
 	grid               ui.GridState
 	selectedIndex      *int
 	sidebarFocus       string // sidebar row that takes the focus in the next frame
+	sidebarKeyboard    string // sidebar row that arrow navigation focused
 	sidebarWidth       float32
 	contentWidth       float32
 	detailsWidth       float32
