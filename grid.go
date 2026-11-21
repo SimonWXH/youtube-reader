@@ -1,7 +1,7 @@
 package main
 
 import (
-	"strings"
+	"math"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -9,22 +9,78 @@ import (
 	mui "github.com/simon/youtube-reader/ui"
 )
 
-func (w *Window) channelLink(c *ui.Context, t mui.Tokens, v core.Video) {
-	link := ui.Text(c, v.ChannelTitle).FontSize(13).TextColor(t.Muted).SingleLine().Grow(1)
-	if v.ChannelID == "" {
-		return
-	}
-	open := func() { c.OpenURL(channelURL(v.ChannelID)) }
-	link.Cursor(ui.CursorPointer).Tooltip("Open "+v.ChannelTitle+" on YouTube").Role(ui.RoleLink).Focusable().OnClick(open).OnShortcut(0, ui.KeyEnter, open)
+// The video grid keeps the framework's virtual scrolling: ui.GridView owns the
+// rows and builds only the ones in view. These are the card measurements it is
+// given, so a card is a full-bleed 16:9 thumbnail over a fixed text block.
+const (
+	// gridCardMinWidth is the narrowest a card gets before the grid drops a
+	// column.
+	gridCardMinWidth float32 = 200
+	// gridCardMaxWidth is the widest a card gets: a wider column is split.
+	gridCardMaxWidth float32 = 280
+	// gridCardTextBlock is the card's text area below the thumbnail: 8 pt
+	// padding, a two-line 13/18 title (36), 4 pt, an 18 pt footer row and
+	// 8 pt padding. Two points stay clear at the bottom of the card.
+	gridCardTextBlock float32 = 76
+	// gridThumbAspect is the thumbnail's height over the card's width.
+	gridThumbAspect float32 = 9.0 / 16.0
+	// gridCellInset is the clear 2 pt border the framework reserves on every
+	// GridView cell, so that a cell's own selection stroke never moves its
+	// content. The card cancels it: its width is the column's width and its
+	// gutters are the grid's 8 pt gap.
+	gridCellInset float32 = 2
+	// gridFitEpsilon keeps the framework's float division from rounding a
+	// column away when a minimum width divides the pane exactly.
+	gridFitEpsilon float32 = 0.05
+)
+
+// gridMetrics is how one grid of cards lays out at one content width: the
+// columns it takes, and the width and height each card then has.
+type gridMetrics struct {
+	Columns int
+	Width   float32
+	Height  float32
 }
 
-func channelURL(channelID string) string {
-	return "https://www.youtube.com/channel/" + channelID
+// gridCardMetrics reads the card metrics for a grid content width (the pane
+// less the grid's padding) and the grid's 8 pt gap: as many columns as keep
+// every card at least gridCardMinWidth wide, at most the settings cap, and
+// then enough more that no card is wider than gridCardMaxWidth. A pane too
+// narrow to hold both limits keeps its cards at gridCardMinWidth and shows
+// fewer of them.
+func gridCardMetrics(available, gap float32, maxColumns int) gridMetrics {
+	available = max(available, 1)
+	gap = max(gap, 0)
+	maxColumns = clampInt(maxColumns, minMaxGridColumns, maxMaxGridColumns)
+	fitting := max(int(math.Floor(float64((available+gap)/(gridCardMinWidth+gap)))), 1)
+	columns := clampInt(fitting, 1, maxColumns)
+	// The width limit wins over the cap, even when that takes more columns
+	// than the setting allows, and gives way to the minimum width where a
+	// narrow pane cannot keep both.
+	if fewest := int(math.Ceil(float64((available + gap) / (gridCardMaxWidth + gap)))); fewest > columns && fewest <= fitting {
+		columns = fewest
+	}
+	width := (available - gap*float32(columns-1)) / float32(columns)
+	return gridMetrics{Columns: columns, Width: width, Height: gridCardHeight(width)}
+}
+
+// gridCardHeight is the agreed card height: the width times nine sixteenths
+// for the thumbnail, plus the text block.
+func gridCardHeight(width float32) float32 {
+	return width*gridThumbAspect + gridCardTextBlock
+}
+
+// gridMinWidth is the minimum item width ui.GridView needs to lay the cards
+// out in exactly these columns at this width.
+func (m gridMetrics) gridMinWidth(gap float32) float32 {
+	return m.Width - gap - gridFitEpsilon
 }
 
 func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 	videos := w.app.VisibleVideos()
-	ui.Column(c).Grow(1).Padding(0, 12, 16, 12).Children(func() {
+	gap := c.Theme().Space(2)
+	padding := mui.Space(4)
+	ui.Column(c).Grow(1).Padding(padding).Children(func() {
 		if len(videos) == 0 {
 			if w.app.SelectedVideoID != "" {
 				w.app.SelectedVideoID = ""
@@ -48,60 +104,161 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 		}
 		w.selectedIndex = &target
 		w.grid.Selected = w.selectedIndex
-		minWidth := w.gridMinWidth(c, w.app.settingsSnapshot().MaxGridColumns)
-		grid := ui.GridView(c, &w.grid, len(videos), minWidth, 302, func(i int) {
-			v := videos[i]
-			selected := w.app.SelectedVideoID == v.ID
-			card := ui.Column(c).Height(302).Gap(5).Padding(12).Radius(10).Background(t.Surface).Border(1, t.BorderSoft).Transition(mui.Fade).Clip()
-			if selected {
-				card.Border(1, t.Accent)
-			} else if card.Hovered() {
-				card.Background(t.SurfaceAlt)
-			}
-			card.Children(func() {
-				ui.Row(c).Height(160).FillWidth().Radius(8).Clip().Children(func() {
-					mui.Thumbnail(c, t, v.ThumbnailURL, 0, 0)
-				})
-				ui.Text(c, v.Title).Bold().FontSize(14).FixedLineHeight(20).Height(40).MaxLines(2).Wrap().Label(v.Title)
-				if desc := strings.TrimSpace(v.Description); desc != "" {
-					ui.Text(c, desc).FontSize(13).TextColor(t.Muted).FixedLineHeight(18).Height(36).MaxLines(2)
-				}
-				ui.Row(c).Height(18).Gap(8).AlignItems(ui.Center).Children(func() {
-					if !w.app.Sync.IsRead(v.ID) {
-						ui.Row(c).Size(6, 6).Radius(3).Background(t.Accent).Label("Unread")
-					}
-					mui.ChannelAvatar(c, t, v.AvatarURL, v.ChannelTitle, 18)
-					w.channelLink(c, t, v)
-					if v.IsShort {
-						ui.Text(c, "Shorts").FontSize(13).TextColor(t.Muted).SingleLine()
-					}
-					ui.Text(c, core.RelativeDate(v.PublishedAt, time.Now())).FontSize(13).TextColor(t.Muted).SingleLine()
-				})
-			})
-		}).Grow(1)
+		metrics := gridCardMetrics(w.gridContentWidth(padding), gap, w.app.settingsSnapshot().MaxGridColumns)
+		// The ring belongs to the chosen card, not to the scrolling area.
+		grid := ui.GridView(c, &w.grid, len(videos), metrics.gridMinWidth(gap), metrics.Height, func(i int) {
+			w.videoCard(c, t, videos[i], metrics)
+		}).FocusRing(false).Grow(1)
+		w.trackGridFocus(c, grid)
 		if grid.Changed() {
 			if w.grid.Selected != nil && *w.grid.Selected < len(videos) {
 				w.app.SelectedVideoID = videos[*w.grid.Selected].ID
 			}
 		}
+		if grid.Submitted() {
+			w.openSelectedVideo(c)
+		}
 	})
 }
 
-func (w *Window) gridMinWidth(c *ui.Context, maxColumns int) float32 {
+// trackGridFocus keeps whether the grid shows the keyboard focus, which the
+// cards read while they build, before the grid itself exists in the pass. A
+// change asks for the pass that paints it.
+func (w *Window) trackGridFocus(c *ui.Context, grid ui.Element) {
+	focused := grid.FocusVisible()
+	if focused == w.gridKeyboardFocus {
+		return
+	}
+	w.gridKeyboardFocus = focused
+	c.AnimationFrame()
+}
+
+// gridContentWidth is the width the cards have to fill: the grid pane on this
+// frame, less the grid's own padding.
+func (w *Window) gridContentWidth(padding float32) float32 {
 	available := w.gridAvailableWidth
 	if available <= 0 {
 		available = w.contentWidth
 	}
-	return gridMinWidthForAvailable(available, c.Theme().Space(2), maxColumns)
+	return available - 2*padding
 }
 
-// gridMinWidthForAvailable uses the width the grid will actually occupy on
-// this build, not the split's stale previous-frame width. That keeps the
-// first paint and later divider drags within the configured column cap.
-func gridMinWidthForAvailable(available, gap float32, maxColumns int) float32 {
-	maxColumns = clampInt(maxColumns, minMaxGridColumns, maxMaxGridColumns)
-	available -= 24
-	return max(float32(200), available/float32(maxColumns)-gap)
+// openSelectedVideo opens the selected video in YouTube, as Return and a
+// double click on its card do, and marks it watched.
+func (w *Window) openSelectedVideo(c *ui.Context) {
+	v, ok := w.app.VideoByID(w.app.SelectedVideoID)
+	if !ok {
+		return
+	}
+	w.app.MarkRead(v)
+	c.OpenURL("https://www.youtube.com/watch?v=" + v.ID)
+}
+
+func (w *Window) videoCard(c *ui.Context, t mui.Tokens, v core.Video, m gridMetrics) {
+	selected := w.app.SelectedVideoID == v.ID
+	face := t.Surface
+	card := ui.Column(c).Height(m.Height).Margin(-gridCellInset).Radius(mui.RadiusCard).Background(face).Clip().Transition(mui.Fade)
+	hovered := card.Hovered()
+	if hovered && !selected {
+		face = t.SurfaceAlt
+		card.Background(face)
+	}
+	card.Children(func() {
+		ui.Row(c).Height(m.Height - gridCardTextBlock).FillWidth().Children(func() {
+			mui.Thumbnail(c, t, v.ThumbnailURL, 0, 0)
+		})
+		ui.Column(c).Grow(1).Padding(mui.Space(2)).Gap(mui.Space(1)).Children(func() {
+			mui.CardTitle.Apply(ui.Text(c, v.Title)).
+				Height(mui.CardTitle.LineHeight * 2).MaxLines(2).Wrap().Label(v.Title)
+			w.videoCardFooter(c, t, v)
+		})
+	})
+	stroke := t.BorderSoft
+	if selected {
+		stroke = t.Accent
+	}
+	// The keyboard focus ring is the grid's, so it shows only once the chosen
+	// card was reached from the keyboard, and it sits outside the selection
+	// stroke and its halo.
+	focused := selected && w.gridKeyboardFocus
+	card.DrawOver(func(p *ui.Painter, r ui.Rect) {
+		if hovered || selected {
+			// The framework paints the cell's own hover and selection faces
+			// under the card. Cover the corners its smaller radius leaves open
+			// so only this card's faces show.
+			coverCardCorners(p, r, mui.RadiusCard, t.App, face)
+		}
+		p.Stroke(r, stroke, mui.RadiusCard, mui.Hairline)
+		if selected {
+			p.Stroke(outsetRect(r, mui.FocusRing), t.Accent.Alpha(0.24), mui.RadiusCard+mui.FocusRing, mui.FocusRing)
+		}
+		if focused {
+			// The ring's inner edge sits FocusRingGap outside the card, clear
+			// of the selection stroke and its halo.
+			offset := mui.FocusRingGap + mui.FocusRing
+			p.Stroke(outsetRect(r, offset), t.Focus, mui.RadiusCard+offset, mui.FocusRing)
+		}
+	})
+}
+
+// videoCardFooter is the card's 18 pt footer: the unwatched dot, the channel
+// avatar and link, and the relative time, in the 11 pt footer role.
+func (w *Window) videoCardFooter(c *ui.Context, t mui.Tokens, v core.Video) {
+	ui.Row(c).Height(18).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
+		if !w.app.Sync.IsRead(v.ID) {
+			ui.Row(c).Size(6, 6).Radius(mui.RadiusCheck).Background(t.Accent).Label("Unwatched")
+		}
+		mui.ChannelAvatar(c, t, v.AvatarURL, v.ChannelTitle, 18)
+		w.channelLink(c, t, v)
+		if v.IsShort {
+			mui.Metadata.Apply(ui.Text(c, "Shorts")).TextColor(t.Muted).SingleLine()
+		}
+		mui.Metadata.Apply(ui.Text(c, core.RelativeDate(v.PublishedAt, time.Now()))).TextColor(t.Muted).SingleLine()
+	})
+}
+
+func (w *Window) channelLink(c *ui.Context, t mui.Tokens, v core.Video) {
+	link := mui.Metadata.Apply(ui.Text(c, v.ChannelTitle)).TextColor(t.Muted).SingleLine().Grow(1)
+	if v.ChannelID == "" {
+		return
+	}
+	open := func() { c.OpenURL(channelURL(v.ChannelID)) }
+	link.Cursor(ui.CursorPointer).Tooltip("Open "+v.ChannelTitle+" on YouTube").Role(ui.RoleLink).Focusable().OnClick(open).OnShortcut(0, ui.KeyEnter, open)
+}
+
+func channelURL(channelID string) string {
+	return "https://www.youtube.com/channel/" + channelID
+}
+
+// coverCardCorners paints behind over the square corners a card's radius cuts
+// away, then puts the card's own rounded face back inside them. The framework
+// paints a plain background corner there, and this leaves only the card's.
+func coverCardCorners(p *ui.Painter, r ui.Rect, radius float32, behind, face ui.Color) {
+	for _, corner := range [4][2]bool{{false, false}, {true, false}, {false, true}, {true, true}} {
+		right, bottom := corner[0], corner[1]
+		x, y := r.X, r.Y
+		if right {
+			x = r.X + r.W - radius
+		}
+		if bottom {
+			y = r.Y + r.H - radius
+		}
+		square := ui.Rect{X: x, Y: y, W: radius, H: radius}
+		disc := ui.Rect{X: x, Y: y, W: 2 * radius, H: 2 * radius}
+		if right {
+			disc.X -= radius
+		}
+		if bottom {
+			disc.Y -= radius
+		}
+		p.Clip(square, 0, func() { p.Fill(square, behind, 0) })
+		p.Clip(square, 0, func() { p.Fill(disc, face, radius) })
+	}
+}
+
+// outsetRect grows r by d on every side.
+func outsetRect(r ui.Rect, d float32) ui.Rect {
+	return ui.Rect{X: r.X - d, Y: r.Y - d, W: r.W + 2*d, H: r.H + 2*d}
 }
 
 func clampInt(v, min, max int) int {

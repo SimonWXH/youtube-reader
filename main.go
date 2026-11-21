@@ -64,6 +64,7 @@ type Window struct {
 	app                *App
 	window             *mygo.Window
 	grid               ui.GridState
+	gridKeyboardFocus  bool
 	selectedIndex      *int
 	sidebarWidth       float32
 	contentWidth       float32
