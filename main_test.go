@@ -195,19 +195,47 @@ func chromeControl(t *testing.T, tt *ui.Tester, name string) ui.AccessInfo {
 	return ui.AccessInfo{}
 }
 
-// unwatchedGlyph checks which glyph the collapsed Unwatched control draws:
-// the empty box when the filter is off, the check when it is on.
-func unwatchedGlyph(t *testing.T, tt *ui.Tester) string {
+// unwatchedGlyph returns the box the collapsed Unwatched control draws its
+// 16 pt glyph in.
+func unwatchedGlyph(t *testing.T, tt *ui.Tester) ui.Rect {
 	t.Helper()
 	for _, name := range []string{"Unwatched off", "Unwatched on"} {
 		if r, ok := tt.Find(name); ok {
 			if r.W != toolbarGlyph || r.H != toolbarGlyph {
 				t.Fatalf("%s glyph is %v, want the %v pt icon", name, r, toolbarGlyph)
 			}
-			return name
+			return r
 		}
 	}
-	return ""
+	t.Fatal("the collapsed Unwatched control draws no glyph")
+	return ui.Rect{}
+}
+
+// unwatchedShape reads the drawn glyph's shape from the frame: whether the
+// box's top edge and the check's stroke carry ink. It samples pixels rather
+// than the label assigned beside the glyph, so drawing the check while the
+// filter is off cannot pass as the empty box.
+func unwatchedShape(t *testing.T, tt *ui.Tester) (box, check bool) {
+	t.Helper()
+	r := unwatchedGlyph(t, tt)
+	img := tt.Image()
+	// The box's empty lower-right interior is the reference for no ink.
+	blank := img.RGBAAt(int(r.X)+11, int(r.Y)+11)
+	ink := func(x, y int) bool {
+		c := img.RGBAAt(int(r.X)+x, int(r.Y)+y)
+		dist := 0
+		for _, pair := range [][2]uint8{{c.R, blank.R}, {c.G, blank.G}, {c.B, blank.B}} {
+			d := int(pair[0]) - int(pair[1])
+			if d < 0 {
+				d = -d
+			}
+			dist += d
+		}
+		return dist > 120
+	}
+	// The box's top edge at x=8 is inked in both states; the check's second
+	// segment crosses the box's centre at the (8, 8) pixel.
+	return ink(8, 2), ink(8, 8)
 }
 
 // TestToolbarChrome checks the frame the board's A1/A1.1 draws: the 52 pt
@@ -388,8 +416,8 @@ func TestCollapsedChannelFilterCarriesTheChoiceInItsTooltip(t *testing.T) {
 
 // TestCollapsedUnwatchedToggleFilters checks the collapsed Unwatched control
 // keeps the check box's role and activation: a click and Space toggle the
-// filter and the count follows, and the glyph shows the state in greyscale
-// terms, an empty box while off and a check while on.
+// filter and the count follows, and the drawn glyph shows the state in
+// greyscale terms, an empty box while off and a check while on.
 func TestCollapsedUnwatchedToggleFilters(t *testing.T) {
 	w := chromeWindow(t)
 	w.app.SelectedVideoID = "v1"
@@ -408,8 +436,8 @@ func TestCollapsedUnwatchedToggleFilters(t *testing.T) {
 	if box.Checked {
 		t.Fatal("collapsed check box reports checked while the filter is off")
 	}
-	if got := unwatchedGlyph(t, tt); got != "Unwatched off" {
-		t.Fatalf("Unwatched draws %q while off, want the empty box", got)
+	if boxInk, checkInk := unwatchedShape(t, tt); !boxInk || checkInk {
+		t.Fatalf("Unwatched off draws box %v check %v, want the empty box", boxInk, checkInk)
 	}
 	if !tt.HasText("3 videos") {
 		t.Fatalf("count before filtering is %q", tt.Texts())
@@ -424,8 +452,8 @@ func TestCollapsedUnwatchedToggleFilters(t *testing.T) {
 	if box = chromeControl(t, tt, "Unwatched"); !box.Checked {
 		t.Fatal("collapsed check box does not report checked while the filter is on")
 	}
-	if got := unwatchedGlyph(t, tt); got != "Unwatched on" {
-		t.Fatalf("Unwatched draws %q while on, want the check", got)
+	if boxInk, checkInk := unwatchedShape(t, tt); !boxInk || !checkInk {
+		t.Fatalf("Unwatched on draws box %v check %v, want the check", boxInk, checkInk)
 	}
 	if !tt.HasText("1 video") {
 		t.Fatalf("count after filtering is %q", tt.Texts())
@@ -438,8 +466,8 @@ func TestCollapsedUnwatchedToggleFilters(t *testing.T) {
 	if box = chromeControl(t, tt, "Unwatched"); box.Checked {
 		t.Fatal("collapsed check box reports checked after Space cleared it")
 	}
-	if got := unwatchedGlyph(t, tt); got != "Unwatched off" {
-		t.Fatalf("Unwatched draws %q after clearing, want the empty box", got)
+	if boxInk, checkInk := unwatchedShape(t, tt); !boxInk || checkInk {
+		t.Fatalf("Unwatched after clearing draws box %v check %v, want the empty box", boxInk, checkInk)
 	}
 	if !tt.HasText("3 videos") {
 		t.Fatalf("count after clearing is %q", tt.Texts())
