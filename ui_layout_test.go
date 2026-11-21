@@ -68,18 +68,23 @@ func TestBoundedSidebarWidth(t *testing.T) {
 
 func TestPersistedDetailsWidth(t *testing.T) {
 	const total float32 = 1280
+	shown, hidden := splitDividerWidth(), float32(0)
 
-	if _, ok := persistedDetailsWidth(total, 400, 850, false, true); ok {
+	if _, ok := persistedDetailsWidth(total, 400, 850, shown, false, true); ok {
 		t.Fatal("details width must not be written when there is no details pane")
 	}
-	if _, ok := persistedDetailsWidth(total, 400, 850, true, false); ok {
+	if _, ok := persistedDetailsWidth(total, 400, 850, shown, true, false); ok {
 		t.Fatal("details width must not be written when the inner split did not change")
 	}
-	got, ok := persistedDetailsWidth(total, 400, 550, true, true)
-	if !ok || got != 327 {
-		t.Fatalf("persistedDetailsWidth = %v, %v; want 327, true", got, ok)
+	got, ok := persistedDetailsWidth(total, 400, 550, shown, true, true)
+	if !ok || got != 328 {
+		t.Fatalf("persistedDetailsWidth = %v, %v; want 328, true", got, ok)
 	}
-	if got, ok := persistedDetailsWidth(total, 400, 990, true, true); ok || got != 0 {
+	got, ok = persistedDetailsWidth(total, 0, 719, hidden, true, true)
+	if !ok || got != maxDetailsWidth {
+		t.Fatalf("persistedDetailsWidth with the sidebar hidden = %v, %v; want %v, true", got, ok, maxDetailsWidth)
+	}
+	if got, ok := persistedDetailsWidth(total, 400, 990, shown, true, true); ok || got != 0 {
 		t.Fatalf("persistedDetailsWidth with too-small details = %v, %v; want 0, false", got, ok)
 	}
 }

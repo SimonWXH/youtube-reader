@@ -232,7 +232,8 @@ func (w *Window) statusLabel() string {
 // aligned in tabular figures.
 func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
 	strip := ui.Row(c).Height(contentStripHeight).Shrink(0).FillWidth().
-		Padding(0, mui.Space(4)).AlignItems(ui.Center).Gap(mui.Space(2))
+		Padding(0, mui.Space(4)).AlignItems(ui.Center).Gap(mui.Space(2)).
+		Role(ui.RoleGroup).Label("Video filters")
 	strip.Draw(func(p *ui.Painter, r ui.Rect) {
 		p.Fill(ui.Rect{X: r.X, Y: r.Y + r.H - mui.Hairline, W: r.W, H: mui.Hairline}, t.BorderSoft, 0)
 	})

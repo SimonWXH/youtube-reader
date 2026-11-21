@@ -198,7 +198,7 @@ func chromeControl(t *testing.T, tt *ui.Tester, name string) ui.AccessInfo {
 // and the 44 pt content strip with its four controls and the Unwatched label.
 func TestToolbarChrome(t *testing.T) {
 	for _, size := range [][2]int{{1280, 808}, {960, 640}} {
-		width, height := float32(size[0]), float32(size[1])
+		width := float32(size[0])
 		w := chromeWindow(t)
 		tt := ui.NewTester(w.shell, size[0], size[1])
 		tt.Frame()
@@ -223,14 +223,11 @@ func TestToolbarChrome(t *testing.T) {
 			t.Fatalf("%dx%d: More role = %v, want a menu button", size[0], size[1], role)
 		}
 
-		strip, ok := tt.Find("All channels")
-		if !ok {
-			t.Fatalf("%dx%d: channel filter missing", size[0], size[1])
+		strip := chromeControl(t, tt, "Video filters").Bounds
+		if strip.Y != 52 || strip.X+strip.W != width || strip.H != 44 {
+			t.Fatalf("%dx%d: filter strip at %v, want y=52 h=44 to the window's right edge (%v)", size[0], size[1], strip, width)
 		}
-		if strip.Y < 52 || strip.Y+strip.H > 52+44 {
-			t.Fatalf("%dx%d: channel filter at y=%v..%v outside the 44 pt strip", size[0], size[1], strip.Y, strip.Y+strip.H)
-		}
-		for _, label := range []string{"Search videos", "Unwatched"} {
+		for _, label := range []string{"All channels", "Search videos", "Unwatched"} {
 			if !tt.HasText(label) {
 				t.Fatalf("%dx%d: filter strip has no %q", size[0], size[1], label)
 			}
@@ -240,9 +237,6 @@ func TestToolbarChrome(t *testing.T) {
 		}
 		if !tt.HasText("3 videos") {
 			t.Fatalf("%dx%d: count missing: %q", size[0], size[1], tt.Texts())
-		}
-		if height < 52+44 {
-			t.Fatalf("%dx%d: chrome taller than the window", size[0], size[1])
 		}
 	}
 }
@@ -388,32 +382,45 @@ func TestSettingsTakesTheWindowTitle(t *testing.T) {
 }
 
 // TestToolbarSidebarHiddenKeepsTheDetailPane checks the hidden sidebar leaves
-// no gap: the grid takes the sidebar's room and the detail pane keeps the
-// width the split gives it (its 1 pt bookkeeping aside).
+// no gap and keeps the detail pane's width: the grid takes the sidebar's room,
+// the divider meets the drawer, and a drag while folded saves what it shows.
 func TestToolbarSidebarHiddenKeepsTheDetailPane(t *testing.T) {
 	const width float32 = 1280
 	w := chromeWindow(t)
 	w.app.SelectedVideoID = "v1"
-	shown := ui.NewTester(w.shell, 1280, 808)
-	shown.Frame()
-	gridShown := w.contentWidth
-	sidebarRoom := w.sidebarWidth
-	drawerShown := width - w.sidebarWidth - 2*splitDividerWidth() - gridShown
+	tt := ui.NewTester(w.shell, 1280, 808)
+	tt.Frame()
+	drawerShown := chromeControl(t, tt, "Video details").Bounds
 
 	w.sidebarHidden = true
-	hidden := ui.NewTester(w.shell, 1280, 808)
-	hidden.Frame()
-	gridHidden := w.contentWidth
-	drawerHidden := width - gridHidden - splitDividerWidth()
+	tt.Frame()
+	drawerHidden := chromeControl(t, tt, "Video details").Bounds
 
-	if room := gridHidden - gridShown; room < sidebarRoom {
-		t.Fatalf("grid took %v of the hidden sidebar's %v", room, sidebarRoom)
+	if drawerHidden.W != drawerShown.W {
+		t.Fatalf("detail pane width changed: %v -> %v", drawerShown.W, drawerHidden.W)
 	}
-	if d := drawerHidden - drawerShown; d < 0 || d > splitDividerWidth() {
-		t.Fatalf("detail pane width changed: %v -> %v", drawerShown, drawerHidden)
+	if drawerHidden.X+drawerHidden.W != width {
+		t.Fatalf("detail pane ends at %v, want the window's %v", drawerHidden.X+drawerHidden.W, width)
 	}
-	if got := gridHidden + drawerHidden + splitDividerWidth(); got != width {
-		t.Fatalf("hidden layout leaves a gap: grid %v + details %v + divider = %v, want %v",
-			gridHidden, drawerHidden, got, width)
+	divider, ok := tt.AccessByRole(ui.RoleSplitter, "")
+	if !ok {
+		t.Fatal("no divider between the grid and the detail pane")
+	}
+	if divider.Bounds.X+divider.Bounds.W != drawerHidden.X {
+		t.Fatalf("gap between the divider at %v and the detail pane at %v", divider.Bounds, drawerHidden)
+	}
+
+	target := drawerShown.W + 60
+	x, y := divider.Bounds.X+divider.Bounds.W/2, divider.Bounds.Y+200
+	tt.Press(x, y)
+	tt.Move(x-60, y)
+	tt.Release(x-60, y)
+	tt.Frame()
+	dragged := chromeControl(t, tt, "Video details").Bounds
+	if dragged.W != target {
+		t.Fatalf("dragged detail pane is %v wide, want %v", dragged.W, target)
+	}
+	if got := w.app.settingsSnapshot().DetailsWidth; got != target {
+		t.Fatalf("dragged detail pane saved %v, want %v", got, target)
 	}
 }
