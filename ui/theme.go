@@ -7,8 +7,8 @@ import (
 )
 
 // Motion durations. Every animation in the app uses Ease, the one shared
-// cubic-bezier(.22, 1, .36, 1) curve, and every one of them is skipped under
-// Reduce Motion.
+// cubic-bezier(.22, 1, .36, 1) curve. Under Reduce Motion the framework
+// skips movement and sizing; colour changes still animate.
 const (
 	// MotionInteraction is hover, press, and selection colour changes.
 	MotionInteraction = 120 * time.Millisecond
