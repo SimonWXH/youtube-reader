@@ -62,6 +62,7 @@ func TestGroupCollapseDefaultsCollapsedAndPersists(t *testing.T) {
 func TestCardChannelNameOpensChannelAndPreservesCardSelection(t *testing.T) {
 	video := core.Video{ID: "video-1", ChannelID: "UC_1", ChannelTitle: "The PrimeTime", Title: "Episode"}
 	a := &App{
+		Dir:             t.TempDir(),
 		Selected:        "all",
 		Settings:        core.Settings{APIKey: "test-key", ExpandedGroups: map[string]bool{}},
 		SelectedVideoID: video.ID,
@@ -123,6 +124,7 @@ func TestCardChannelNameOpensChannelAndPreservesCardSelection(t *testing.T) {
 
 func TestGroupHeaderKeyboardToggleKeepsFocus(t *testing.T) {
 	a := &App{
+		Dir:      t.TempDir(),
 		Settings: core.Settings{APIKey: "test-key", ExpandedGroups: map[string]bool{}},
 		Groups:   []core.ChannelGroup{{ID: "group-1", Name: "Group", ChannelIDs: []string{"ch-1"}}},
 		Channels: []core.Channel{{ID: "ch-1", Title: "Group channel"}},
