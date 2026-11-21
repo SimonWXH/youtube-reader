@@ -50,7 +50,7 @@ type Tokens struct {
 	BorderSoft ui.Color // BorderSoft is the lighter card outline and in-group rule.
 	Text       ui.Color // Text is body copy and titles.
 	Muted      ui.Color // Muted is secondary copy and metadata.
-	Faint      ui.Color // Faint is the disabled-state label only: it clears 4.5:1 on a flat Surface but not on SurfaceAlt, the sidebar, or the app background, so secondary and metadata text uses Muted.
+	Faint      ui.Color // Faint is the disabled-state label only: in light it clears 4.5:1 on a flat Surface but not on SurfaceAlt, the sidebar, or the app background, while in dark it passes on all of them, so secondary and metadata text uses Muted.
 	Accent     ui.Color // Accent is the only highlight: primary fill, selection, links, the unwatched dot.
 	AccentText ui.Color // AccentText sits on an Accent fill.
 	AccentSoft ui.Color // AccentSoft is the selected-row and segmented-control fill.
