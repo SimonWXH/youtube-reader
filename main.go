@@ -12,9 +12,6 @@ import (
 )
 
 const (
-	defaultHeaderHeight  float32 = 128
-	settingsHeaderHeight float32 = 104
-
 	defaultSidebarWidth float32 = 256
 	defaultDetailsWidth float32 = 320
 
@@ -50,10 +47,15 @@ func realMain() {
 	mygo.App.WhenReady(func() {
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title: "YouTube Reader",
-			Width: 1280, Height: 840, MinWidth: 960, MinHeight: 640,
-			Content: ui.View(window.view),
+			Width: 1280, Height: 808, MinWidth: 960, MinHeight: 640,
+			// The view draws the 52 pt toolbar itself, under the traffic lights.
+			TitleBarStyle: mygo.TitleBarHiddenInset,
+			Content:       ui.View(window.shell),
 		})
 		window.window = win
+		// The menu bar carries Settings… at Command-Comma and mirrors every
+		// toolbar command, so the toolbar is never the only way to act.
+		window.installMenu()
 	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
@@ -61,8 +63,17 @@ func realMain() {
 }
 
 type Window struct {
-	app                *App
-	window             *mygo.Window
+	app    *App
+	window *mygo.Window
+	frame  *ui.Context // the last frame's context, for menu commands
+
+	// sidebarHidden folds the sidebar pane away from the toolbar's leading
+	// control or the View menu; the split layout reads it in detail.go.
+	sidebarHidden bool
+	// menuRefresh and menuSidebar are the system menu's mirror of the toolbar.
+	menuRefresh *mygo.MenuItem
+	menuSidebar *mygo.MenuItem
+
 	grid               ui.GridState
 	selectedIndex      *int
 	sidebarWidth       float32
@@ -72,6 +83,12 @@ type Window struct {
 }
 
 func (w *Window) toast(c *ui.Context, msg string, isError bool) {
+	if c == nil {
+		c = w.frame
+	}
+	if c == nil {
+		return
+	}
 	toast := ui.Toast{Title: msg, Timeout: 2 * time.Second}
 	if isError {
 		toast.Type = "error"
@@ -83,12 +100,17 @@ func (w *Window) runRefresh(c *ui.Context, force bool) {
 	if w.app.Busy {
 		return
 	}
+	if c == nil {
+		c = w.frame
+	}
 	w.app.Busy = true
+	w.setMenuBusy(true)
 	go func() {
 		outcome := w.app.Refresh(force)
 		if w.window != nil {
 			w.window.Update(func() {
 				w.app.Busy = false
+				w.setMenuBusy(false)
 				if outcome.Description != "" {
 					isError := len(outcome.Failures) > 0
 					w.toast(c, outcome.Description, isError)
@@ -101,6 +123,7 @@ func (w *Window) runRefresh(c *ui.Context, force bool) {
 			})
 		} else {
 			w.app.Busy = false
+			w.setMenuBusy(false)
 		}
 	}()
 }
@@ -157,7 +180,9 @@ func plural(n int) string {
 
 func (w *Window) content(c *ui.Context, t mui.Tokens) {
 	ui.Column(c).Grow(1).MinWidth(0).Background(t.App).Children(func() {
-		w.header(c, t)
+		if !w.app.SettingsOpen {
+			w.contentStrip(c, t)
+		}
 		if w.app.SettingsOpen {
 			w.settings(c, t)
 			return

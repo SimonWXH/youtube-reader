@@ -5,79 +5,266 @@ import (
 	"strings"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	mui "github.com/simon/youtube-reader/ui"
 )
 
-func (w *Window) header(c *ui.Context, t mui.Tokens) {
-	title := w.title()
-	subtitle := refreshedLabel(w.app.settingsSnapshot().LastRefresh)
-	if w.app.SettingsOpen {
-		title = "Settings"
-		subtitle = "Refresh, imports, sync and notifications"
-	}
-	headerHeight := defaultHeaderHeight
-	if w.app.SettingsOpen {
-		headerHeight = settingsHeaderHeight
-	}
-	ui.Column(c).Padding(16, 24, 12).Gap(12).Height(headerHeight).Shrink(0).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Children(func() {
-			ui.Column(c).Gap(2).Grow(1).Children(func() {
-				ui.Text(c, title).Bold().FontSize(28).FixedLineHeight(34).TextColor(t.Text).SingleLine()
-				if subtitle != "" {
-					ui.Text(c, subtitle).FontSize(13).TextColor(t.Muted).SingleLine()
-				}
-			})
-			state := mui.Default
-			if w.app.Busy {
-				state = mui.Loading
-			} else if len(w.app.settingsSnapshot().RecentFailures) > 0 {
-				state = mui.Error
-			}
-			if state == mui.Loading {
-				ui.Text(c, "Refreshing...").FontSize(13).TextColor(t.Muted)
-			}
-			if len(w.app.settingsSnapshot().RecentFailures) > 0 && !w.app.Busy {
-				ui.Text(c, "Refresh issue").FontSize(13).TextColor(t.Danger).Label("Refresh issue")
-			}
-			mui.StatefulButton(c, t, "refresh", "Refresh", mui.IconRefresh, false, state, func() {
-				w.runRefresh(c, true)
-			})
-			mui.StatefulButton(c, t, "settings", "Settings", mui.IconSettings, false, mui.Default, func() {
-				if w.app.SettingsOpen {
-					_ = w.app.SaveSettings()
-				}
-				w.app.SettingsOpen = !w.app.SettingsOpen
+// The window chrome takes its geometry from the agreed design (board A1/A1.1):
+// a 52 pt toolbar drawn over the hidden-inset title bar and a 44 pt list
+// filter strip under it. Toolbar controls are 28 pt with 16 pt glyphs and no
+// bezel; their spacing comes from the shared 4 pt ladder in ui/theme.go.
+const (
+	toolbarHeight      float32 = 52
+	toolbarControl     float32 = 28
+	toolbarGlyph       float32 = 16
+	contentStripHeight float32 = 44
+	channelMenuWidth   float32 = 160
+	searchFieldWidth   float32 = 200
+)
+
+// The two toolbar glyphs the shared ui/icons.go does not have yet: the
+// sidebar toggle and the overflow menu. They follow the same 24 pt box,
+// 1.5 pt stroke, round joins as the rest of the set.
+var (
+	toolbarIconSidebar = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>`))
+	toolbarIconMore    = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg>`))
+)
+
+// shell is the window root: the toolbar spans the window, as the title bar it
+// replaces does, so the traffic lights sit inside it; the panes sit below.
+// Keeping the toolbar here leaves the split layout in detail.go as it is,
+// apart from the sidebar-hidden flag it reads.
+func (w *Window) shell(c *ui.Context) {
+	t := c.Theme()
+	tokens := mui.NewTokens(t, t.Dark)
+	w.frame = c
+	ui.Column(c).Fill().Background(tokens.App).Children(func() {
+		w.toolbar(c, tokens)
+		w.view(c)
+	})
+}
+
+// toolbar draws the 52 pt window toolbar: the sidebar toggle on the leading
+// side, the window title centred on the window, and on the trailing side only
+// the refresh control and the overflow menu. Every control is borderless so
+// the bar reads as part of the window frame.
+func (w *Window) toolbar(c *ui.Context, t mui.Tokens) {
+	// The traffic lights keep their own room, so the leading control starts
+	// clear of them whatever the title bar style reports. Full screen has no
+	// controls to clear, so the bar keeps one panel inset instead.
+	leading := max(c.TitleBar().Left+mui.Space(2), mui.Space(4))
+	bar := ui.Column(c).Height(toolbarHeight).Shrink(0).FillWidth().Background(t.App).DragWindow()
+	bar.Draw(func(p *ui.Painter, r ui.Rect) {
+		p.Fill(ui.Rect{X: r.X, Y: r.Y + r.H - mui.Hairline, W: r.W, H: mui.Hairline}, t.BorderSoft, 0)
+	})
+	bar.Children(func() {
+		// The controls are one stop of Tab, as a toolbar's are natively; the
+		// arrows move between them.
+		ui.Row(c).Fill().Padding(0, mui.Space(4), 0, leading).AlignItems(ui.Center).
+			Role(ui.RoleToolbar).Label("Toolbar").FocusGroup(ui.Horizontal).Children(func() {
+			w.sidebarToggle(c, t)
+			ui.Spacer(c)
+			ui.Row(c).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
+				w.refreshControl(c, t)
+				w.overflowControl(c, t)
 			})
 		})
-		if w.app.SettingsOpen {
+		// The title centres on the window, not on what the traffic lights and
+		// the trailing group leave over.
+		ui.Row(c).Absolute().Left(0).Right(0).Top(0).Height(toolbarHeight).
+			Justify(ui.Center).AlignItems(ui.Center).
+			HitTest(func(x, y float32, r ui.Rect) bool { return false }).Children(func() {
+			title := ui.Text(c, w.title()).SingleLine()
+			if room := windowWidth(c) - 2*(leading+searchFieldWidth); room > 0 {
+				title = title.MaxWidth(room)
+			}
+			mui.ToolbarTitle.Apply(title).TextColor(t.Text)
+		})
+	})
+}
+
+// toolbarControl is one borderless 28 pt toolbar control. It takes the
+// sidebar, refresh, and overflow faces from the tokens and shows the focus
+// ring 3 pt outside its bounds.
+type toolbarControlSpec struct {
+	key      string
+	label    string
+	tooltip  string
+	on       bool     // drawn as chosen, in the accent tint
+	disabled bool     // no pointer, no keyboard activation
+	face     ui.Color // glyph colour; zero keeps the token default
+	content  func()   // the glyph, or a spinner while the control works
+	onClick  func()
+}
+
+func (w *Window) toolbarControl(c *ui.Context, t mui.Tokens, spec toolbarControlSpec) ui.Element {
+	face := t.Muted
+	switch {
+	case spec.disabled:
+		face = t.Faint
+	case spec.on:
+		face = t.Accent
+	case spec.face.A > 0:
+		face = spec.face
+	}
+	var bg ui.Color
+	if spec.on {
+		bg = t.AccentSoft
+	}
+	el := ui.ButtonBase(c).Key(spec.key).Size(toolbarControl, toolbarControl).Padding(0).
+		Radius(mui.RadiusControl).Background(bg).TextColor(face).Label(spec.label).
+		Tooltip(spec.tooltip).Cursor(ui.CursorPointer).Transition(mui.Fade).
+		FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
+	if spec.disabled {
+		el = el.Disabled(true)
+	}
+	el.Children(spec.content)
+	el.Draw(func(p *ui.Painter, r ui.Rect) {
+		if spec.disabled {
 			return
 		}
-		ui.Row(c).Height(34).AlignItems(ui.Center).Gap(12).Children(func() {
-			options := []string{"All channels"}
-			ids := []string{""}
-			for _, ch := range w.app.Channels {
-				options = append(options, ch.Title)
-				ids = append(ids, ch.ID)
+		if el.Pressed() || (el.Hovered() && !spec.on) {
+			p.Fill(r, t.SurfaceAlt, mui.RadiusControl)
+		}
+	})
+	if !spec.disabled && el.Clicked() && spec.onClick != nil {
+		spec.onClick()
+	}
+	return el
+}
+
+// sidebarToggle shows and hides the sidebar. It stays lit while the sidebar
+// is hidden so the frame says where the navigation went.
+func (w *Window) sidebarToggle(c *ui.Context, t mui.Tokens) {
+	w.toolbarControl(c, t, toolbarControlSpec{
+		key:     "sidebar-toggle",
+		label:   w.sidebarMenuLabel(),
+		tooltip: w.sidebarMenuLabel(),
+		on:      w.sidebarHidden,
+		content: func() { ui.Icon(c, toolbarIconSidebar).Size(toolbarGlyph, toolbarGlyph) },
+		onClick: func() { w.setSidebarHidden(!w.sidebarHidden) },
+	})
+}
+
+// refreshControl refreshes, and is the app's one visible sign that a refresh
+// is running: a spinner replaces the glyph in the same 28 pt box, and repeat
+// activation is disabled until the refresh returns.
+func (w *Window) refreshControl(c *ui.Context, t mui.Tokens) {
+	spec := toolbarControlSpec{
+		key:     "refresh",
+		label:   "Refresh",
+		tooltip: "Refresh",
+		content: func() { ui.Icon(c, mui.IconRefresh).Size(toolbarGlyph, toolbarGlyph) },
+		onClick: func() { w.runRefresh(c, true) },
+	}
+	switch {
+	case w.app.Busy:
+		spec.label, spec.tooltip, spec.disabled = "Refreshing", "Refreshing", true
+		spec.content = func() { ui.Spinner(c).Size(toolbarGlyph, toolbarGlyph).TextColor(t.Muted) }
+	case len(w.app.settingsSnapshot().RecentFailures) > 0:
+		// The failure words live in the overflow menu; the tinted glyph keeps
+		// the last refresh from failing silently.
+		spec.face, spec.tooltip = t.Danger, "Refresh issue"
+	}
+	w.toolbarControl(c, t, spec)
+}
+
+// overflowControl opens the menu of the app's secondary commands. MyGo draws
+// it in the window, so it lines up with the control's trailing edge.
+func (w *Window) overflowControl(c *ui.Context, t mui.Tokens) {
+	el := w.toolbarControl(c, t, toolbarControlSpec{
+		key:     "more",
+		label:   "More",
+		tooltip: "More",
+		content: func() { ui.Icon(c, toolbarIconMore).Size(toolbarGlyph, toolbarGlyph) },
+	})
+	el.PopoverMenuButton(func(m *ui.Menu) { w.overflowMenu(m) },
+		ui.PopoverMenuButtonOptions{At: ui.AnchorBottomEnd, Self: ui.AnchorTopEnd})
+}
+
+// overflowMenu is the toolbar's overflow: the refresh status first, then the
+// commands that also exist as toolbar controls or menu commands, then the
+// secondary ones. Anything that cannot run right now is dimmed, not hidden.
+func (w *Window) overflowMenu(m *ui.Menu) {
+	m.Item(w.statusLabel()).Disabled(true)
+	m.Separator()
+	if m.Item("Refresh").Shortcut(ui.Cmd, ui.KeyR).Disabled(w.app.Busy).Chosen() {
+		w.runRefresh(w.frame, true)
+	}
+	if m.Item("Settings…").Shortcut(ui.Cmd, ui.KeyComma).Chosen() {
+		w.toggleSettings()
+	}
+	m.Separator()
+	if m.Item("Import OPML…").Chosen() {
+		w.importOPML(w.frame)
+	}
+	if m.Item("Export Favorites…").Chosen() {
+		if err := w.app.ExportFavorites(); err != nil {
+			w.toast(w.frame, "Export failed: "+err.Error(), true)
+		} else {
+			w.toast(w.frame, "Favorites exported", false)
+		}
+	}
+	if m.Item("Restore Favorites…").Chosen() {
+		w.restoreFavorites(w.frame)
+	}
+}
+
+// statusLabel is the refresh status the overflow menu opens with: what the
+// header subtitle used to say, in the board's words.
+func (w *Window) statusLabel() string {
+	if w.app.Busy {
+		return "Refreshing…"
+	}
+	settings := w.app.settingsSnapshot()
+	if len(settings.RecentFailures) > 0 {
+		return "Refresh issue"
+	}
+	if label := refreshedLabel(settings.LastRefresh); label != "" {
+		return label
+	}
+	return "Not refreshed yet"
+}
+
+// contentStrip is the 44 pt list filter: the channel drop-down, the search
+// field, the unwatched check box, and the count of what is shown, right
+// aligned in tabular figures.
+func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
+	strip := ui.Row(c).Height(contentStripHeight).Shrink(0).FillWidth().
+		Padding(0, mui.Space(4)).AlignItems(ui.Center).Gap(mui.Space(2))
+	strip.Draw(func(p *ui.Painter, r ui.Rect) {
+		p.Fill(ui.Rect{X: r.X, Y: r.Y + r.H - mui.Hairline, W: r.W, H: mui.Hairline}, t.BorderSoft, 0)
+	})
+	strip.Children(func() {
+		options := []string{"All channels"}
+		ids := []string{""}
+		for _, ch := range w.app.Channels {
+			options = append(options, ch.Title)
+			ids = append(ids, ch.ID)
+		}
+		selected := "All channels"
+		for i, id := range ids {
+			if id == w.app.ChannelFilter {
+				selected = options[i]
 			}
-			selected := "All channels"
-			for i, id := range ids {
-				if id == w.app.ChannelFilter {
-					selected = options[i]
+		}
+		channel := ui.Select(c.Key("channel-filter"), &selected, options).Width(channelMenuWidth).
+			Height(toolbarControl).Padding(0, mui.Space(3)).FontSize(mui.Control.Size)
+		if channel.Changed() {
+			for i, label := range options {
+				if label == selected {
+					w.app.ChannelFilter = ids[i]
 				}
 			}
-			if ui.Select(c.Key("channel-filter"), &selected, options).Changed() {
-				for i, label := range options {
-					if label == selected {
-						w.app.ChannelFilter = ids[i]
-					}
-				}
-			}
-			ui.SearchField(c.Key("search"), &w.app.Search).Width(220).Label("Search videos")
-			ui.Checkbox(c.Key("unread"), &w.app.UnreadOnly, "未观看").Label("未观看").FontSize(14)
-			ui.Row(c).Grow(1)
-			ui.Text(c, fmt.Sprintf("%d videos", len(w.app.VisibleVideos()))).FontSize(13).TextColor(t.Muted).SingleLine()
-		})
+		}
+		ui.SearchField(c.Key("search"), &w.app.Search).Width(searchFieldWidth).
+			Height(toolbarControl).FontSize(mui.Control.Size).Label("Search videos")
+		ui.Checkbox(c.Key("unwatched"), &w.app.UnreadOnly, "Unwatched").
+			FontSize(mui.Control.Size).Label("Unwatched")
+		ui.Spacer(c)
+		mui.Metadata.Apply(ui.Text(c, fmt.Sprintf("%d videos", len(w.app.VisibleVideos())))).
+			TextColor(t.Muted).SingleLine()
 	})
 }
 
@@ -87,22 +274,25 @@ func refreshedLabel(stamp string) string {
 	}
 	t, err := time.Parse(time.RFC3339, stamp)
 	if err != nil {
-		return "Refreshed " + stamp
+		return "Last refresh " + stamp
 	}
 	d := time.Since(t)
 	switch {
 	case d < time.Minute:
-		return "Refreshed just now"
+		return "Last refresh just now"
 	case d < time.Hour:
-		return fmt.Sprintf("Refreshed %d min ago", int(d.Minutes()))
+		return fmt.Sprintf("Last refresh %d min ago", int(d.Minutes()))
 	case d < 24*time.Hour:
-		return fmt.Sprintf("Refreshed %d hr ago", int(d.Hours()))
+		return fmt.Sprintf("Last refresh %d hr ago", int(d.Hours()))
 	default:
-		return "Refreshed on " + t.Local().Format("Jan 2, 2006 at 15:04")
+		return "Last refresh on " + t.Local().Format("Jan 2, 2006 at 15:04")
 	}
 }
 
 func (w *Window) title() string {
+	if w.app.SettingsOpen {
+		return "Settings"
+	}
 	switch {
 	case w.app.Selected == "all":
 		return "All videos"
@@ -118,4 +308,92 @@ func (w *Window) title() string {
 		return ch.Title
 	}
 	return "YouTube Reader"
+}
+
+// installMenu builds the app's menu bar: Settings… at Command-Comma in the
+// App menu, and every toolbar command mirrored, so the toolbar is a shortcut
+// surface and never the only way to run a command.
+func (w *Window) installMenu() {
+	settings := &mygo.MenuItem{Label: "Settings…", Accelerator: "Cmd+,", Click: func(*mygo.MenuItem, *mygo.Window) {
+		w.toggleSettings()
+	}}
+	w.menuSidebar = &mygo.MenuItem{Label: w.sidebarMenuLabel(), Accelerator: "Ctrl+Cmd+S", Click: func(*mygo.MenuItem, *mygo.Window) {
+		w.setSidebarHidden(!w.sidebarHidden)
+	}}
+	w.menuRefresh = &mygo.MenuItem{Label: "Refresh", Accelerator: "Cmd+R", Click: func(*mygo.MenuItem, *mygo.Window) {
+		w.runRefresh(nil, true)
+	}}
+	appMenu := &mygo.MenuItem{Label: mygo.App.Name(), Submenu: []*mygo.MenuItem{
+		{Role: mygo.RoleAbout},
+		mygo.Separator(),
+		settings,
+		mygo.Separator(),
+		{Role: mygo.RoleServices},
+		mygo.Separator(),
+		{Role: mygo.RoleHide},
+		{Role: mygo.RoleHideOthers},
+		{Role: mygo.RoleUnhide},
+		mygo.Separator(),
+		{Role: mygo.RoleQuit},
+	}}
+	viewMenu := &mygo.MenuItem{Label: "View", Submenu: []*mygo.MenuItem{
+		w.menuRefresh,
+		mygo.Separator(),
+		w.menuSidebar,
+		{Role: mygo.RoleToggleFullScreen},
+	}}
+	mygo.App.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
+		appMenu,
+		{Role: mygo.RoleEditMenu},
+		viewMenu,
+		{Role: mygo.RoleWindowMenu},
+		{Role: mygo.RoleHelp},
+	}))
+}
+
+// setSidebarHidden hides or shows the sidebar pane from a toolbar control or
+// a menu command, both of which run on the main thread.
+func (w *Window) setSidebarHidden(hidden bool) {
+	apply := func() {
+		w.sidebarHidden = hidden
+		if w.menuSidebar != nil {
+			w.menuSidebar.SetLabel(w.sidebarMenuLabel())
+		}
+	}
+	if w.window != nil {
+		w.window.Update(apply)
+		return
+	}
+	apply()
+}
+
+func (w *Window) sidebarMenuLabel() string {
+	if w.sidebarHidden {
+		return "Show Sidebar"
+	}
+	return "Hide Sidebar"
+}
+
+// toggleSettings opens the settings page from the App menu or the overflow
+// menu, where the toolbar no longer carries a settings control.
+func (w *Window) toggleSettings() {
+	apply := func() {
+		if w.app.SettingsOpen {
+			_ = w.app.SaveSettings()
+		}
+		w.app.SettingsOpen = !w.app.SettingsOpen
+	}
+	if w.window != nil {
+		w.window.Update(apply)
+		return
+	}
+	apply()
+}
+
+// setMenuBusy dims the menu's Refresh command while a refresh is running, as
+// the toolbar control is disabled.
+func (w *Window) setMenuBusy(busy bool) {
+	if w.menuRefresh != nil {
+		w.menuRefresh.SetEnabled(!busy)
+	}
 }
