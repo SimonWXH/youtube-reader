@@ -41,6 +41,26 @@ type App struct {
 	LastSyncWrite      time.Time
 }
 
+// GroupCollapsed reports whether a subscription group's channel list is
+// folded. Groups default to collapsed when no preference has been stored.
+func (a *App) GroupCollapsed(groupID string) bool {
+	if a.Settings.ExpandedGroups != nil {
+		if expanded, ok := a.Settings.ExpandedGroups[groupID]; ok {
+			return !expanded
+		}
+	}
+	return true
+}
+
+// SetGroupCollapsed stores a group's folding state in local settings.
+func (a *App) SetGroupCollapsed(groupID string, collapsed bool) error {
+	if a.Settings.ExpandedGroups == nil {
+		a.Settings.ExpandedGroups = map[string]bool{}
+	}
+	a.Settings.ExpandedGroups[groupID] = !collapsed
+	return a.SaveSettings()
+}
+
 type RefreshOutcome = core.RefreshResult
 
 type NotificationPlan = core.NotificationPlan
@@ -66,6 +86,7 @@ func defaultSettings() core.Settings {
 		SidebarWidth:    defaultSidebarWidth,
 		DetailsWidth:    defaultDetailsWidth,
 		MaxGridColumns:  defaultMaxGridColumns,
+		ExpandedGroups:  map[string]bool{},
 	}
 }
 

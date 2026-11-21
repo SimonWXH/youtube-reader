@@ -320,14 +320,7 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 				w.app.Selected = "favorites"
 			})
 			for _, g := range w.app.Groups {
-				sectionHeader(c, t, g.Name)
-				for _, id := range g.ChannelIDs {
-					id := id
-					ch := w.channelByID(id)
-					mui.ChannelNavRow(c, t, fmt.Sprintf("group:%s:channel:%s", g.Name, id), ch.Title, ch.AvatarURL, w.app.Selected == "channel:"+id, func() {
-						w.app.Selected = "channel:" + id
-					})
-				}
+				w.groupSection(c, t, g)
 			}
 			sectionHeader(c, t, "Channels")
 			for _, ch := range w.app.Channels {
@@ -359,8 +352,57 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 	})
 }
 
+func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup) {
+	key := "group-collapse:" + g.ID
+	if key == "group-collapse:" {
+		key = "group-collapse:name:" + g.Name
+	}
+	collapsed := w.app.GroupCollapsed(g.ID)
+	if collapsed {
+		key += ":collapsed"
+	} else {
+		key += ":expanded"
+	}
+	headline := ui.ButtonBase(c).Key(key).Height(28).FillWidth().Gap(mui.Space(1)).Padding(0, mui.Space(1)).Radius(6).Background(t.Sidebar).TextColor(t.Faint).FontSize(13).Cursor(ui.CursorPointer).Transition(mui.Fade).FocusRingColor(t.Focus).FocusRingOffset(2)
+	headline.Children(func() {
+		glyph := mui.IconChevron
+		if !collapsed {
+			glyph = mui.IconChevronDown
+		}
+		ui.Icon(c, glyph).Size(14, 14)
+		ui.Text(c, g.Name).FontSize(13).SingleLine().Grow(1)
+		ui.Text(c, fmt.Sprintf("%d", len(g.ChannelIDs))).FontSize(12).SingleLine()
+	})
+	if headline.Clicked() {
+		_ = w.app.SetGroupCollapsed(g.ID, !collapsed)
+	}
+	if !collapsed {
+		for _, id := range g.ChannelIDs {
+			id := id
+			ch := w.channelByID(id)
+			mui.ChannelNavRow(c, t, fmt.Sprintf("group:%s:channel:%s", g.Name, id), ch.Title, ch.AvatarURL, w.app.Selected == "channel:"+id, func() {
+				w.app.Selected = "channel:" + id
+			})
+		}
+	}
+}
+
 func sectionHeader(c *ui.Context, t mui.Tokens, title string) {
 	ui.Text(c, title).FontSize(13).TextColor(t.Faint).Padding(20, 12, 8).SingleLine()
+}
+
+func (w *Window) channelLink(c *ui.Context, t mui.Tokens, v core.Video) {
+	link := ui.Text(c, v.ChannelTitle).FontSize(13).TextColor(t.Muted).SingleLine().Grow(1)
+	if v.ChannelID == "" {
+		return
+	}
+	link.Cursor(ui.CursorPointer).Tooltip("Open " + v.ChannelTitle + " on YouTube").OnClick(func() {
+		c.OpenURL(channelURL(v.ChannelID))
+	})
+}
+
+func channelURL(channelID string) string {
+	return "https://www.youtube.com/channel/" + channelID
 }
 
 func (w *Window) channelByID(id string) core.Channel {
@@ -570,7 +612,7 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 						ui.Row(c).Size(6, 6).Radius(3).Background(t.Accent).Label("Unread")
 					}
 					mui.ChannelAvatar(c, t, v.AvatarURL, v.ChannelTitle, 18)
-					ui.Text(c, v.ChannelTitle).FontSize(13).TextColor(t.Muted).SingleLine().Grow(1)
+					w.channelLink(c, t, v)
 					if v.IsShort {
 						ui.Text(c, "Shorts").FontSize(13).TextColor(t.Faint).SingleLine()
 					}
