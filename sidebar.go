@@ -65,7 +65,7 @@ type sidebarNav struct {
 	keys    []string          // every focusable row, in visual order
 	actions map[string]func() // row key -> the action its click runs
 	focus   string            // row to take the focus in this frame
-	at      int               // index of the focused row, -1 for none
+	at      int               // index into keys of the row that reported focus
 	focused string            // row that actually has the focus this frame
 }
 
