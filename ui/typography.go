@@ -12,7 +12,7 @@ const MonoFont = "monospace"
 // Weight names the three weights the type roles use. MyGo accepts 100-900, but
 // new surfaces stay within Regular, Medium, and Semibold: hierarchy comes from
 // a step in size and a step in weight, never from Light or Thin. The existing
-// Bold call sites in detail.go, main.go, toolbar.go, and settings.go are
+// Bold call sites in detail.go, main.go, and settings.go are
 // pre-migration and move to these roles with their zone.
 type Weight int
 

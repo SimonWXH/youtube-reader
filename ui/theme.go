@@ -108,7 +108,7 @@ func NewTokens(base *ui.Theme, prefersDark bool) Tokens {
 
 // Space maps to the app's 4 pt baseline grid: 4 inline, 8 tight, 12 item,
 // 16 panel, 20 section, 24 block, 32 margin, 40 large, 48 wide. New work uses
-// only these steps; the existing Gap(2) in toolbar.go is kept for now.
+// only these steps.
 func Space(n float32) float32 { return 4 * n }
 
 // Radii. New work keeps corners to these five values. The 50% circles in the
