@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"fmt"
-
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/netimage"
 )
@@ -25,36 +23,60 @@ func ChannelAvatar(c *ui.Context, tokens Tokens, url, title string, size float32
 		index += int(r)
 	}
 	bg := palette[index%len(palette)].Alpha(0.18)
-	ui.Row(c).Size(size, size).Radius(size/2).Background(bg).Border(1, tokens.BorderSoft).Center().Children(func() {
-		ui.Text(c, fmt.Sprintf("%s", initial)).FontSize(13).Bold().TextColor(tokens.Text)
+	ui.Row(c).Size(size, size).Radius(size/2).Background(bg).Border(Hairline, tokens.BorderSoft).Center().Children(func() {
+		Metadata.Apply(ui.Text(c, initial)).TextColor(tokens.Text)
 	})
 }
 
-// Thumbnail keeps the grid's 16:9 frames identical even if a network image
-// fails to load or is still in flight. A zero width or height fills its parent,
-// which is how the responsive grid keeps thumbnails edge to edge.
+// Thumbnail fills the 16:9 frame its caller gives it with the video's
+// thumbnail, or with a placeholder that states the frame's state: a neutral
+// frame while the picture comes, and one that names the failure when it
+// cannot load. Neither a missing URL nor a failed load leaves a gap. The
+// caller clips the frame to the card's corners, so the frame carries no
+// radius of its own.
 func Thumbnail(c *ui.Context, tokens Tokens, url string, w, h float32) {
-	fill := w <= 0 || h <= 0
 	if url != "" {
-		maxSide := int(w)
-		if maxSide <= 0 {
-			maxSide = 640
+		src, err := netimage.Load(c, url, netimage.Options{MaxSide: thumbMaxSide(w)})
+		if src != nil {
+			thumbnailFrame(netimage.Image(c, url, netimage.Options{MaxSide: thumbMaxSide(w)}), w, h)
+			return
 		}
-		image := netimage.Image(c, url, netimage.Options{MaxSide: maxSide}).Radius(8)
-		if fill {
-			image.Fill()
-		} else {
-			image.Size(w, h)
+		if err != nil {
+			thumbnailFrame(thumbnailPlaceholder(c, tokens, "Thumbnail unavailable", true), w, h)
+			return
 		}
+	}
+	thumbnailFrame(thumbnailPlaceholder(c, tokens, "Thumbnail loading", false), w, h)
+}
+
+// thumbnailFrame sizes a picture to the frame its caller gives it, or fills
+// the frame when the caller passes no size.
+func thumbnailFrame(el ui.Element, w, h float32) {
+	if w <= 0 || h <= 0 {
+		el.Fill()
 		return
 	}
-	placeholder := ui.Row(c).Radius(8).Background(tokens.SurfaceAlt)
-	if fill {
-		placeholder.Fill()
-	} else {
-		placeholder.Size(w, h)
+	el.Size(w, h)
+}
+
+// thumbnailPlaceholder is the frame a thumbnail shows before it loads, and
+// the one it keeps when it cannot: the neutral surface, and on a failure the
+// play glyph and the reason, so a card never shows a gap or a broken image.
+func thumbnailPlaceholder(c *ui.Context, tokens Tokens, label string, failed bool) ui.Element {
+	frame := ui.Row(c).Background(tokens.SurfaceAlt).Role(ui.RoleImage).Label(label)
+	if !failed {
+		return frame
 	}
-	placeholder.Center().Children(func() {
-		ui.Icon(c, IconPlay).Size(28, 28)
+	return frame.Tooltip(label).Center().Children(func() {
+		ui.Icon(c, IconPlay).Size(28, 28).TextColor(tokens.Muted)
 	})
+}
+
+// thumbMaxSide bounds the bitmap kept for a frame w wide, at about three
+// pixels per point.
+func thumbMaxSide(w float32) int {
+	if w <= 0 {
+		return 640
+	}
+	return int(w * 3)
 }

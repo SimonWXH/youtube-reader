@@ -108,14 +108,11 @@ func NewTokens(base *ui.Theme, prefersDark bool) Tokens {
 
 // Space maps to the app's 4 pt baseline grid: 4 inline, 8 tight, 12 item,
 // 16 panel, 20 section, 24 block, 32 margin, 40 large, 48 wide. New work uses
-// only these steps; the existing Gap(5) in grid.go and Gap(2) in toolbar.go are
-// kept for now.
+// only these steps; the existing Gap(2) in toolbar.go is kept for now.
 func Space(n float32) float32 { return 4 * n }
 
 // Radii. New work keeps corners to these five values. The 50% circles in the
 // tree are avatars and the unwatched dot, and are the only exceptions.
-// Thumbnails currently draw at 8 rather than RadiusCard; that is a
-// pre-migration exception like the spacing gaps, kept for now.
 const (
 	RadiusCheck   float32 = 3  // check boxes and tiny marks
 	RadiusControl float32 = 6  // buttons, inputs, selects, and sidebar rows
@@ -125,11 +122,11 @@ const (
 )
 
 // Hairline and focus widths. Rules and the grid-card selection stroke are 1 pt.
-// The selection target adds a 2 pt 24% accent halo and sets the 2 pt keyboard
-// focus ring 3 pt outside the element's bounds; sidebar rows use that 3 pt gap,
-// while StatefulButton still draws only the 1 pt stroke and passes a 2 pt focus
-// offset. Sidebar rows and segmented controls show selection as a tinted
-// background with accent text.
+// The grid card adds a 2 pt 24% accent halo outside that stroke and sets the
+// 2 pt keyboard focus ring FocusRingGap outside the card. Sidebar rows set the
+// same 2 pt ring 3 pt outside their bounds, while StatefulButton still draws
+// only the 1 pt stroke and passes a 2 pt focus offset. Sidebar rows and
+// segmented controls show selection as a tinted background with accent text.
 const (
 	Hairline     float32 = 1
 	FocusRing    float32 = 2

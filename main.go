@@ -64,6 +64,7 @@ type Window struct {
 	app                *App
 	window             *mygo.Window
 	grid               ui.GridState
+	gridKeyboardFocus  bool
 	selectedIndex      *int
 	sidebarFocus       string // sidebar row that takes the focus in the next frame
 	sidebarKeyboard    string // sidebar row that arrow navigation focused
