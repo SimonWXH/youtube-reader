@@ -702,7 +702,7 @@ func (w *Window) detailMeta(c *ui.Context, t mui.Tokens, v core.Video) {
 }
 
 // detailFacts is the structured tail: a hairline, then 12 pt labels on the
-// left and 13 pt values on the right, 8 pt apart.
+// left and 13 pt values on the right, 12 pt apart with rows 8 pt apart.
 func (w *Window) detailFacts(c *ui.Context, t mui.Tokens, v core.Video) {
 	ui.Column(c).Gap(mui.Space(2)).Children(func() {
 		ui.Box(c).Height(mui.Hairline).FillWidth().Background(t.BorderSoft)

@@ -264,9 +264,9 @@ func TestGridCardMetricsDesign(t *testing.T) {
 	}
 }
 
-// TestShippedGridBounds checks the panes the app ships with (sidebar 256,
-// details 320) at the 1280 pt default width: the cards they produce must never
-// be wider than 280 pt and never outnumber the user's maximum.
+// TestShippedGridBounds checks the panes the app ships with at the 1280 pt
+// default width: the cards they produce must never be wider than 280 pt and
+// never outnumber the user's maximum.
 func TestShippedGridBounds(t *testing.T) {
 	const gap float32 = 8
 	const padding float32 = 16

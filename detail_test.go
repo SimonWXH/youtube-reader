@@ -214,7 +214,8 @@ func TestDetailErrorStaysThroughTheCloseAnimation(t *testing.T) {
 }
 
 // At the minimum window with the widest requested pane, the divider shows less
-// than the request; one arrow press must still move it.
+// than the request; a press toward the free side must still move it, while a
+// press toward the blocked side keeps the stored width.
 func TestSqueezedDetailDividerKeyMovesThePane(t *testing.T) {
 	video := core.Video{ID: "v-1", Title: "Video"}
 	a := detailTestApp(t, []core.Video{video}, video.ID)
