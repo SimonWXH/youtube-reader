@@ -109,8 +109,10 @@ func TestRemainingTime(t *testing.T) {
 		{"a minute", now.Add(time.Minute), "1 min"},
 		{"minutes", now.Add(13*time.Minute + 20*time.Second), "14 min"},
 		{"under an hour", now.Add(59 * time.Minute), "59 min"},
+		{"rounds up to the next hour", now.Add(59*time.Minute + 1*time.Second), "1 hr"},
 		{"an hour", now.Add(time.Hour), "1 hr"},
 		{"hours", now.Add(2 * time.Hour), "2 hr"},
+		{"rounds up to the next day", now.Add(23*time.Hour + 30*time.Minute), "1 day"},
 		{"days", now.Add(30 * time.Hour), "2 days"},
 	}
 	for _, tt := range tests {
@@ -394,6 +396,22 @@ func TestStatusItemIconSet(t *testing.T) {
 				}
 			}
 		}
+		// The glyph must sit inside the canvas: ink on an edge pixel means the
+		// drawing was clipped by the bitmap.
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			for _, y := range []int{bounds.Min.Y, bounds.Max.Y - 1} {
+				if _, _, _, a := img.At(x, y).RGBA(); a != 0 {
+					t.Fatalf("state %v ink touches the canvas edge at %d,%d", state, x, y)
+				}
+			}
+		}
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			for _, x := range []int{bounds.Min.X, bounds.Max.X - 1} {
+				if _, _, _, a := img.At(x, y).RGBA(); a != 0 {
+					t.Fatalf("state %v ink touches the canvas edge at %d,%d", state, x, y)
+				}
+			}
+		}
 		seen[string(data)] = state
 	}
 	if len(seen) != 4 {
@@ -408,6 +426,9 @@ func TestStatusScreenshots(t *testing.T) {
 	dir := os.Getenv("MYGO_STATUS_SCREENSHOTS")
 	if dir == "" {
 		t.Skip("MYGO_STATUS_SCREENSHOTS is unset")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
 	}
 	now := time.Date(2026, 3, 1, 14, 32, 0, 0, time.Local)
 	fixtures := statusFixtures(now)
