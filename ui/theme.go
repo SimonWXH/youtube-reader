@@ -7,14 +7,14 @@ import (
 )
 
 // Motion durations. Every animation in the app uses Ease, the one shared
-// cubic-bezier(.22, 1, .36, 1) curve. Under Reduce Motion the framework
-// skips movement and sizing; colour changes still animate.
+// cubic-bezier(.22, 1, .36, 1) curve. Under Reduce Motion MyGo skips movement
+// and width transitions but keeps colour transitions smooth.
 const (
 	// MotionInteraction is hover, press, and selection colour changes.
 	MotionInteraction = 120 * time.Millisecond
 	// MotionPopover is a popover or overflow menu appearing and resizing.
 	MotionPopover = 180 * time.Millisecond
-	// MotionLayout is the detail pane's width change as it opens or closes.
+	// MotionLayout is the detail pane's width-only open and close.
 	MotionLayout = 240 * time.Millisecond
 )
 
@@ -22,9 +22,9 @@ const (
 var Ease = ui.CubicBezier(0.22, 1, 0.36, 1)
 
 // Fade is the colour transition shared by buttons, rows, and cards. MyGo
-// keeps colour transitions under reduced motion.
+// keeps colour transitions smooth under Reduce Motion.
 var Fade = ui.ElementTransition{
-	Duration: MotionPopover,
+	Duration: MotionInteraction,
 	Ease:     Ease,
 	Colors:   true,
 }
@@ -50,7 +50,7 @@ type Tokens struct {
 	BorderSoft ui.Color // BorderSoft is the lighter card outline and in-group rule.
 	Text       ui.Color // Text is body copy and titles.
 	Muted      ui.Color // Muted is secondary copy and metadata.
-	Faint      ui.Color // Faint is third-level text: section labels, Shorts, group counts.
+	Faint      ui.Color // Faint is third-level text on the card surface only; never on the sidebar or app background.
 	Accent     ui.Color // Accent is the only highlight: primary fill, selection, links, the unwatched dot.
 	AccentText ui.Color // AccentText sits on an Accent fill.
 	AccentSoft ui.Color // AccentSoft is the selected-row and segmented-control fill.
@@ -132,8 +132,10 @@ const (
 	RadiusWindow  float32 = 12 // windows and popovers
 )
 
-// Hairline and focus widths. Rules are 1 pt, a selection outline is 1 pt, and
-// the focus ring is a 2 pt line set 3 pt outside the control.
+// Hairline and focus widths. Rules and the grid-card selection stroke are 1 pt;
+// the card also carries a 2 pt 24% accent halo. Keyboard focus is a 2 pt ring
+// set 3 pt outside the element's bounds; sidebar rows and segmented controls
+// show selection as a tinted background with accent text.
 const (
 	Hairline     float32 = 1
 	FocusRing    float32 = 2

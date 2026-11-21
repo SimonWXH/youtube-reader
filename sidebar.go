@@ -62,7 +62,7 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup) {
 	key := "group-collapse:" + g.ID
 	collapsed := w.app.GroupCollapsed(g.ID)
-	headline := ui.ButtonBase(c).Key(key).Height(28).FillWidth().Gap(mui.Space(1)).Padding(0, mui.Space(1)).Radius(6).Background(t.Sidebar).TextColor(t.Faint).FontSize(13).Cursor(ui.CursorPointer).Transition(mui.Fade).FocusRingColor(t.Focus).FocusRingOffset(2).Role(ui.RoleDisclosure).Expanded(!collapsed).Label(g.Name)
+	headline := ui.ButtonBase(c).Key(key).Height(28).FillWidth().Gap(mui.Space(1)).Padding(0, mui.Space(1)).Radius(6).Background(t.Sidebar).TextColor(t.Muted).FontSize(13).Cursor(ui.CursorPointer).Transition(mui.Fade).FocusRingColor(t.Focus).FocusRingOffset(2).Role(ui.RoleDisclosure).Expanded(!collapsed).Label(g.Name)
 	headline.Children(func() {
 		glyph := mui.IconChevron
 		if !collapsed {
@@ -70,7 +70,7 @@ func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup) 
 		}
 		ui.Icon(c, glyph).Size(14, 14)
 		ui.Text(c, g.Name).FontSize(13).SingleLine().Grow(1)
-		ui.Text(c, fmt.Sprintf("%d", len(g.ChannelIDs))).FontSize(12).SingleLine()
+		ui.Text(c, fmt.Sprintf("%d", len(g.ChannelIDs))).FontSize(12).TextColor(t.Muted).SingleLine()
 	})
 	if headline.Clicked() {
 		_ = w.app.SetGroupCollapsed(g.ID, !collapsed)
@@ -87,7 +87,7 @@ func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup) 
 }
 
 func sectionHeader(c *ui.Context, t mui.Tokens, title string) {
-	ui.Text(c, title).FontSize(13).TextColor(t.Faint).Padding(20, 12, 8).SingleLine()
+	ui.Text(c, title).FontSize(13).TextColor(t.Muted).Padding(20, 12, 8).SingleLine()
 }
 
 func (w *Window) channelByID(id string) core.Channel {
