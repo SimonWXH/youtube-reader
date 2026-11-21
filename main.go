@@ -162,7 +162,6 @@ func (w *Window) view(c *ui.Context) {
 	t := c.Theme()
 	tokens := mui.NewTokens(t, t.Dark)
 	settings := w.app.settingsSnapshot()
-	settings.MaxGridColumns = clampInt(settings.MaxGridColumns, minMaxGridColumns, maxMaxGridColumns)
 
 	total := windowWidth(c)
 	selected := w.app.HasSelection()
