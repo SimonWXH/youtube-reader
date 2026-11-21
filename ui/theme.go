@@ -50,7 +50,7 @@ type Tokens struct {
 	BorderSoft ui.Color // BorderSoft is the lighter card outline and in-group rule.
 	Text       ui.Color // Text is body copy and titles.
 	Muted      ui.Color // Muted is secondary copy and metadata.
-	Faint      ui.Color // Faint is third-level text on the card surface only, plus the disabled-state label; never on the sidebar or app background.
+	Faint      ui.Color // Faint is the disabled-state label only: it clears 4.5:1 on a flat Surface but not on SurfaceAlt, the sidebar, or the app background, so secondary and metadata text uses Muted.
 	Accent     ui.Color // Accent is the only highlight: primary fill, selection, links, the unwatched dot.
 	AccentText ui.Color // AccentText sits on an Accent fill.
 	AccentSoft ui.Color // AccentSoft is the selected-row and segmented-control fill.
@@ -114,10 +114,12 @@ func Space(n float32) float32 { return 4 * n }
 
 // Radii. New work keeps corners to these five values. The 50% circles in the
 // tree are avatars and the unwatched dot, and are the only exceptions.
+// Thumbnails currently draw at 8 rather than RadiusCard; that is a
+// pre-migration exception like the spacing gaps, kept for now.
 const (
 	RadiusCheck   float32 = 3  // check boxes and tiny marks
 	RadiusControl float32 = 6  // buttons, inputs, selects, and sidebar rows
-	RadiusNotice  float32 = 8  // inline notices and thumbnail placeholders
+	RadiusNotice  float32 = 8  // inline notices
 	RadiusCard    float32 = 10 // cards, thumbnails, and detail media
 	RadiusWindow  float32 = 12 // windows and popovers
 )

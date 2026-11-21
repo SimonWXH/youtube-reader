@@ -6,9 +6,12 @@ import "github.com/egoist/mygo/ui"
 // with the matching CJK face for Han text. No custom font is ever loaded.
 const SFFont = "system-ui"
 
-// Weight is one of the three weights the app uses. MyGo accepts 100-900, but
-// surfaces stay within Regular, Medium, and Semibold: hierarchy comes from a
-// step in size and a step in weight, never from Light or Thin.
+// Weight names the three weights the type roles use. MyGo accepts 100-900, but
+// new surfaces stay within Regular, Medium, and Semibold: hierarchy comes from
+// a step in size and a step in weight, never from Light or Thin. The existing
+// Bold call sites in grid.go, detail.go, main.go, toolbar.go, sidebar.go,
+// settings.go, and ui/media.go are pre-migration and move to these roles with
+// their zone.
 type Weight int
 
 // Weights.
@@ -40,7 +43,11 @@ func (s TextStyle) Apply(el ui.Element) ui.Element {
 	return el.FontFeatures()
 }
 
-// The type scale. Use the role that names the thing you are drawing.
+// The type scale, the agreed target for every zone; each role's size and line
+// height are the design board's values. Call sites that still draw other sizes
+// or weights are pre-migration exceptions and do not change the roles:
+// detail.go draws the description at 14/21 and the drawer title at 20/26 Bold,
+// and grid.go draws the card title at 14/20 Bold.
 var (
 	// Body is the default reading size for detail descriptions and prose.
 	Body = TextStyle{Size: 13, LineHeight: 18, Weight: Regular}

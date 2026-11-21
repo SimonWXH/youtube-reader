@@ -73,7 +73,7 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 					mui.ChannelAvatar(c, t, v.AvatarURL, v.ChannelTitle, 18)
 					w.channelLink(c, t, v)
 					if v.IsShort {
-						ui.Text(c, "Shorts").FontSize(13).TextColor(t.Faint).SingleLine()
+						ui.Text(c, "Shorts").FontSize(13).TextColor(t.Muted).SingleLine()
 					}
 					ui.Text(c, core.RelativeDate(v.PublishedAt, time.Now())).FontSize(13).TextColor(t.Muted).SingleLine()
 				})
