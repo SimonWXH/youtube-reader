@@ -427,7 +427,7 @@ func (w *Window) installMenu() {
 		{Role: mygo.RoleEditMenu},
 		viewMenu,
 		{Role: mygo.RoleWindowMenu},
-		{Role: mygo.RoleHelp},
+		{Role: mygo.RoleHelp, Submenu: []*mygo.MenuItem{}},
 	}))
 }
 

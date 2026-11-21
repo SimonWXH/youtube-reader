@@ -113,6 +113,9 @@ func (w *Window) runRefresh(force bool) {
 	}
 	w.app.Busy = true
 	w.setMenuBusy(true)
+	if w.window != nil {
+		w.window.Invalidate()
+	}
 	go func() {
 		outcome := w.app.Refresh(force)
 		if w.window != nil {

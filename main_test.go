@@ -431,8 +431,12 @@ func TestMenuKeepsTheStandardBar(t *testing.T) {
 	if menuItemWithRole(items, mygo.RoleWindowMenu) == nil {
 		t.Fatal("no Window menu")
 	}
-	if menuItemWithRole(items, mygo.RoleHelp) == nil {
+	help := menuItemWithRole(items, mygo.RoleHelp)
+	if help == nil {
 		t.Fatal("no Help menu")
+	}
+	if help.Submenu == nil || help.Type != mygo.MenuItemSubmenu {
+		t.Fatalf("Help is not a submenu: %+v", help)
 	}
 }
 
