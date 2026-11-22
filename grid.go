@@ -12,10 +12,15 @@ import (
 // rows and builds only the ones in view. These are the card measurements it is
 // given, so a card is a full-bleed 16:9 thumbnail over a fixed text block.
 const (
-	// gridScrollbarGap is the clearance between the grid's last card and the
-	// vertical scrollbar at the trailing edge of the centre pane. It is also
-	// the inset that moves the bar out of the cards' focus rings.
+	// gridScrollbarGap is the clearance between the grid's last card and
+	// the vertical scrollbar at the trailing edge of the centre pane.
 	gridScrollbarGap float32 = 8
+	// scrollbarTrackWidth is the mygo default scroller track: the theme's
+	// 6 pt thumb plus the 6 pt the framework adds around it.
+	scrollbarTrackWidth float32 = 12
+	// gridScrollbarReserve is the room the scrollbar takes out of the
+	// card area: its track plus the clearance from the last card.
+	gridScrollbarReserve float32 = scrollbarTrackWidth + gridScrollbarGap
 	// gridDecorInset is the room each card leaves inside the GridView's clip
 	// for its selection halo and focus ring, which paint outside the card.
 	// The grid's outer padding is reduced by as much so the cards keep the
@@ -50,9 +55,10 @@ type gridMetrics struct {
 }
 
 // gridCardMetrics reads the card metrics for a grid content width (the pane
-// less the grid's padding) and the grid's 8 pt gap. The setting is an explicit
-// column count: the cards divide the available width between those columns,
-// with the same gap, so the grid fills the pane at every window width.
+// less the grid's padding and the scrollbar reserve) and the grid's 8 pt gap.
+// The setting is an explicit column count: the cards divide the available
+// width between those columns, with the same gap, so the grid fills the pane
+// at every window width.
 func gridCardMetrics(available, gap float32, columns int) gridMetrics {
 	available = max(available, 1)
 	gap = max(gap, 0)
@@ -60,11 +66,6 @@ func gridCardMetrics(available, gap float32, columns int) gridMetrics {
 	width := (available - gap*float32(columns-1)) / float32(columns)
 	return gridMetrics{Columns: columns, Width: width, Height: gridCardHeight(width)}
 }
-
-// gridMinCardWidth is the narrowest card the grid may draw. At the app's
-// minimum window width the grid still has at least minGridWidth to fill, so
-// the 8-column setting keeps every card at or above this width.
-const gridMinCardWidth float32 = 32
 
 // gridCardHeight is the agreed card height: the width times nine sixteenths
 // for the thumbnail, plus the text block.
@@ -107,13 +108,17 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 		}
 		w.selectedIndex = &target
 		w.grid.Selected = w.selectedIndex
-		metrics := gridCardMetrics(w.gridContentWidth(padding)-gridScrollbarGap, gap, w.app.settingsSnapshot().MaxGridColumns)
+		// The scrollbar takes its track and a clear gap out of the card area;
+		// the bar itself sits flush to the grid box in that reserved space.
+		metrics := gridCardMetrics(w.gridContentWidth(padding)-gridScrollbarReserve, gap, w.app.settingsSnapshot().MaxGridColumns)
 		focusIndex := max(target, 0)
 		// The ring belongs to the chosen card, or to the first card while the
 		// grid has the keyboard focus and nothing is chosen yet.
 		grid := ui.GridView(c, &w.grid, len(videos), metrics.gridMinWidth(gap), metrics.Height, func(i int) {
 			w.videoCard(c, t, i, focusIndex, videos[i], metrics)
-		}).Grow(1).Width(metrics.gridWidth(gap)+2*gridDecorInset).Padding(gridDecorInset).ScrollbarInsets(0, gridScrollbarGap, gridBottomInset, 0).FocusRing(false)
+		}).Grow(1).Width(metrics.gridWidth(gap)+2*gridDecorInset+gridScrollbarReserve).
+			Padding(gridDecorInset, gridScrollbarReserve, gridDecorInset, gridDecorInset).
+			ScrollbarInsets(0, 0, gridBottomInset, 0).FocusRing(false)
 		w.trackGridFocus(c, grid, focusIndex, lastIndex)
 		if grid.Changed() {
 			if w.grid.Selected != nil && *w.grid.Selected < len(videos) {
