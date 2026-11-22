@@ -664,6 +664,16 @@ type statusBar struct {
 func newStatusBar(w *Window) *statusBar {
 	s := &statusBar{w: w, online: true, shownIcon: -1, stop: make(chan struct{})}
 	s.arrowX = statusPopoverWidth / 2
+	s.online = mygo.Network.Status().Online
+	// The window's refresh control and content pane read the same answer as
+	// the menu bar item, so offline never shows two different stories.
+	s.w.offline = !s.online
+	mygo.Network.OnChanged(func(state mygo.NetworkStatus) {
+		s.online = state.Online
+		s.w.offline = !state.Online
+		s.refresh()
+		s.invalidate()
+	})
 	if item, err := mygo.NewTray(mygo.TrayOptions{
 		ID:             "io.github.simon.youtubereader.status",
 		Icon:           statusIcon(statusUpToDate),
@@ -672,15 +682,10 @@ func newStatusBar(w *Window) *statusBar {
 		// Without an item the window still works; say once why the status
 		// surface is missing instead of taking the app down.
 		fmt.Printf("status item: %v\n", err)
-		return s
 	} else {
 		s.tray = item
+		s.tray.OnClick(s.toggle)
 	}
-	s.online = mygo.Network.Status().Online
-	// The window's refresh control and content pane read the same answer as
-	// the menu bar item, so offline never shows two different stories.
-	s.w.offline = !s.online
-	s.tray.OnClick(s.toggle)
 	// A pause already in force at launch is shown by the Paused state; only a
 	// pause that begins while the app runs raises the alert.
 	s.paused = !s.model(time.Now()).PausedUntil.IsZero()
@@ -689,12 +694,6 @@ func newStatusBar(w *Window) *statusBar {
 		if s.tray != nil {
 			s.tray.Destroy()
 		}
-	})
-	mygo.Network.OnChanged(func(state mygo.NetworkStatus) {
-		s.online = state.Online
-		s.w.offline = !state.Online
-		s.refresh()
-		s.invalidate()
 	})
 	s.refresh()
 	s.startClock()

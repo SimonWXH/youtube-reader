@@ -394,7 +394,10 @@ func TestCancelledRefreshRecordsNoFailure(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	outcome := a.RefreshContext(ctx, true, a.refreshSnapshot())
+	outcome, cancelled := a.RefreshContext(ctx, true, a.refreshSnapshot())
+	if !cancelled {
+		t.Fatal("a refresh that ended before its result was applied did not report cancelled")
+	}
 	if len(outcome.Failures) != 0 {
 		t.Fatalf("a cancelled refresh recorded %d failures", len(outcome.Failures))
 	}
