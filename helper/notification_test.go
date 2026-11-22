@@ -67,11 +67,13 @@ func TestQueueNotificationClicksPreservesEarlierPosts(t *testing.T) {
 func TestPostHelperNotificationDoesNotLaunchTheApp(t *testing.T) {
 	var scripts []string
 	previous := osascriptForHelper
+	previousRunning := appRunningForHelper
 	osascriptForHelper = func(script string) error {
 		scripts = append(scripts, script)
 		return nil
 	}
-	defer func() { osascriptForHelper = previous }()
+	appRunningForHelper = func() bool { return false }
+	defer func() { osascriptForHelper, appRunningForHelper = previous, previousRunning }()
 
 	plan := core.NotificationPlan{ChannelName: "A \"quoted\" channel", Count: 2, NewestTitle: "Newest video"}
 	if err := postHelperNotification(plan); err != nil {
@@ -92,6 +94,30 @@ func TestPostHelperNotificationDoesNotLaunchTheApp(t *testing.T) {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script %q does not contain %q", script, want)
 		}
+	}
+}
+
+func TestPostHelperNotificationTargetsRunningApp(t *testing.T) {
+	var scripts []string
+	previous := osascriptForHelper
+	previousRunning := appRunningForHelper
+	osascriptForHelper = func(script string) error {
+		scripts = append(scripts, script)
+		return nil
+	}
+	appRunningForHelper = func() bool { return true }
+	defer func() { osascriptForHelper, appRunningForHelper = previous, previousRunning }()
+
+	plan := core.NotificationPlan{ChannelName: "Channel", Count: 1, NewestTitle: "Video"}
+	if err := postHelperNotification(plan); err != nil {
+		t.Fatal(err)
+	}
+	if len(scripts) != 1 {
+		t.Fatalf("osascript calls = %d, want 1", len(scripts))
+	}
+	want := `tell application id "com.simon.youtubereader" to display notification "1 new video\nVideo" with title "Channel" subtitle "New videos" sound name "default"`
+	if scripts[0] != want {
+		t.Fatalf("script = %q, want %q", scripts[0], want)
 	}
 }
 

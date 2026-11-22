@@ -19,6 +19,8 @@ import (
 	"github.com/simon/youtube-reader/core"
 )
 
+const notificationBundleID = "com.simon.youtubereader"
+
 // Injected for tests so HelperRun's notification side effect can be verified
 // without network or a real refresh.
 type refreshFunc func(context.Context, core.YouTube, core.Settings, core.SyncState, *core.Store, []core.Video, int64, bool, time.Time) core.RefreshResult
@@ -34,6 +36,13 @@ var osascriptForHelper = func(script string) error {
 		return fmt.Errorf("osascript: %w: %s", err, out)
 	}
 	return nil
+}
+
+// appRunningForHelper reports whether the main app is already running. A
+// check failure is treated as "not running" so the helper never targets the
+// bundle and risks launching the window it is meant to stay clear of.
+var appRunningForHelper = func() bool {
+	return exec.Command("pgrep", "-x", "YouTube Reader").Run() == nil
 }
 
 // HelperHandoff is the atomic JSON message the helper leaves for the app.
@@ -311,11 +320,14 @@ func postHelperNotification(plan core.NotificationPlan) error {
 	if runtime.GOOS != "darwin" {
 		return nil
 	}
-	// A plain display notification is sent by this process. Naming the app
-	// bundle with "tell application id" makes macOS launch the main app to
-	// post the notification, which can pop its window open during a background
-	// refresh; the helper's own attribution is the price of not doing that.
 	script := fmt.Sprintf("display notification \"%s\" with title \"%s\" subtitle \"New videos\" sound name \"default\"", escapeAppleScript(body), escapeAppleScript(plan.ChannelName))
+	// The app owns click routing, so target it only when it is already
+	// running. Targeting a closed app makes macOS launch it and pop its
+	// window open; a plain script has no click callback, but it never opens
+	// the main window during a background refresh.
+	if appRunningForHelper() {
+		script = fmt.Sprintf("tell application id \"%s\" to %s", notificationBundleID, script)
+	}
 	return osascriptForHelper(script)
 }
 
