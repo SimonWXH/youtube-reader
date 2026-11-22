@@ -692,7 +692,6 @@ func (a *App) RefreshContext(ctx context.Context, force bool, snapshot refreshSn
 	// concurrent edit apart from the refresh's own update.
 	outcome := core.RefreshYoutube(ctx, client, settings, cloneSyncState(snapshot.state), a.Store, snapshot.videos, snapshot.revision, force, now)
 	if ctx.Err() != nil && !outcome.Changed {
-		_ = a.reload()
 		return RefreshOutcome{Description: "Cancelled"}, true
 	}
 	_, _ = a.updateSettings(func(s *core.Settings) bool {
