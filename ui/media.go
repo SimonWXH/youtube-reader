@@ -1,17 +1,22 @@
 package ui
 
 import (
+	"github.com/egoist/mygo/plugins/sfsymbols"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/netimage"
 )
 
-// ChannelAvatar renders a real channel avatar when a URL is supplied and a
-// deterministic monogram otherwise. Callers pass the row's avatar size, so
-// the reserved circular slot stays fixed while the image loads.
+// ChannelAvatar renders a real channel avatar once its picture has loaded and
+// a deterministic monogram in every other state: while it comes, when it
+// fails, and when no URL is supplied. Callers pass the row's avatar size, so
+// the reserved circular slot stays fixed and never shows a blank disc.
 func ChannelAvatar(c *ui.Context, tokens Tokens, url, title string, size float32) {
 	if url != "" {
-		netimage.Image(c, url, netimage.Options{MaxSide: int(size * 2)}).Size(size, size).Radius(size / 2)
-		return
+		opts := netimage.Options{MaxSide: int(size * 2)}
+		if src, _ := netimage.Load(c, url, opts); src != nil {
+			netimage.Image(c, url, opts).Size(size, size).Radius(size / 2)
+			return
+		}
 	}
 	initial := "?"
 	if title != "" {
@@ -68,7 +73,7 @@ func thumbnailPlaceholder(c *ui.Context, tokens Tokens, label string, failed boo
 		return frame
 	}
 	return frame.Tooltip(label).Center().Children(func() {
-		ui.Icon(c, IconPlay).Size(28, 28).TextColor(tokens.Muted)
+		sfsymbols.Symbol(c, "play.fill").Size(28).Color(tokens.Muted).Element.Role(ui.RoleNone)
 	})
 }
 

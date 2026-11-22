@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/simon/youtube-reader/core"
@@ -16,26 +17,34 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 
 	sidebar := ui.Column(c).Fill().Shrink(0).Background(t.Sidebar)
 	sidebar.Children(func() {
-		ui.Scroll(c).Grow(1).Padding(0, mui.Space(2), mui.Space(2)).Children(func() {
+		ui.Scroll(c).Grow(1).Padding(0, mui.Space(2), mui.Space(2)+mui.ScrollBottomInset).Children(func() {
 			sectionHeader(c, t, "Library")
 			nav.row(c, t, mui.SidebarRow{
-				Key: "all", Label: "All videos", Glyph: mui.IconPlay, Count: fmt.Sprintf("%d", counts.total),
+				Key: "all", Label: "All videos", Symbol: "play.rectangle", Count: fmt.Sprintf("%d", counts.total),
 				Selected: w.app.Selected == "all",
 				OnClick:  func() { w.app.Selected = "all" },
 			})
 			nav.row(c, t, mui.SidebarRow{
-				Key: "favorites", Label: "Favorites", Glyph: mui.IconStar, Count: fmt.Sprintf("%d", counts.favorites),
+				Key: "favorites", Label: "Favorites", Symbol: "star", Count: fmt.Sprintf("%d", counts.favorites),
 				Selected: w.app.Selected == "favorites",
 				OnClick:  func() { w.app.Selected = "favorites" },
 			})
 			for i, g := range w.app.Groups {
 				w.groupSection(c, t, g, i, nav, counts, &drag)
 			}
-			sectionHeader(c, t, "Channels")
+			grouped := groupedChannelIDs(w.app.Groups)
+			ungrouped := make([]core.Channel, 0, len(w.app.Channels))
+			for _, ch := range w.app.Channels {
+				if !grouped[ch.ID] {
+					ungrouped = append(ungrouped, ch)
+				}
+			}
 			if len(w.app.Channels) == 0 {
 				mui.SidebarEmpty(c, t, func() { w.importOPML(c) })
+			} else if len(ungrouped) > 0 {
+				sectionHeader(c, t, ungroupedHeader(c.Locale()))
 			}
-			for _, ch := range w.app.Channels {
+			for _, ch := range ungrouped {
 				ch := ch
 				nav.row(c, t, mui.SidebarRow{
 					Key: "all-channels:" + ch.ID, Label: ch.Title, Channel: true, Avatar: ch.AvatarURL,
@@ -55,6 +64,28 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 	// and never leak into the grid or the toolbar.
 	sidebar.OnShortcut(0, ui.KeyDown, nav.move(1))
 	sidebar.OnShortcut(0, ui.KeyUp, nav.move(-1))
+}
+
+// groupedChannelIDs is the set of every channel that appears in a group.
+// Group membership is authoritative: a channel listed in a group is shown
+// there alone, never again at the foot of the sidebar.
+func groupedChannelIDs(groups []core.ChannelGroup) map[string]bool {
+	ids := make(map[string]bool)
+	for _, g := range groups {
+		for _, id := range g.ChannelIDs {
+			ids[id] = true
+		}
+	}
+	return ids
+}
+
+// ungroupedHeader names the section for channels in no group. The app's copy
+// is English; a Chinese locale gets the agreed translation.
+func ungroupedHeader(locale string) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return "未分组"
+	}
+	return "Ungrouped"
 }
 
 // sidebarNav keeps the sidebar's keyboard order for one frame. Rows register

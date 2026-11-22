@@ -383,7 +383,7 @@ func (w *Window) emptyPane(c *ui.Context, t mui.Tokens, in mui.PaneInput) {
 func (w *Window) loadingPane(c *ui.Context, t mui.Tokens) {
 	gap := c.Theme().Space(2)
 	padding := mui.Space(4)
-	metrics := gridCardMetrics(w.gridContentWidth(padding), gap, w.app.settingsSnapshot().MaxGridColumns)
+	metrics := gridCardMetrics(w.gridContentWidth(padding)-gridScrollbarReserve, gap, w.app.settingsSnapshot().MaxGridColumns)
 	ui.Column(c).Grow(1).Padding(padding).AlignItems(ui.Start).Children(func() {
 		mui.SkeletonGrid(c, t, mui.SkeletonSpec{
 			Count:       mui.SkeletonCards,

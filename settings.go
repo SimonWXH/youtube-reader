@@ -790,7 +790,7 @@ func (w *Window) settingsSwitch(c *ui.Context, t mui.Tokens, key string, on *boo
 	return sw
 }
 
-// settingsStepper is the 28 pt numeric stepper for the grid's column cap: two
+// settingsStepper is the 28 pt numeric stepper for the grid's column count: two
 // 26 pt buttons around a 40 pt tabular value, as board B1 draws it.
 func (w *Window) settingsStepper(c *ui.Context, t mui.Tokens, key string, value, lo, hi int, onChange func(int)) {
 	clampValue := func(v int) int { return clampInt(v, lo, hi) }

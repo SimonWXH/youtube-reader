@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/egoist/mygo/plugins/sfsymbols"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/netimage"
 	"github.com/simon/youtube-reader/core"
@@ -67,10 +68,6 @@ func (d *detailState) contentKind() detailContent {
 	}
 	return detailContentNone
 }
-
-// detailCloseIcon is the pane header's close glyph. It follows the shared
-// lucide geometry in ui/icons.go without adding a role to that file.
-var detailCloseIcon = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 6 12 12"/><path d="M18 6 6 18"/></svg>`))
 
 // clampDetailsWidth keeps a pane width inside the board's 280-480 range.
 func clampDetailsWidth(width float32) float32 {
@@ -509,7 +506,7 @@ func (w *Window) detailHeader(c *ui.Context, t mui.Tokens) {
 			FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
 			Role(ui.RoleButton).Label("Close details").Tooltip("Close details").Bind(&w.detail.close)
 		close.Children(func() {
-			ui.Icon(c, detailCloseIcon).Size(mui.Space(4), mui.Space(4))
+			sfsymbols.Symbol(c, "xmark").Size(mui.Space(4)).Color(t.Muted).Element.Role(ui.RoleNone)
 		})
 		close.Draw(func(p *ui.Painter, r ui.Rect) {
 			switch {
@@ -526,9 +523,9 @@ func (w *Window) detailHeader(c *ui.Context, t mui.Tokens) {
 }
 
 func (w *Window) detailError(c *ui.Context, t mui.Tokens) {
-	ui.Column(c).Grow(1).Padding(mui.Space(4)).Gap(mui.Space(3)).Children(func() {
+	ui.Column(c).Grow(1).Padding(mui.Space(4), mui.Space(4), mui.Space(4)+mui.ScrollBottomInset, mui.Space(4)).Gap(mui.Space(3)).Children(func() {
 		ui.Row(c).Gap(mui.Space(2)).AlignItems(ui.Start).Children(func() {
-			ui.Icon(c, mui.IconAlert).Size(mui.Space(4), mui.Space(4)).TextColor(t.Danger)
+			sfsymbols.Symbol(c, "exclamationmark.triangle").Size(mui.Space(4)).Color(t.Danger).Element.Role(ui.RoleNone)
 			mui.SectionHeader.Apply(ui.Text(c, "Couldn't load this video")).TextColor(t.Text).Wrap().Grow(1)
 		})
 		mui.Body.Apply(ui.Text(c, "It may have been removed, or your list changed. Try again to reload it.")).
@@ -560,7 +557,8 @@ func (w *Window) detailVideo(c *ui.Context, t mui.Tokens, v core.Video) {
 	innerWidth := max(d.shown-2*mui.Space(4), 0)
 	settledWidth := max(detailWidthForRoom(d.width, w.detailFitWidth(c))-2*mui.Space(4), 0)
 
-	body := ui.Scroll(c.Key(v.ID)).Grow(1).MinWidth(0).Padding(mui.Space(4)).Gap(mui.Space(3))
+	body := ui.Scroll(c.Key(v.ID)).Grow(1).MinWidth(0).
+		Padding(mui.Space(4), mui.Space(4), mui.Space(4)+mui.ScrollBottomInset, mui.Space(4)).Gap(mui.Space(3))
 	body.Children(func() {
 		w.detailHero(c, t, v, innerWidth)
 
@@ -605,7 +603,7 @@ func (w *Window) detailVideo(c *ui.Context, t mui.Tokens, v core.Video) {
 		w.detailFacts(c, t, v)
 	})
 
-	actions := ui.Column(c).Shrink(0).Padding(mui.Space(3), mui.Space(4), mui.Space(4), mui.Space(4)).
+	actions := ui.Column(c).Shrink(0).Padding(mui.Space(3), mui.Space(4), mui.Space(4)+mui.ScrollBottomInset, mui.Space(4)).
 		Gap(mui.Space(2))
 	actions.Draw(func(p *ui.Painter, r ui.Rect) {
 		p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W, H: mui.Hairline}, t.BorderSoft, 0)
@@ -656,7 +654,7 @@ func (w *Window) detailHero(c *ui.Context, t mui.Tokens, v core.Video, width flo
 		Background(t.SurfaceAlt).Center()
 	if v.ThumbnailURL == "" {
 		frame.Children(func() {
-			ui.Icon(c, mui.IconPlay).Size(mui.Space(7), mui.Space(7)).TextColor(t.Muted)
+			sfsymbols.Symbol(c, "play.fill").Size(mui.Space(7)).Color(t.Muted).Element.Role(ui.RoleNone)
 		})
 		return
 	}
@@ -668,7 +666,7 @@ func (w *Window) detailHero(c *ui.Context, t mui.Tokens, v core.Video, width flo
 		})
 	case err != nil:
 		frame.Tooltip("Thumbnail unavailable").Children(func() {
-			ui.Icon(c, mui.IconPlay).Size(mui.Space(7), mui.Space(7)).TextColor(t.Muted)
+			sfsymbols.Symbol(c, "play.fill").Size(mui.Space(7)).Color(t.Muted).Element.Role(ui.RoleNone)
 		})
 	default:
 		frame.Children(func() {

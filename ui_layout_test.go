@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"image/color"
 	"math"
 	"testing"
 	"time"
@@ -228,8 +229,8 @@ func TestDetailWidthForRoom(t *testing.T) {
 
 // TestGridCardMetricsDesign pins the agreed design geometry: at 1280 pt with
 // a 260 pt sidebar and a 340 pt details pane the split dividers leave the grid
-// 1018 pt closed and 678 pt open, so four 241 pt cards show closed and three
-// 210 pt cards open.
+// 1018 pt closed and 678 pt open. The five-column setting divides the width
+// left after the padding and scrollbar reserve.
 func TestGridCardMetricsDesign(t *testing.T) {
 	const gap float32 = 8
 	const padding float32 = 16
@@ -240,33 +241,32 @@ func TestGridCardMetricsDesign(t *testing.T) {
 		pane    float32
 		columns int
 		width   float32
-		height  float32
 	}{
-		{"detail closed", designClosedPane, 4, 241, 211},
-		{"detail open", designOpenPane, 3, 210, 194},
+		{"detail closed", designClosedPane, defaultMaxGridColumns, (designClosedPane - 2*padding - gridScrollbarReserve - 4*gap) / 5},
+		{"detail open", designOpenPane, defaultMaxGridColumns, (designOpenPane - 2*padding - gridScrollbarReserve - 4*gap) / 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := gridCardMetrics(tc.pane-2*padding, gap, defaultMaxGridColumns)
+			got := gridCardMetrics(tc.pane-2*padding-gridScrollbarReserve, gap, tc.columns)
 			if got.Columns != tc.columns {
 				t.Fatalf("columns = %d; want %d", got.Columns, tc.columns)
 			}
 			if diff := abs(got.Width - tc.width); diff > 0.5 {
 				t.Fatalf("card width = %v; want %v", got.Width, tc.width)
 			}
-			if diff := abs(got.Height - tc.height); diff > 0.5 {
-				t.Fatalf("card height = %v; want %v", got.Height, tc.height)
-			}
-			if want := got.Width*gridThumbAspect + gridCardTextBlock; got.Height != want {
+			if want := got.Width*gridThumbAspect + gridCardTextBlock; abs(got.Height-want) > 0.01 {
 				t.Fatalf("card height = %v; want width*9/16+%v = %v", got.Height, gridCardTextBlock, want)
+			}
+			if abs(got.gridWidth(gap)-(tc.pane-2*padding-gridScrollbarReserve)) > 0.01 {
+				t.Fatalf("grid width %v does not fill the pane's %v", got.gridWidth(gap), tc.pane-2*padding-gridScrollbarReserve)
 			}
 		})
 	}
 }
 
 // TestShippedGridBounds checks the panes the app ships with at the 1280 pt
-// default width: the cards they produce must never be wider than 280 pt and
-// never outnumber the user's maximum.
+// default width: the explicit column setting is honoured and the grid fills
+// the pane with no trailing margin.
 func TestShippedGridBounds(t *testing.T) {
 	const gap float32 = 8
 	const padding float32 = 16
@@ -278,107 +278,67 @@ func TestShippedGridBounds(t *testing.T) {
 		pane    float32
 		columns int
 	}{
-		{"detail closed", closedPane, 4},
-		{"detail open", openPane, 3},
+		{"detail closed", closedPane, defaultMaxGridColumns},
+		{"detail open", openPane, defaultMaxGridColumns},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := gridCardMetrics(tc.pane-2*padding, gap, defaultMaxGridColumns)
+			content := tc.pane - 2*padding - gridScrollbarReserve
+			got := gridCardMetrics(content, gap, tc.columns)
 			if got.Columns != tc.columns {
 				t.Fatalf("columns = %d; want %d", got.Columns, tc.columns)
 			}
-			if got.Columns > defaultMaxGridColumns {
-				t.Fatalf("columns = %d; exceeds the maximum %d", got.Columns, defaultMaxGridColumns)
+			if got.Columns < minMaxGridColumns || got.Columns > maxMaxGridColumns {
+				t.Fatalf("columns = %d outside %d-%d", got.Columns, minMaxGridColumns, maxMaxGridColumns)
 			}
-			if got.Width > gridCardMaxWidth+0.01 {
-				t.Fatalf("card width = %v; exceeds %v", got.Width, gridCardMaxWidth)
+			if abs(got.gridWidth(gap)-content) > 0.01 {
+				t.Fatalf("grid width = %v; want the full content %v", got.gridWidth(gap), content)
 			}
 		})
 	}
 }
 
-// TestGridCardWidthBounds checks both hard limits at every pane width and
-// every maximum-columns setting: no card is ever wider than 280 pt, and the
-// grid never takes more columns than the setting allows. Where the setting
-// asks for fewer columns than the width rule needs, the leftover width stays
-// as a trailing margin instead of wider cards.
-func TestGridCardWidthBounds(t *testing.T) {
+// TestGridCardFillsEveryColumnSetting checks every supported column count at
+// realistic grid-pane widths: an explicit column setting always divides the
+// available content width (pane less padding and scrollbar reserve) equally,
+// with no trailing margin. Widths cover the 320 pt minimum grid pane (960 pt
+// window with the detail pane at its fitted maximum) through ultrawide.
+func TestGridCardFillsEveryColumnSetting(t *testing.T) {
 	const gap float32 = 8
-	for pane := float32(320); pane <= 3000; pane += 1 {
-		content := pane - 32
-		fill := max(int(math.Ceil(float64((content+gap)/(gridCardMaxWidth+gap)))), 1)
-		for _, cap := range []int{2, 3, 5, 8} {
-			m := gridCardMetrics(content, gap, cap)
-			if m.Columns < 1 {
-				t.Fatalf("pane %v cap %d: columns = %d", pane, cap, m.Columns)
+	const padding float32 = 16
+	for _, pane := range []float32{320, 480, 678, 960, 1024, 1280, 1440, 1920, 2560, 3840, 5120} {
+		content := pane - 2*padding - gridScrollbarReserve
+		for columns := minMaxGridColumns; columns <= maxMaxGridColumns; columns++ {
+			m := gridCardMetrics(content, gap, columns)
+			if m.Columns != columns {
+				t.Fatalf("pane %v setting %d: columns = %d", pane, columns, m.Columns)
 			}
-			if m.Columns > cap {
-				t.Fatalf("pane %v cap %d: columns = %d exceeds the cap", pane, cap, m.Columns)
+			if abs(m.gridWidth(gap)-content) > 0.01 {
+				t.Fatalf("pane %v setting %d: grid width %v leaves a trailing margin; want %v", pane, columns, m.gridWidth(gap), content)
 			}
-			if want := min(fill, cap); m.Columns != want {
-				t.Fatalf("pane %v cap %d: columns = %d; want %d", pane, cap, m.Columns, want)
-			}
-			if m.Width > gridCardMaxWidth+0.01 {
-				t.Fatalf("pane %v cap %d: card width %v exceeds %v", pane, cap, m.Width, gridCardMaxWidth)
-			}
-			if used, want := m.gridWidth(gap), min(content, float32(m.Columns)*gridCardMaxWidth+gap*float32(m.Columns-1)); abs(used-want) > 0.01 {
-				t.Fatalf("pane %v cap %d: grid width %v; want %v", pane, cap, used, want)
-			}
-			if m.gridWidth(gap) > content+0.01 {
-				t.Fatalf("pane %v cap %d: grid width %v overflows the content %v", pane, cap, m.gridWidth(gap), content)
-			}
-			if fill > cap && abs(m.Width-gridCardMaxWidth) > 0.01 {
-				t.Fatalf("pane %v cap %d: capped card width = %v; want exactly %v", pane, cap, m.Width, gridCardMaxWidth)
+			if minWidth := m.gridMinWidth(gap); minWidth < m.Width-gap/float32(columns)-0.1 {
+				t.Fatalf("pane %v setting %d: framework minimum %v too small for card %v", pane, columns, minWidth, m.Width)
 			}
 		}
 	}
 }
 
-// TestGridCardCapKeepsCeiling pins both hard limits against the agreed design
-// geometry (sidebar 260, details 340) and a 1220 pt window with the detail pane
-// open. Where the setting's maximum columns binds, the cards stay exactly
-// 280 pt wide and the pane's leftover width is trailing margin.
-func TestGridCardCapKeepsCeiling(t *testing.T) {
+// TestGridCardClampsColumnSetting keeps the settings model's 2 to 8 limits
+// even when a caller passes a bad value.
+func TestGridCardClampsColumnSetting(t *testing.T) {
 	const gap float32 = 8
-	const padding float32 = 16
-	const designClosedContent float32 = 1280 - 260 - 2 - 2*padding
-	const designOpenContent float32 = 1280 - 260 - 340 - 2 - 2*padding
-	detailOpen1220Content := float32(1220) - defaultSidebarWidth - 2*splitDividerWidth() - defaultDetailsWidth - 2*splitDividerWidth() - 2*padding
-	cases := []struct {
-		name     string
-		content  float32
-		cap      int
-		columns  int
-		width    float32
-		leftover float32
-	}{
-		{"design 1280 detail closed, cap 2", designClosedContent, 2, 2, 280, designClosedContent - 568},
-		{"design 1280 detail closed, cap 3", designClosedContent, 3, 3, 280, designClosedContent - 856},
-		{"design 1280 detail open, cap 2", designOpenContent, 2, 2, 280, designOpenContent - 568},
-		{"design 1280 detail open, cap 3", designOpenContent, 3, 3, 210, 0},
-		{"1220 detail open, cap 2", detailOpen1220Content, 2, 2, 280, detailOpen1220Content - 568},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := gridCardMetrics(tc.content, gap, tc.cap)
-			if got.Columns != tc.columns {
-				t.Fatalf("columns = %d; want %d", got.Columns, tc.columns)
-			}
-			if diff := abs(got.Width - tc.width); diff > 0.5 {
-				t.Fatalf("card width = %v; want %v", got.Width, tc.width)
-			}
-			if leftover := tc.content - got.gridWidth(gap); abs(leftover-tc.leftover) > 0.5 {
-				t.Fatalf("trailing margin = %v; want %v", leftover, tc.leftover)
-			}
-		})
+	for _, tc := range []struct{ in, want int }{{-3, minMaxGridColumns}, {0, minMaxGridColumns}, {1, minMaxGridColumns}, {9, maxMaxGridColumns}, {100, maxMaxGridColumns}} {
+		m := gridCardMetrics(640, gap, tc.in)
+		if m.Columns != tc.want {
+			t.Fatalf("columns(%d) = %d, want %d", tc.in, m.Columns, tc.want)
+		}
 	}
 }
 
-// TestGridRendersCeilingWhenCapBinds renders the grid in a 1920 pt window,
-// where six 280 pt columns would fit but the shipped five-column setting binds:
-// the cards must stay 280 pt wide and the grid must stay left aligned, leaving
-// the pane's extra width as trailing margin.
-func TestGridRendersCeilingWhenCapBinds(t *testing.T) {
+// TestGridFillsPaneAtFourColumns renders the grid in a 1920 pt window with
+// the reported four-column setting: the row must fill the pane up to the
+// scrollbar clearance, with no large trailing margin.
+func TestGridFillsPaneAtFourColumns(t *testing.T) {
 	videos := make([]core.Video, 30)
 	for i := range videos {
 		videos[i] = core.Video{
@@ -395,7 +355,7 @@ func TestGridRendersCeilingWhenCapBinds(t *testing.T) {
 		Settings: core.Settings{
 			APIKey:         "test-key",
 			ExpandedGroups: map[string]bool{},
-			MaxGridColumns: defaultMaxGridColumns,
+			MaxGridColumns: 4,
 			RefreshMinutes: 60,
 		},
 		Sync: core.SyncState{
@@ -418,24 +378,35 @@ func TestGridRendersCeilingWhenCapBinds(t *testing.T) {
 	if !ok {
 		t.Fatalf("the grid does not show its second card: %q", tt.Texts())
 	}
-	if step := second.X - first.X; abs(step-(gridCardMaxWidth+8)) > 0.5 {
-		t.Fatalf("adjacent cards are %v pt apart; want %v", step, gridCardMaxWidth+8)
+	// The framework rounds column widths to whole points, so derive the
+	// real step from the rendered cards and use it for the row's right edge.
+	metrics := gridCardMetrics(1920-defaultSidebarWidth-splitDividerWidth()-2*16-gridScrollbarReserve, 8, 4)
+	step := second.X - first.X
+	if abs(step-(metrics.Width+8)) > 3 {
+		t.Fatalf("adjacent cards are %v pt apart; want %v", step, metrics.Width+8)
 	}
 	if want := defaultSidebarWidth + splitDividerWidth() + 16 + 8; abs(first.X-want) > 1.5 {
 		t.Fatalf("the first card starts at %v; want the grid's 16 pt padding at %v", first.X, want)
 	}
-	fifth, ok := tt.Find("Video 4")
+	fourth, ok := tt.Find("Video 3")
 	if !ok {
-		t.Fatalf("the grid does not show its fifth card: %q", tt.Texts())
+		t.Fatalf("the grid does not show its fourth card: %q", tt.Texts())
 	}
-	if step := fifth.X - first.X; abs(step-4*(gridCardMaxWidth+8)) > 0.5 {
-		t.Fatalf("the fifth card starts %v pt after the first; want %v", step, 4*(gridCardMaxWidth+8))
+	if span := fourth.X - first.X; abs(span-3*step) > 3 {
+		t.Fatalf("the fourth card starts %v pt after the first; want %v", span, 3*step)
 	}
-	if sixth, ok := tt.Find("Video 5"); ok && sixth.Y-first.Y < 100 {
-		t.Fatalf("a sixth card shares the first row at y=%v; the row starts at %v", sixth.Y, first.Y)
+	if fifth, ok := tt.Find("Video 4"); ok && fifth.Y-first.Y < 100 {
+		t.Fatalf("a fifth card shares the first row at y=%v; the row starts at %v", fifth.Y, first.Y)
 	}
-	if right := fifth.X - 8 + gridCardMaxWidth; right > 1920-16 {
-		t.Fatalf("the last card ends at %v; want the trailing margin inside %v", right, 1920-16)
+	// Independent oracle: the label box starts 8 pt inside the card, and
+	// the framework rounds each column to a whole point, so the card's
+	// trailing edge is fourth.X - 8 + step - gap. The grid reserves the
+	// scrollbar's track and clearance after the cards.
+	const textInset float32 = 8
+	cardRight := fourth.X - textInset + step - 8
+	wantRight := float32(1920) - 16 - gridScrollbarReserve
+	if abs(cardRight-wantRight) > 8 {
+		t.Fatalf("the last card ends at %v; want the scrollbar reserve at %v", cardRight, wantRight)
 	}
 }
 
@@ -660,5 +631,257 @@ func TestGridFocusFollowsMovedSelection(t *testing.T) {
 	tt.Frame()
 	if _, ok := tt.Find("Video 116"); !ok {
 		t.Fatalf("the grid did not follow the chosen card to its new place: %q", tt.Texts())
+	}
+}
+
+// TestScrollSurfacesReserveBottomInset checks F-05 through the rendered
+// window, toolbar included: at the minimum height the three scrolling
+// surfaces must lay their last item out short of the window's bottom edge by
+// at least the shared inset, so nothing is clipped there. Rendering the whole
+// shell, not just the pane row, is what proves the panes end at the window's
+// edge rather than 52 pt past it under the toolbar.
+func TestScrollSurfacesReserveBottomInset(t *testing.T) {
+	const h float32 = 640
+	videos := make([]core.Video, 24)
+	for i := range videos {
+		videos[i] = core.Video{
+			ID:           fmt.Sprintf("video-%d", i),
+			Title:        fmt.Sprintf("Video %d", i),
+			ChannelID:    "ch-a",
+			ChannelTitle: "Alpha channel",
+			PublishedAt:  time.Now().Add(-time.Duration(i) * time.Hour).UTC().Format(time.RFC3339),
+		}
+	}
+	a := sidebarTestApp(t, true)
+	a.Channels = append(a.Channels, core.Channel{ID: "ch-lone", Title: "Lone channel"})
+	a.Sync.Channels["ch-lone"] = a.Channels[len(a.Channels)-1]
+	a.Videos = videos
+	a.SelectedVideoID = videos[0].ID
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.shell, 960, int(h))
+	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
+
+	// Scroll every surface to its end with pointer scrolls, then check the
+	// last item's visible edge sits above the reserved bottom inset.
+	scrollToEnd := func(x, y float32) {
+		for range 60 {
+			tt.Scroll(x, y, 0, 400)
+		}
+	}
+	check := func(label string, r ui.Rect) {
+		t.Helper()
+		if r.Y+r.H > h+0.5 {
+			t.Fatalf("%s ends at %v, past the %v window bottom", label, r.Y+r.H, h)
+		}
+		if gap := h - (r.Y + r.H); gap < mui.ScrollBottomInset-1.5 {
+			t.Fatalf("%s leaves only %v below it; want >= the %v shared inset", label, gap, mui.ScrollBottomInset)
+		}
+	}
+	// Sidebar: scroll inside its column, then check the last ungrouped row.
+	scrollToEnd(120, 300)
+	lastSidebar, ok := tt.Find("Lone channel")
+	if !ok {
+		t.Fatalf("sidebar's last row is missing: %q", tt.Texts())
+	}
+	check("sidebar last row", lastSidebar)
+	// Grid: scroll inside the centre pane, then check the last card's title.
+	// At 960 pt with the detail open the grid spans roughly x 221..541.
+	scrollToEnd(400, 300)
+	lastCard, ok := tt.Find(fmt.Sprintf("Video %d", len(videos)-1))
+	if !ok {
+		t.Fatalf("grid's last card is missing: %q", tt.Texts())
+	}
+	check("grid last card", lastCard)
+	// Detail: its actions are in a fixed column under the scroll body; the
+	// bottom action's box must end short of the window bottom by the inset.
+	action, ok := tt.Find("Copy link")
+	if !ok {
+		t.Fatalf("detail's bottom action is missing: %q", tt.Texts())
+	}
+	if action.Y+action.H > h+0.5 {
+		t.Fatalf("detail bottom action ends at %v, past the %v window bottom", action.Y+action.H, h)
+	}
+	if gap := h - (action.Y + action.H); gap < mui.ScrollBottomInset-1.5 {
+		t.Fatalf("detail leaves only %v below its bottom action; want >= %v", gap, mui.ScrollBottomInset)
+	}
+}
+
+// TestMinimumHeightLayoutKeepsControlsVisible drives the whole window at the
+// 960 x 640 minimum and checks the sidebar's last channel and the detail
+// pane's actions remain within the window and clickable.
+func TestMinimumHeightLayoutKeepsControlsVisible(t *testing.T) {
+	videos := make([]core.Video, 12)
+	for i := range videos {
+		videos[i] = core.Video{
+			ID:           fmt.Sprintf("video-%d", i),
+			Title:        fmt.Sprintf("Video %d", i),
+			ChannelID:    "ch-a",
+			ChannelTitle: "Alpha channel",
+			PublishedAt:  time.Now().Add(-time.Duration(i) * time.Hour).UTC().Format(time.RFC3339),
+		}
+	}
+	a := sidebarTestApp(t, true)
+	a.Channels = append(a.Channels, core.Channel{ID: "ch-lone", Title: "Lone channel"})
+	a.Sync.Channels["ch-lone"] = a.Channels[len(a.Channels)-1]
+	a.Videos = videos
+	a.SelectedVideoID = videos[0].ID
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.shell, 960, 640)
+	tt.Frame()
+	tt.Advance(300 * time.Millisecond) // finish the detail pane's width transition
+
+	for _, name := range []string{"Alpha channel", "Lone channel"} {
+		boxes := sidebarRowBoxes(tt, name)
+		if len(boxes) == 0 {
+			t.Fatalf("minimum height: missing sidebar row %q: %q", name, tt.Texts())
+		}
+		r := boxes[0]
+		if r.Y < 0 || r.Y+r.H > 640 {
+			t.Fatalf("minimum height: sidebar row %q at %v is clipped", name, r)
+		}
+	}
+	for _, label := range []string{"Open on YouTube…", "Copy link", "Favorite"} {
+		r, ok := tt.Find(label)
+		if !ok {
+			t.Fatalf("minimum height: missing detail action %q: %q", label, tt.Texts())
+		}
+		if r.Y < 0 || r.Y+r.H > 640 {
+			t.Fatalf("minimum height: detail action %q at %v is clipped", label, r)
+		}
+	}
+	if err := tt.Click("Copy link"); err != nil {
+		t.Fatalf("minimum height: the bottom detail action is not clickable: %v", err)
+	}
+}
+
+// TestGridScrollbarTrailingEdge checks F-06 through the rendered frame: the
+// grid's vertical scrollbar sits at the centre pane's trailing edge and does
+// not move with the column setting. A test-only scrollbar colour makes the
+// otherwise translucent bar measurable in the captured image; the expected
+// behaviour comes from the board's requirement that the bar track the pane.
+func TestGridScrollbarTrailingEdge(t *testing.T) {
+	const windowWidth, windowHeight float32 = 1280, 808
+	trackColor := color.RGBA{211, 31, 47, 255}
+	videos := make([]core.Video, 120)
+	for i := range videos {
+		videos[i] = core.Video{
+			ID:           fmt.Sprintf("video-%d", i),
+			Title:        fmt.Sprintf("Video %d", i),
+			ChannelID:    "ch-1",
+			ChannelTitle: "Channel",
+			PublishedAt:  time.Now().Add(-time.Duration(i) * time.Hour).UTC().Format(time.RFC3339),
+		}
+	}
+	a := &App{
+		Dir:      t.TempDir(),
+		Selected: "all",
+		Settings: core.Settings{
+			APIKey: "test", ExpandedGroups: map[string]bool{},
+			MaxGridColumns: defaultMaxGridColumns, RefreshMinutes: 60,
+		},
+		Sync: core.SyncState{
+			Favorites: map[string]core.FavoriteRecord{}, ReadStates: map[string]map[string]core.ReadRecord{},
+			Groups: map[string]core.ChannelGroup{}, Channels: map[string]core.Channel{"ch-1": {ID: "ch-1", Title: "Channel"}},
+		},
+		Channels: []core.Channel{{ID: "ch-1", Title: "Channel"}},
+		Videos:   videos,
+	}
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(func(c *ui.Context) {
+		th := *c.Theme()
+		th.ScrollbarStyle = ui.ScrollbarStyle{TrackWidth: 12, ThumbWidth: 6, Track: ui.RGBA(trackColor.R, trackColor.G, trackColor.B, float32(trackColor.A)/255), Thumb: ui.RGBA(trackColor.R, trackColor.G, trackColor.B, float32(trackColor.A)/255)}
+		c.SetTheme(&th)
+		w.shell(c)
+	}, int(windowWidth), int(windowHeight))
+	tt.Frame()
+	// Scrollbars paint only while the pointer is over the scroll container.
+	// Move into the grid's trailing region so its vertical bar shows.
+	tt.Move(600, 300)
+
+	// Locate the track's painted column by colour. It sits just to the
+	// trailing side of the centre pane, clear of the last card.
+	trackXs := func() (minX, maxX int) {
+		t.Helper()
+		img := tt.Image()
+		minX, maxX = -1, -1
+		for x := 0; x < int(windowWidth); x++ {
+			for y := 200; y < 600; y++ {
+				c := img.RGBAAt(x, y)
+				if c.R == trackColor.R && c.G == trackColor.G && c.B == trackColor.B {
+					if minX < 0 {
+						minX = x
+					}
+					maxX = x
+					break
+				}
+			}
+		}
+		if minX < 0 {
+			t.Fatalf("no scrollbar track painted in the frame")
+		}
+		return minX, maxX + 1
+	}
+	trackLeft, trackRightX := trackXs()
+	if trackRightX-trackLeft != 12 {
+		t.Fatalf("scrollbar track is %d pt wide; want 12", trackRightX-trackLeft)
+	}
+	// The cards end before the track's leading edge with a real gap. The
+	// title label sits 8 pt inside the card, and the framework rounds the
+	// column step to whole points, so derive the card's right edge from
+	// the rendered step: label.X - 8 + step - gap.
+	last, ok := tt.Find(fmt.Sprintf("Video %d", defaultMaxGridColumns-1))
+	if !ok {
+		t.Fatalf("the last card of the first row is missing: %q", tt.Texts())
+	}
+	first, ok := tt.Find("Video 0")
+	if !ok {
+		t.Fatalf("the first card is missing: %q", tt.Texts())
+	}
+	step := (last.X - first.X) / float32(defaultMaxGridColumns-1)
+	cardRight := last.X - 8 + step - 8
+	if gap := float32(trackLeft) - cardRight; abs(gap-gridScrollbarGap) > 3 {
+		t.Fatalf("last card ends at %v and the bar starts at %d: gap %v; want %v", cardRight, trackLeft, gap, gridScrollbarGap)
+	}
+	// Changing the column setting or opening the detail pane must not move
+	// the bar: it tracks the centre pane, not the cards.
+	for _, columns := range []int{minMaxGridColumns, maxMaxGridColumns} {
+		a.Settings.MaxGridColumns = columns
+		tt.Frame()
+		tt.Move(600, 300)
+		if left, right := trackXs(); left != trackLeft || right != trackRightX {
+			t.Fatalf("%d columns moved the scrollbar to %d..%d; want %d..%d", columns, left, right, trackLeft, trackRightX)
+		}
+	}
+	// The bar follows the centre pane when the detail pane opens: it keeps
+	// its width, moves left with the pane, and still leaves the 8 pt clearance
+	// from the trailing card at its new edge. The card's right edge comes from
+	// the rendered step, as before, but using the open pane's column count.
+	a.Settings.MaxGridColumns = defaultMaxGridColumns
+	tt.Frame()
+	a.SelectedVideoID = "video-0"
+	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
+	// Put the pointer inside the narrower centre pane so its bar paints.
+	tt.Move(400, 300)
+	openLeft, openRight := trackXs()
+	if openRight-openLeft != 12 {
+		t.Fatalf("with the detail open the bar is %d pt wide; want 12", openRight-openLeft)
+	}
+	if want := float32(openRight); want >= float32(trackRightX) {
+		t.Fatalf("with the detail open the bar ends at %d; want it left of %d", openRight, trackRightX)
+	}
+	openFirst, ok := tt.Find("Video 0")
+	if !ok {
+		t.Fatalf("with the detail open the first card is missing: %q", tt.Texts())
+	}
+	openLast, ok := tt.Find(fmt.Sprintf("Video %d", defaultMaxGridColumns-1))
+	if !ok {
+		t.Fatalf("with the detail open the last card of the first row is missing: %q", tt.Texts())
+	}
+	openStep := (openLast.X - openFirst.X) / float32(defaultMaxGridColumns-1)
+	openCardRight := openLast.X - 8 + openStep - 8
+	if gap := float32(openLeft) - openCardRight; abs(gap-gridScrollbarGap) > 3 {
+		t.Fatalf("with the detail open the last card ends at %v and the bar starts at %d: gap %v; want %v", openCardRight, openLeft, gap, gridScrollbarGap)
 	}
 }
