@@ -118,7 +118,7 @@ func (w *Window) toast(c *ui.Context, msg string, isError bool) {
 // text into the window; the item and an open popover follow the refresh as it
 // starts and returns.
 func (w *Window) runRefresh(force bool) {
-	if w.app.Busy || w.app.refreshBlockedReason(time.Now()) != "" {
+	if w.app.Busy || w.app.refreshBlocked(time.Now()) {
 		return
 	}
 	w.app.Busy = true

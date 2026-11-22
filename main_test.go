@@ -707,9 +707,6 @@ func TestRefreshControlsDimWhenRefreshCannotRun(t *testing.T) {
 			if !control.Disabled {
 				t.Fatalf("refresh control is not dimmed: %+v", control)
 			}
-			if control.Description == "" {
-				t.Fatal("the dimmed refresh control shows no reason")
-			}
 			if err := tt.Click("More"); err != nil {
 				t.Fatal(err)
 			}

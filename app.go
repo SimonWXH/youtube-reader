@@ -539,19 +539,19 @@ func (a *App) ImportFavorites(path string) (int, error) {
 	return changed, nil
 }
 
-// refreshBlockedReason says why a refresh cannot run now, or "" when it can.
-// A missing key and a quota pause are the two conditions core.RefreshYoutube
-// refuses; every refresh surface reads this one answer, so none offers a
-// refresh that would return without doing anything.
-func (a *App) refreshBlockedReason(now time.Time) string {
+// refreshBlocked reports whether a refresh cannot run now: a missing key or a
+// quota pause are the two conditions core.RefreshYoutube refuses. Every refresh
+// surface reads this one answer, so none offers a refresh that would return
+// without doing anything.
+func (a *App) refreshBlocked(now time.Time) bool {
 	settings := a.settingsSnapshot()
 	if settings.APIKey == "" {
-		return "Add a YouTube API key in Settings to refresh"
+		return true
 	}
 	if until, err := time.Parse(time.RFC3339, settings.QuotaPausedUntil); err == nil && now.Before(until) {
-		return "Refresh paused until " + until.Local().Format("2 Jan, 15:04")
+		return true
 	}
-	return ""
+	return false
 }
 
 func (a *App) Refresh(force bool) RefreshOutcome {

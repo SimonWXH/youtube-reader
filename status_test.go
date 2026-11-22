@@ -41,17 +41,14 @@ func statusFixtures(now time.Time) map[statusState]status {
 
 	upToDate := base
 	upToDate.Settings.LastRefresh = now.Add(-2 * time.Minute).Format(time.RFC3339)
-	upToDate.Settings.NextRefresh = now.Add(13 * time.Minute).Format(time.RFC3339)
 
 	refreshing := upToDate
 	refreshing.Refreshing = true
 	refreshing.Started = now.Add(-25 * time.Second)
-	refreshing.Settings.NextRefresh = now.Add(58 * time.Minute).Format(time.RFC3339)
 
 	offline := base
 	offline.Online = false
 	offline.Settings.LastRefresh = now.Add(-2*time.Hour - 5*time.Minute).Format(time.RFC3339)
-	offline.Settings.NextRefresh = now.Add(-time.Hour).Format(time.RFC3339)
 
 	failed := upToDate
 	failed.Settings.RecentFailures = []core.RefreshFailure{{
@@ -131,6 +128,38 @@ func TestRemainingTime(t *testing.T) {
 	}
 }
 
+// TestNextRefreshFollowsIntervalChange proves the popover's "Next refresh" row
+// follows the current interval, the same LastRefresh plus RefreshMinutes rule
+// the scheduler uses, so changing the interval shows the new schedule at once
+// and a stamp stored under the old interval cannot keep showing the old one.
+func TestNextRefreshFollowsIntervalChange(t *testing.T) {
+	now := time.Date(2026, 3, 1, 9, 30, 0, 0, time.Local)
+	settings := core.Settings{
+		APIKey:         "key",
+		RefreshMinutes: 60,
+		LastRefresh:    now.Add(-30 * time.Minute).Format(time.RFC3339),
+		NextRefresh:    now.Add(10 * time.Minute).Format(time.RFC3339),
+	}
+	nextRow := func(s core.Settings) string {
+		t.Helper()
+		m := deriveStatus(statusInput{Now: now, Online: true, Settings: s, Channels: 1})
+		for _, d := range m.Details {
+			if d.Label == "Next refresh" {
+				return d.Value
+			}
+		}
+		t.Fatalf("no Next refresh row for %+v", s)
+		return ""
+	}
+	if got := nextRow(settings); got != "30 min" {
+		t.Fatalf("hourly next refresh = %q, want %q", got, "30 min")
+	}
+	settings.RefreshMinutes = 240
+	if got := nextRow(settings); got != "4 hr" {
+		t.Fatalf("four-hour next refresh = %q, want %q", got, "4 hr")
+	}
+}
+
 // TestDeriveStatusCopy pins the states' copy and actions to the design board,
 // and the cases around them: a refresh in flight wins over offline, a missing
 // key and a never-refreshed reader are setup states rather than healthy or
@@ -141,8 +170,8 @@ func TestDeriveStatusCopy(t *testing.T) {
 	fixtures := statusFixtures(now)
 	settings := core.Settings{
 		APIKey:         "key",
+		RefreshMinutes: 15,
 		LastRefresh:    now.Add(-2 * time.Minute).Format(time.RFC3339),
-		NextRefresh:    now.Add(13 * time.Minute).Format(time.RFC3339),
 		RecentFailures: []core.RefreshFailure{},
 	}
 	tests := []struct {
@@ -262,7 +291,6 @@ func TestDeriveStatusCopy(t *testing.T) {
 			in: statusInput{Now: now, Online: true, Channels: 42, Settings: core.Settings{
 				APIKey:           "key",
 				LastRefresh:      now.Add(-2 * time.Minute).Format(time.RFC3339),
-				NextRefresh:      now.Add(13 * time.Minute).Format(time.RFC3339),
 				QuotaPausedUntil: now.Add(24 * time.Hour).Format(time.RFC3339),
 			}},
 			state:   statusUpToDate,

@@ -100,10 +100,9 @@ type toolbarControlSpec struct {
 	key      string
 	label    string
 	tooltip  string
-	on       bool     // drawn as chosen, in the accent tint
-	disabled bool     // no pointer, no keyboard activation
-	face     ui.Color // glyph colour; zero keeps the token default
-	content  func()   // the glyph, or a spinner while the control works
+	on       bool   // drawn as chosen, in the accent tint
+	disabled bool   // no pointer, no keyboard activation
+	content  func() // the glyph, or a spinner while the control works
 	onClick  func()
 }
 
@@ -114,8 +113,6 @@ func (w *Window) toolbarControl(c *ui.Context, t mui.Tokens, spec toolbarControl
 		face = t.Faint
 	case spec.on:
 		face = t.Accent
-	case spec.face.A > 0:
-		face = spec.face
 	}
 	var bg ui.Color
 	if spec.on {
@@ -167,8 +164,8 @@ func (w *Window) refreshControl(c *ui.Context, t mui.Tokens) {
 		content: func() { ui.Icon(c, mui.IconRefresh).Size(toolbarGlyph, toolbarGlyph) },
 		onClick: func() { w.runRefresh(true) },
 	}
-	if reason := w.app.refreshBlockedReason(time.Now()); reason != "" {
-		spec.tooltip, spec.disabled = reason, true
+	if w.app.refreshBlocked(time.Now()) {
+		spec.disabled = true
 	}
 	if w.app.Busy {
 		spec.label, spec.tooltip, spec.disabled = "Refreshing", "Refreshing", true
@@ -194,7 +191,7 @@ func (w *Window) overflowControl(c *ui.Context, t mui.Tokens) {
 // toolbar controls or menu commands, then the secondary ones. Anything that
 // cannot run right now is dimmed, not hidden.
 func (w *Window) overflowMenu(m *ui.Menu) {
-	blocked := w.app.refreshBlockedReason(time.Now()) != ""
+	blocked := w.app.refreshBlocked(time.Now())
 	if m.Item("Refresh").Shortcut(ui.Cmd, ui.KeyR).Disabled(w.app.Busy || blocked).Chosen() {
 		w.runRefresh(true)
 	}
@@ -464,6 +461,6 @@ func (w *Window) sidebarMenuLabel() string {
 // toolbar control is dimmed.
 func (w *Window) syncRefreshMenu() {
 	if w.menuRefresh != nil {
-		w.menuRefresh.SetEnabled(!w.app.Busy && w.app.refreshBlockedReason(time.Now()) == "")
+		w.menuRefresh.SetEnabled(!w.app.Busy && !w.app.refreshBlocked(time.Now()))
 	}
 }

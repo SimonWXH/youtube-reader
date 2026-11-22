@@ -169,7 +169,6 @@ type statusInput struct {
 func deriveStatus(in statusInput) status {
 	settings := in.Settings
 	last, hasLast := stampTime(settings.LastRefresh)
-	next, hasNext := stampTime(settings.NextRefresh)
 	pausedUntil, paused := stampTime(settings.QuotaPausedUntil)
 	paused = paused && in.Now.Before(pausedUntil)
 
@@ -245,7 +244,8 @@ func deriveStatus(in statusInput) status {
 	default:
 		m.Title = "Up to date"
 		m.Body = "Last refresh " + relativeTime(in.Now, last)
-		if !paused && hasNext {
+		if !paused {
+			next := last.Add(time.Duration(settings.RefreshMinutes) * time.Minute)
 			m.Details = append(m.Details, statusDetail{Symbol: "clock", Label: "Next refresh", Value: remainingTime(in.Now, next)})
 		}
 		m.Details = append(m.Details, statusDetail{Symbol: "arrow.triangle.2.circlepath", Label: "Channels", Value: fmt.Sprintf("%d", in.Channels)})

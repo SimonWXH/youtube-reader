@@ -91,7 +91,7 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 			none := -1
 			w.selectedIndex = &none
 			state := mui.Default
-			if w.app.refreshBlockedReason(time.Now()) != "" {
+			if w.app.refreshBlocked(time.Now()) {
 				state = mui.Disabled
 			}
 			w.emptyState(c, t, "Nothing here yet", "Try another filter or refresh your subscriptions.", "empty-refresh", "Refresh now", state, func(c *ui.Context) { w.runRefresh(true) })
