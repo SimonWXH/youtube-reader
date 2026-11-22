@@ -112,11 +112,16 @@ func loadHelperSettings(dir string) core.Settings {
 	return settings
 }
 
+// notificationPostFunc posts one notification and reports whether a click on
+// it can still reach the app. A plain helper notification has no click
+// callback, so it must not enter the click queue.
+type notificationPostFunc func(core.NotificationPlan) (clickRoutable bool, err error)
+
 // HelperRun is the injectable core of one helper invocation. It reads local
 // settings and shared state, checks the network, performs the same refresh as
 // the app, commits SQLite in one transaction, queues shared JSON writes while
 // the app holds the flock, posts notifications and writes an atomic handoff.
-func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post func(core.NotificationPlan) error) (HelperHandoff, error) {
+func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post notificationPostFunc) (HelperHandoff, error) {
 	handoff := HelperHandoff{ID: fmt.Sprintf("helper-%d", now.UnixNano()), CreatedAt: core.FormatRFC3339(now)}
 	settings := loadHelperSettings(dir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -198,11 +203,14 @@ func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post
 			if post == nil {
 				continue
 			}
-			if err := post(plan); err != nil {
+			routable, err := post(plan)
+			if err != nil {
 				log.Printf("notification: %v", err)
 				continue
 			}
-			posted = append(posted, plan)
+			if routable {
+				posted = append(posted, plan)
+			}
 		}
 		recordPostedClicks(posted)
 	}
@@ -312,23 +320,24 @@ func isWouldBlock(err error) bool {
 	return errors.Is(err, syscall.EWOULDBLOCK)
 }
 
-func postHelperNotification(plan core.NotificationPlan) error {
+func postHelperNotification(plan core.NotificationPlan) (clickRoutable bool, err error) {
 	body := fmt.Sprintf("%d new video%s", plan.Count, plural(plan.Count))
 	if plan.NewestTitle != "" {
 		body += "\n" + plan.NewestTitle
 	}
 	if runtime.GOOS != "darwin" {
-		return nil
+		return false, nil
 	}
 	script := fmt.Sprintf("display notification \"%s\" with title \"%s\" subtitle \"New videos\" sound name \"default\"", escapeAppleScript(body), escapeAppleScript(plan.ChannelName))
 	// The app owns click routing, so target it only when it is already
 	// running. Targeting a closed app makes macOS launch it and pop its
 	// window open; a plain script has no click callback, but it never opens
 	// the main window during a background refresh.
-	if appRunningForHelper() {
+	routable := appRunningForHelper()
+	if routable {
 		script = fmt.Sprintf("tell application id \"%s\" to %s", notificationBundleID, script)
 	}
-	return osascriptForHelper(script)
+	return routable, osascriptForHelper(script)
 }
 
 func escapeAppleScript(s string) string {
