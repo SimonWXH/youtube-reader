@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -56,6 +57,9 @@ func statusFixtures(now time.Time) map[statusState]status {
 		Message: "Alpha: Get \"https://www.googleapis.com/youtube/v3/playlistItems\": dial tcp: no route to host",
 	}}
 
+	paused := upToDate
+	paused.Settings.QuotaPausedUntil = now.Add(24 * time.Hour).Format(time.RFC3339)
+
 	notConfigured := base
 	notConfigured.Settings.APIKey = ""
 	notConfigured.Channels = 0
@@ -64,6 +68,7 @@ func statusFixtures(now time.Time) map[statusState]status {
 	return map[statusState]status{
 		statusUpToDate:      deriveStatus(upToDate),
 		statusRefreshing:    deriveStatus(refreshing),
+		statusPaused:        deriveStatus(paused),
 		statusOffline:       deriveStatus(offline),
 		statusFailed:        deriveStatus(failed),
 		statusNotConfigured: deriveStatus(notConfigured),
@@ -293,11 +298,11 @@ func TestDeriveStatusCopy(t *testing.T) {
 				LastRefresh:      now.Add(-2 * time.Minute).Format(time.RFC3339),
 				QuotaPausedUntil: now.Add(24 * time.Hour).Format(time.RFC3339),
 			}},
-			state:   statusUpToDate,
-			title:   "Up to date",
-			body:    "Last refresh 2 min ago",
+			state:   statusPaused,
+			title:   "Refresh paused",
+			body:    "YouTube API quota reached. Refresh resumes on 2 Mar, 14:32.",
 			primary: statusRefreshNow, secondary: statusOpenSettings, primaryDisabled: true,
-			details: []string{"Next refresh: Paused until 2 Mar, 14:32", "Channels: 42", "New videos today: 0"},
+			details: []string{"Last refresh: 2 min ago", "Channels: 42"},
 		},
 		{
 			name: "never refreshed while paused",
@@ -305,11 +310,11 @@ func TestDeriveStatusCopy(t *testing.T) {
 				APIKey:           "key",
 				QuotaPausedUntil: now.Add(24 * time.Hour).Format(time.RFC3339),
 			}},
-			state:   statusNotRefreshed,
-			title:   "Not refreshed yet",
-			body:    "Refresh to fetch your subscriptions and videos.",
+			state:   statusPaused,
+			title:   "Refresh paused",
+			body:    "YouTube API quota reached. Refresh resumes on 2 Mar, 14:32.",
 			primary: statusRefreshNow, secondary: statusOpenSettings, primaryDisabled: true,
-			details: []string{"Next refresh: Paused until 2 Mar, 14:32", "Channels: 3"},
+			details: []string{"Channels: 3"},
 		},
 		{
 			name: "offline while paused",
@@ -318,11 +323,11 @@ func TestDeriveStatusCopy(t *testing.T) {
 				LastRefresh:      now.Add(-2 * time.Minute).Format(time.RFC3339),
 				QuotaPausedUntil: now.Add(24 * time.Hour).Format(time.RFC3339),
 			}},
-			state:   statusOffline,
-			title:   "Offline",
-			body:    "Showing cached videos from 14:30",
-			primary: statusRetry, secondary: statusOpenSettings, primaryDisabled: true,
-			details: []string{"Next refresh: Paused until 2 Mar, 14:32", "Last refresh: 2 min ago", "Channels: 42"},
+			state:   statusPaused,
+			title:   "Refresh paused",
+			body:    "YouTube API quota reached. Refresh resumes on 2 Mar, 14:32.",
+			primary: statusRefreshNow, secondary: statusOpenSettings, primaryDisabled: true,
+			details: []string{"Last refresh: 2 min ago", "Channels: 42"},
 		},
 		{
 			name: "stored failure redacts the key",
@@ -365,11 +370,11 @@ func TestDeriveStatusCopy(t *testing.T) {
 				}},
 				QuotaPausedUntil: now.Add(24 * time.Hour).Format(time.RFC3339),
 			}},
-			state:   statusFailed,
-			title:   "Couldn't refresh subscriptions",
+			state:   statusPaused,
+			title:   "Refresh paused",
 			body:    "YouTube API quota reached. Refresh resumes on 2 Mar, 14:32.",
-			primary: statusNoAction, secondary: statusOpenSettings,
-			details: []string{"Failed: 4 min ago", "Channels: 42"},
+			primary: statusRefreshNow, secondary: statusOpenSettings, primaryDisabled: true,
+			details: []string{"Last refresh: 2 min ago", "Channels: 42"},
 		},
 		{
 			name: "quota failure after the pause",
@@ -433,6 +438,9 @@ func TestDeriveStatusCopy(t *testing.T) {
 	if got := statusItemTitle(fixtures[statusFailed].State); got != "Refresh failed" {
 		t.Fatalf("failed item title = %q", got)
 	}
+	if got := statusItemTitle(fixtures[statusPaused].State); got != "Paused" {
+		t.Fatalf("paused item title = %q", got)
+	}
 	if got := statusItemTitle(fixtures[statusNotConfigured].State); got != "Set up" {
 		t.Fatalf("not-configured item title = %q", got)
 	}
@@ -468,6 +476,81 @@ func TestDeriveStatusCopy(t *testing.T) {
 	// The item's hover text repeats the popover's own copy.
 	if got := statusTooltip(fixtures[statusOffline]); got != "Offline - Showing cached videos from 12:27" {
 		t.Fatalf("tooltip = %q", got)
+	}
+}
+
+// TestLaunchPauseIsVisible proves a quota pause already in force when the app
+// starts is a state of its own, not something the surface only learns from a
+// failed refresh attempt: the item says Paused, its hover text names the pause
+// and when it lifts, and the refresh action is disabled for that reason.
+func TestLaunchPauseIsVisible(t *testing.T) {
+	now := time.Date(2026, 3, 1, 14, 32, 0, 0, time.Local)
+	until := now.Add(6 * time.Hour)
+	m := deriveStatus(statusInput{Now: now, Online: true, Channels: 7, Settings: core.Settings{
+		APIKey:           "key",
+		LastRefresh:      now.Add(-time.Minute).Format(time.RFC3339),
+		QuotaPausedUntil: until.Format(time.RFC3339),
+	}})
+	if m.State != statusPaused {
+		t.Fatalf("launch pause state = %v, want paused", m.State)
+	}
+	if m.Title != "Refresh paused" {
+		t.Fatalf("launch pause title = %q", m.Title)
+	}
+	resume := until.Local().Format("2 Jan, 15:04")
+	if !strings.Contains(m.Body, resume) {
+		t.Fatalf("launch pause body does not name the resume time: %q", m.Body)
+	}
+	if got := statusItemTitle(m.State); got != "Paused" {
+		t.Fatalf("launch pause item title = %q", got)
+	}
+	tooltip := statusTooltip(m)
+	if !strings.Contains(tooltip, "Refresh paused") || !strings.Contains(tooltip, resume) {
+		t.Fatalf("launch pause tooltip = %q", tooltip)
+	}
+	if !m.PrimaryDisabled || m.Primary != statusRefreshNow {
+		t.Fatalf("launch pause primary = %v disabled %v, want a disabled refresh", m.Primary, m.PrimaryDisabled)
+	}
+}
+
+// TestStatusChannelsFollowSubscriptions proves the popover counts what the user
+// subscribed to, the set the refresh processes, not the channel records left by
+// the last successful refresh: a subscription imported after that refresh shows
+// without waiting for the next one.
+func TestStatusChannelsFollowSubscriptions(t *testing.T) {
+	now := time.Date(2026, 3, 1, 14, 32, 0, 0, time.Local)
+	subscriptions := make(map[string]core.Channel, 25)
+	stored := make([]core.Channel, 0, 20)
+	for i := 0; i < 20; i++ {
+		ch := core.Channel{ID: fmt.Sprintf("ch-%02d", i), Title: fmt.Sprintf("Channel %02d", i)}
+		subscriptions[ch.ID] = ch
+		stored = append(stored, ch)
+	}
+	a := &App{
+		Settings: core.Settings{APIKey: "key", LastRefresh: now.Add(-time.Minute).Format(time.RFC3339)},
+		Sync:     core.SyncState{Channels: subscriptions},
+		Channels: stored,
+	}
+	s := &statusBar{w: &Window{app: a}}
+	count := func() string {
+		t.Helper()
+		for _, d := range s.model(now).Details {
+			if d.Label == "Channels" {
+				return d.Value
+			}
+		}
+		t.Fatal("no Channels row")
+		return ""
+	}
+	if got := count(); got != "20" {
+		t.Fatalf("channels after the last refresh = %q, want 20", got)
+	}
+	for i := 20; i < 25; i++ {
+		ch := core.Channel{ID: fmt.Sprintf("ch-%02d", i), Title: fmt.Sprintf("Channel %02d", i)}
+		a.Sync.Channels[ch.ID] = ch
+	}
+	if got := count(); got != "25" {
+		t.Fatalf("channels after importing five subscriptions = %q, want 25", got)
 	}
 }
 
@@ -597,7 +680,7 @@ func TestFailedBodyWrapsInsideThePopover(t *testing.T) {
 // each a 2x drawing for the 18 pt item and never full-colour art.
 func TestStatusItemIconSet(t *testing.T) {
 	states := []statusState{
-		statusUpToDate, statusRefreshing, statusOffline, statusFailed,
+		statusUpToDate, statusRefreshing, statusPaused, statusOffline, statusFailed,
 		statusNotConfigured, statusNotRefreshed,
 	}
 	seen := map[string]statusState{}
@@ -659,6 +742,7 @@ func TestStatusScreenshots(t *testing.T) {
 	names := map[statusState]string{
 		statusUpToDate:      "up-to-date",
 		statusRefreshing:    "refreshing",
+		statusPaused:        "paused",
 		statusOffline:       "offline",
 		statusFailed:        "failed",
 		statusNotConfigured: "not-configured",

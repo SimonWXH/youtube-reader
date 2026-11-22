@@ -46,6 +46,8 @@ var (
 	statusIconUpToDate []byte
 	//go:embed assets/status/refreshing.png
 	statusIconRefreshing []byte
+	//go:embed assets/status/paused.png
+	statusIconPaused []byte
 	//go:embed assets/status/offline.png
 	statusIconOffline []byte
 	//go:embed assets/status/failed.png
@@ -61,6 +63,8 @@ func statusIcon(s statusState) []byte {
 	switch s {
 	case statusRefreshing:
 		return statusIconRefreshing
+	case statusPaused:
+		return statusIconPaused
 	case statusOffline:
 		return statusIconOffline
 	case statusFailed:
@@ -80,6 +84,8 @@ func statusSymbol(s statusState) string {
 	switch s {
 	case statusRefreshing:
 		return "arrow.triangle.2.circlepath"
+	case statusPaused:
+		return "pause.circle"
 	case statusOffline:
 		return "wifi.slash"
 	case statusFailed:
@@ -101,6 +107,7 @@ type statusState int
 const (
 	statusUpToDate statusState = iota
 	statusRefreshing
+	statusPaused
 	statusOffline
 	statusFailed
 	statusNotConfigured
@@ -198,6 +205,18 @@ func deriveStatus(in statusInput) status {
 		}
 		m.Details = append(m.Details, statusDetail{Symbol: "arrow.triangle.2.circlepath", Label: "Channels", Value: fmt.Sprintf("%d", in.Channels)})
 
+	case paused:
+		m.State = statusPaused
+		m.Title = "Refresh paused"
+		m.Body = "YouTube API quota reached. Refresh resumes on " + pausedUntil.Local().Format("2 Jan, 15:04") + "."
+		m.Primary = statusRefreshNow
+		m.Secondary = statusOpenSettings
+		pauseShown = true
+		if hasLast {
+			m.Details = append(m.Details, statusDetail{Symbol: "clock", Label: "Last refresh", Value: relativeTime(in.Now, last)})
+		}
+		m.Details = append(m.Details, statusDetail{Symbol: "arrow.triangle.2.circlepath", Label: "Channels", Value: fmt.Sprintf("%d", in.Channels)})
+
 	case !in.Online:
 		m.State = statusOffline
 		m.Title = "Offline"
@@ -219,10 +238,6 @@ func deriveStatus(in statusInput) status {
 		m.Primary = statusRetry
 		at, hasAt := stampTime(settings.RecentFailures[0].At)
 		switch {
-		case paused:
-			m.Body = "YouTube API quota reached. Refresh resumes on " + pausedUntil.Local().Format("2 Jan, 15:04") + "."
-			m.Primary = statusNoAction
-			pauseShown = true
 		case strings.HasPrefix(message, "quota paused"):
 			// The stored quota failure carries a machine stamp; the pause has
 			// ended, so the row keeps the human sentence instead.
@@ -245,10 +260,8 @@ func deriveStatus(in statusInput) status {
 	default:
 		m.Title = "Up to date"
 		m.Body = "Last refresh " + relativeTime(in.Now, last)
-		if !paused {
-			next := last.Add(time.Duration(settings.RefreshMinutes) * time.Minute)
-			m.Details = append(m.Details, statusDetail{Symbol: "clock", Label: "Next refresh", Value: remainingTime(in.Now, next)})
-		}
+		next := last.Add(time.Duration(settings.RefreshMinutes) * time.Minute)
+		m.Details = append(m.Details, statusDetail{Symbol: "clock", Label: "Next refresh", Value: remainingTime(in.Now, next)})
 		m.Details = append(m.Details, statusDetail{Symbol: "arrow.triangle.2.circlepath", Label: "Channels", Value: fmt.Sprintf("%d", in.Channels)})
 		m.Details = append(m.Details, statusDetail{Symbol: "play.rectangle", Label: "New videos today", Value: fmt.Sprintf("%d", videosToday(in.Videos, in.Now))})
 	}
@@ -379,6 +392,8 @@ func statusActionLabel(a statusAction, state statusState) string {
 // keeps the item's width steady while a refresh runs.
 func statusItemTitle(s statusState) string {
 	switch s {
+	case statusPaused:
+		return "Paused"
 	case statusOffline:
 		return "Offline"
 	case statusFailed:
@@ -501,6 +516,8 @@ func statusGlyphColor(s statusState, tokens mui.Tokens) ui.Color {
 	switch s {
 	case statusRefreshing:
 		return tokens.Accent
+	case statusPaused:
+		return tokens.Warning
 	case statusOffline:
 		return tokens.Warning
 	case statusFailed:
@@ -628,6 +645,9 @@ type statusBar struct {
 	// paused remembers whether a quota pause was in force, so the warning is
 	// raised once when it begins and not on every attempt while it lasts.
 	paused bool
+	// blocked remembers whether refresh actions were disabled, so the clock
+	// repaints the window when a pause expires and they become usable again.
+	blocked bool
 	// stop ends the clock goroutine.
 	stop chan struct{}
 }
@@ -651,8 +671,8 @@ func newStatusBar(w *Window) *statusBar {
 	}
 	s.online = mygo.Network.Status().Online
 	s.tray.OnClick(s.toggle)
-	// A pause already in force at launch has told the user before: the item
-	// shows it, and only a pause that begins while the app runs is news.
+	// A pause already in force at launch is shown by the Paused state; only a
+	// pause that begins while the app runs raises the alert.
 	s.paused = !s.model(time.Now()).PausedUntil.IsZero()
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
 		s.stopClock()
@@ -678,7 +698,7 @@ func (s *statusBar) model(now time.Time) status {
 		Refreshing: s.w.app.Busy,
 		Started:    s.started,
 		Settings:   s.w.app.settingsSnapshot(),
-		Channels:   len(s.w.app.Channels),
+		Channels:   len(s.w.app.Sync.Channels),
 		Videos:     s.w.app.Videos,
 	}
 	return deriveStatus(in)
@@ -704,6 +724,12 @@ func (s *statusBar) actions() statusActions {
 func (s *statusBar) refresh() {
 	m := s.model(time.Now())
 	s.w.syncRefreshMenu()
+	if blocked := s.w.app.refreshBlocked(time.Now()); blocked != s.blocked {
+		s.blocked = blocked
+		if s.w.window != nil {
+			s.w.window.Invalidate()
+		}
+	}
 	if s.tray == nil {
 		return
 	}

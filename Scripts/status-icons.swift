@@ -51,6 +51,7 @@ try FileManager.default.createDirectory(atPath: outDir, withIntermediateDirector
 let icons: [(symbol: String, file: String)] = [
     ("checkmark.circle", "up-to-date.png"),
     ("arrow.triangle.2.circlepath", "refreshing.png"),
+    ("pause.circle", "paused.png"),
     ("wifi.slash", "offline.png"),
     ("exclamationmark.triangle", "failed.png"),
     ("key.fill", "setup.png"),
