@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -351,5 +352,106 @@ func TestDrainQueuedSyncWritesAfterHelper(t *testing.T) {
 	}
 	if got := saved.Channels["ch-1"].Title; got != "Channel" {
 		t.Fatalf("saved channel = %q", got)
+	}
+}
+
+// groupNames lists the sidebar group names in order.
+func groupNames(groups []core.ChannelGroup) []string {
+	names := make([]string, 0, len(groups))
+	for _, g := range groups {
+		names = append(names, g.Name)
+	}
+	return names
+}
+
+// TestOrderGroupsLoadsStoredOrder covers how the sidebar orders the synced
+// groups on load: the stored order wins exactly, a group the stored order does
+// not name joins the end in name order, and a stored ID that names no group is
+// ignored.
+func TestOrderGroupsLoadsStoredOrder(t *testing.T) {
+	groups := map[string]core.ChannelGroup{
+		"group-a": {ID: "group-a", Name: "Alpha"},
+		"group-b": {ID: "group-b", Name: "Bravo"},
+		"group-c": {ID: "group-c", Name: "Charlie"},
+	}
+	cases := []struct {
+		name   string
+		stored []string
+		want   []string
+	}{
+		{"stored order exactly", []string{"group-c", "group-a", "group-b"}, []string{"Charlie", "Alpha", "Bravo"}},
+		{"missing groups appended by name", []string{"group-b"}, []string{"Bravo", "Alpha", "Charlie"}},
+		{"stale IDs ignored", []string{"group-x", "group-b", "group-a"}, []string{"Bravo", "Alpha", "Charlie"}},
+		{"no stored order", nil, []string{"Alpha", "Bravo", "Charlie"}},
+	}
+	for _, c := range cases {
+		if got := groupNames(orderGroups(groups, c.stored)); !slices.Equal(got, c.want) {
+			t.Errorf("%s: order = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestImportOPMLPathsKeepsDocumentOrder imports an OPML file whose groups are
+// not in name order: the sidebar starts in the file's order, that order is
+// saved locally, and a relaunch reads it back unchanged. A later import that
+// adds groups appends them in its own file order and keeps the order the user
+// already has.
+func TestImportOPMLPathsKeepsDocumentOrder(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+	writeOPML := func(name string, names ...string) string {
+		t.Helper()
+		var body []byte
+		for _, n := range names {
+			body = append(body, []byte(`<outline text="`+n+`"/>`)...)
+		}
+		path := filepath.Join(t.TempDir(), name)
+		if err := os.WriteFile(path, []byte(`<?xml version="1.0"?><opml><body>`+string(body)+`</body></opml>`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	first := writeOPML("first.opml", "Zebra", "Alpha", "Mike")
+	if err := a.ImportOPMLPaths([]string{first}); err != nil {
+		t.Fatalf("first import: %v", err)
+	}
+	want := []string{"Zebra", "Alpha", "Mike"}
+	if got := groupNames(a.Groups); !slices.Equal(got, want) {
+		t.Fatalf("groups after import = %q, want the file's order %q", got, want)
+	}
+
+	// Relaunch: read settings.json the way LoadApp does and reload the same
+	// synced groups.
+	settings := defaultSettings()
+	data, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		t.Fatalf("settings file: %v", err)
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("settings decode: %v", err)
+	}
+	wantIDs := []string{core.StableGroupID("Zebra"), core.StableGroupID("Alpha"), core.StableGroupID("Mike")}
+	if !slices.Equal(settings.GroupOrder, wantIDs) {
+		t.Fatalf("saved group order = %q, want %q", settings.GroupOrder, wantIDs)
+	}
+	relaunched := &App{Dir: dir, Store: a.Store, Settings: settings, Sync: a.Sync}
+	if err := relaunched.reload(); err != nil {
+		t.Fatalf("relaunch reload: %v", err)
+	}
+	if got := groupNames(relaunched.Groups); !slices.Equal(got, want) {
+		t.Fatalf("groups after relaunch = %q, want %q", got, want)
+	}
+
+	// A second import adds groups: they join the end in its file order, while
+	// the groups already here keep their order.
+	second := writeOPML("second.opml", "Bella", "Aaron")
+	if err := a.ImportOPMLPaths([]string{second}); err != nil {
+		t.Fatalf("second import: %v", err)
+	}
+	want = []string{"Zebra", "Alpha", "Mike", "Bella", "Aaron"}
+	if got := groupNames(a.Groups); !slices.Equal(got, want) {
+		t.Fatalf("groups after second import = %q, want %q", got, want)
 	}
 }

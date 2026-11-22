@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -502,6 +503,52 @@ func TestSidebarFocusRingOnEveryRow(t *testing.T) {
 	}
 }
 
+// TestSidebarGroupFocusRingClosesAtBlockEdge focuses a group block's last row
+// with another block right below it. The ring reaches 5 pt past the row and
+// the next block's opaque row background begins 2 pt below, so the block must
+// paint above its following sibling or the ring's bottom band disappears, in
+// both the collapsed and the expanded block.
+func TestSidebarGroupFocusRingClosesAtBlockEdge(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		focus  string
+		expand bool
+	}{
+		{"collapsed group", "Alpha", false},
+		{"expanded group", "Alpha channel", true},
+	} {
+		for _, dark := range []bool{false, true} {
+			a := reorderTestApp(t)
+			a.Channels = []core.Channel{{ID: "ch-a1", Title: "Alpha channel"}}
+			a.Sync.Channels = map[string]core.Channel{"ch-a1": {ID: "ch-a1", Title: "Alpha channel"}}
+			a.Groups[0].ChannelIDs = []string{"ch-a1"}
+			a.Sync.Groups["group-a"] = a.Groups[0]
+			a.Settings.ExpandedGroups["group-a"] = tc.expand
+			w := &Window{app: a, selectedIndex: new(int)}
+			tt := ui.NewTester(w.view, 1280, 808)
+			tt.SetDark(dark)
+			tt.Frame()
+			tokens := mui.NewTokens(nil, dark)
+			focusByTab(t, tt, tc.focus)
+			boxes := sidebarRowBoxes(tt, tc.focus)
+			if len(boxes) == 0 {
+				t.Fatalf("%s dark=%v: %q has no sidebar row", tc.name, dark, tc.focus)
+			}
+			box := boxes[0]
+			_, last, ok := ringLines(t, tt, tokens, int(defaultSidebarWidth))
+			if !ok {
+				t.Fatalf("%s dark=%v: %q has no visible focus ring", tc.name, dark, tc.focus)
+			}
+			// The ring's outer edge sits FocusRingGap+FocusRing below the row,
+			// and the 2 pt stroke covers the last row inside it.
+			want := int(box.Y + box.H + mui.FocusRingGap + mui.FocusRing - 1)
+			if last < want {
+				t.Fatalf("%s dark=%v: %q ring ends at y=%d, want at least %d (row box %+v)", tc.name, dark, tc.focus, last, want, box)
+			}
+		}
+	}
+}
+
 // TestSidebarDragHandleClampsAndPersists proves the divider keeps the agreed
 // 220 to 320 pt range, keeps a 6 pt grab band around the 1 pt rule with the
 // resize cursor, and writes the chosen width to settings.
@@ -609,5 +656,268 @@ func TestGroupFoldStateSurvivesRelaunch(t *testing.T) {
 	}
 	if !(&App{Settings: settings}).GroupCollapsed("group-a") {
 		t.Fatal("the collapsed fold state did not survive the relaunch")
+	}
+}
+
+// reorderTestApp is a collapsed three-group sidebar with no channels, so each
+// group block is exactly one row tall and the edge a drop picks is exact.
+func reorderTestApp(t *testing.T) *App {
+	t.Helper()
+	groups := []core.ChannelGroup{
+		{ID: "group-a", Name: "Alpha"},
+		{ID: "group-b", Name: "Bravo"},
+		{ID: "group-c", Name: "Charlie"},
+	}
+	syncGroups := make(map[string]core.ChannelGroup, len(groups))
+	for _, g := range groups {
+		syncGroups[g.ID] = g
+	}
+	return &App{
+		Dir:      t.TempDir(),
+		Selected: "all",
+		Settings: core.Settings{
+			APIKey:         "test",
+			SidebarWidth:   defaultSidebarWidth,
+			DetailsWidth:   defaultDetailsWidth,
+			ExpandedGroups: map[string]bool{},
+		},
+		Sync: core.SyncState{
+			Favorites:  map[string]core.FavoriteRecord{},
+			ReadStates: map[string]map[string]core.ReadRecord{},
+			Channels:   map[string]core.Channel{},
+			Groups:     syncGroups,
+		},
+		Groups:   groups,
+		Channels: []core.Channel{},
+		Videos:   []core.Video{},
+	}
+}
+
+// rowBox returns the box of the single sidebar row named name.
+func rowBox(t *testing.T, tt *ui.Tester, name string) ui.Rect {
+	t.Helper()
+	boxes := sidebarRowBoxes(tt, name)
+	if len(boxes) != 1 {
+		t.Fatalf("%q boxes = %+v, want one sidebar row", name, boxes)
+	}
+	return boxes[0]
+}
+
+// dragPointer drags the pointer from the row box to (x, y) in four steps, as
+// a hand does, and releases it there.
+func dragPointer(tt *ui.Tester, from ui.Rect, x, y float32) {
+	sx, sy := from.X+20, from.Y+from.H/2
+	tt.Press(sx, sy)
+	for k := 1; k <= 4; k++ {
+		f := float32(k) / 4
+		tt.Move(sx+(x-sx)*f, sy+(y-sy)*f)
+	}
+	tt.Release(x, y)
+	tt.Frame()
+}
+
+// TestSidebarGroupDragPreviewsTheOrder drags the last group over the first
+// block's top half and checks the list takes the new order while the pointer
+// is still held, then keeps it when the pointer lets go, in both appearances.
+func TestSidebarGroupDragPreviewsTheOrder(t *testing.T) {
+	want := []string{"Charlie", "Alpha", "Bravo"}
+	for _, dark := range []bool{false, true} {
+		a := reorderTestApp(t)
+		w := &Window{app: a, selectedIndex: new(int)}
+		tt := ui.NewTester(w.view, 1280, 808)
+		tt.SetDark(dark)
+		tt.Frame()
+		charlie := rowBox(t, tt, "Charlie")
+		alpha := rowBox(t, tt, "Alpha")
+		sx, sy := charlie.X+20, charlie.Y+charlie.H/2
+		tt.Press(sx, sy)
+		tt.Move(sx, sy-10)
+		tt.Move(alpha.X+20, alpha.Y+4)
+		tt.Frame()
+		if got := groupNames(a.Groups); !slices.Equal(got, want) {
+			t.Fatalf("dark=%v: order while held = %q, want the drop's order %q", dark, got, want)
+		}
+		// The rows show the new order before the pointer lets go: Charlie's
+		// block is now above Alpha's.
+		if box, top := rowBox(t, tt, "Charlie"), rowBox(t, tt, "Alpha"); box.Y >= top.Y {
+			t.Fatalf("dark=%v: Charlie at y=%v is not above Alpha at y=%v", dark, box.Y, top.Y)
+		}
+		tt.Release(alpha.X+20, alpha.Y+4)
+		tt.Frame()
+		if got := groupNames(a.Groups); !slices.Equal(got, want) {
+			t.Fatalf("dark=%v: order after the drop = %q, want %q", dark, got, want)
+		}
+	}
+}
+
+// TestSidebarGroupDragEscapeRestoresTheOrder gives a group drag up with
+// Escape: the list goes back to the order it had, an order is not saved, and
+// the release that follows changes nothing.
+func TestSidebarGroupDragEscapeRestoresTheOrder(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+	for _, g := range []core.ChannelGroup{
+		{ID: "group-a", Name: "Alpha"},
+		{ID: "group-b", Name: "Bravo"},
+		{ID: "group-c", Name: "Charlie"},
+	} {
+		a.Sync.Groups[g.ID] = g
+	}
+	if err := a.reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	a.Settings.SidebarWidth = defaultSidebarWidth
+	tt := sidebarTester(t, a)
+	charlie := rowBox(t, tt, "Charlie")
+	alpha := rowBox(t, tt, "Alpha")
+	sx, sy := charlie.X+20, charlie.Y+charlie.H/2
+	tt.Press(sx, sy)
+	tt.Move(sx, sy-10)
+	tt.Move(alpha.X+20, alpha.Y+4)
+	tt.Frame()
+	if got := groupNames(a.Groups); !slices.Equal(got, []string{"Charlie", "Alpha", "Bravo"}) {
+		t.Fatalf("order while held = %q, want the drop's order", got)
+	}
+
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+	before := []string{"Alpha", "Bravo", "Charlie"}
+	if got := groupNames(a.Groups); !slices.Equal(got, before) {
+		t.Fatalf("order after Escape = %q, want %q", got, before)
+	}
+	tt.Release(alpha.X+20, alpha.Y+4)
+	tt.Frame()
+	if got := groupNames(a.Groups); !slices.Equal(got, before) {
+		t.Fatalf("order after the release that followed Escape = %q, want %q", got, before)
+	}
+	settings := defaultSettings()
+	if data, err := os.ReadFile(filepath.Join(dir, "settings.json")); err == nil {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			t.Fatalf("settings decode: %v", err)
+		}
+	}
+	if len(settings.GroupOrder) != 0 {
+		t.Fatalf("Escape saved the order %q", settings.GroupOrder)
+	}
+}
+
+// TestSidebarGroupDragIntoAnOpenGroup drags a group onto the channels of an
+// open group: the block takes the drop anywhere over its channels, the fold it
+// crossed stays open, and the dropped group stays folded as it was.
+func TestSidebarGroupDragIntoAnOpenGroup(t *testing.T) {
+	a := reorderTestApp(t)
+	a.Channels = []core.Channel{{ID: "ch-a1", Title: "One"}, {ID: "ch-a2", Title: "Two"}}
+	a.Sync.Channels = map[string]core.Channel{
+		"ch-a1": {ID: "ch-a1", Title: "One"},
+		"ch-a2": {ID: "ch-a2", Title: "Two"},
+	}
+	a.Groups[0].ChannelIDs = []string{"ch-a1", "ch-a2"}
+	a.Sync.Groups["group-a"] = a.Groups[0]
+	a.Settings.ExpandedGroups["group-a"] = true
+	tt := sidebarTester(t, a)
+	charlie := rowBox(t, tt, "Charlie")
+	// The all-channels section repeats the channel's name; the group's own
+	// row is the first one, inside Alpha's block.
+	two := sidebarRowBoxes(tt, "Two")[0]
+	dragPointer(tt, charlie, two.X+20, two.Y+two.H/2)
+
+	if got := groupNames(a.Groups); !slices.Equal(got, []string{"Alpha", "Charlie", "Bravo"}) {
+		t.Fatalf("order after dropping on a channel of Alpha = %q, want Charlie after Alpha", got)
+	}
+	if a.GroupCollapsed("group-a") {
+		t.Fatal("the drag closed the group it crossed")
+	}
+	if !a.GroupCollapsed("group-c") {
+		t.Fatal("the drag opened the dragged group")
+	}
+}
+
+// TestSidebarGroupDragReleasedOutsideKeepsTheOrder drags a group over another
+// block and lets it go over the Library rows above the groups: the order the
+// list showed is what it keeps, and it is saved.
+func TestSidebarGroupDragReleasedOutsideKeepsTheOrder(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+	for _, g := range []core.ChannelGroup{
+		{ID: "group-a", Name: "Alpha"},
+		{ID: "group-b", Name: "Bravo"},
+		{ID: "group-c", Name: "Charlie"},
+	} {
+		a.Sync.Groups[g.ID] = g
+	}
+	if err := a.reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	a.Settings.SidebarWidth = defaultSidebarWidth
+	tt := sidebarTester(t, a)
+	charlie := rowBox(t, tt, "Charlie")
+	alpha := rowBox(t, tt, "Alpha")
+	sx, sy := charlie.X+20, charlie.Y+charlie.H/2
+	tt.Press(sx, sy)
+	tt.Move(sx, sy-10)
+	tt.Move(alpha.X+20, alpha.Y+4)
+	tt.Frame()
+	favorites := rowBox(t, tt, "Favorites")
+	tt.Release(favorites.X+20, favorites.Y+favorites.H/2)
+	tt.Frame()
+
+	want := []string{"Charlie", "Alpha", "Bravo"}
+	if got := groupNames(a.Groups); !slices.Equal(got, want) {
+		t.Fatalf("order after releasing over Favorites = %q, want the shown order %q", got, want)
+	}
+	settings := defaultSettings()
+	data, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		t.Fatalf("settings file: %v", err)
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("settings decode: %v", err)
+	}
+	if got := settings.GroupOrder; !slices.Equal(got, []string{"group-c", "group-a", "group-b"}) {
+		t.Fatalf("saved group order = %q, want the kept order", got)
+	}
+}
+
+// TestSidebarGroupDragToTheEnd drags the first group past the last block's
+// middle: the group joins the end, where the sidebar keeps it.
+func TestSidebarGroupDragToTheEnd(t *testing.T) {
+	a := reorderTestApp(t)
+	tt := sidebarTester(t, a)
+	alpha := rowBox(t, tt, "Alpha")
+	charlie := rowBox(t, tt, "Charlie")
+	dragPointer(tt, alpha, charlie.X+20, charlie.Y+charlie.H-4)
+
+	if got := groupNames(a.Groups); !slices.Equal(got, []string{"Bravo", "Charlie", "Alpha"}) {
+		t.Fatalf("order after dropping past the last block = %q, want Alpha at the end", got)
+	}
+}
+
+// TestSidebarGroupDragDropLandsAtTheReleasePoint releases a fast drag where
+// the pointer never settles between moves: the group lands at the boundary the
+// release point shows, not where the last hovered frame left it.
+func TestSidebarGroupDragDropLandsAtTheReleasePoint(t *testing.T) {
+	a := reorderTestApp(t)
+	tt := sidebarTester(t, a)
+	charlie := rowBox(t, tt, "Charlie")
+	alpha := rowBox(t, tt, "Alpha")
+	sx, sy := charlie.X+20, charlie.Y+charlie.H/2
+	tt.Press(sx, sy)
+	tt.Move(sx, sy-10)
+	// The last build sees the pointer over Alpha's bottom half, which puts
+	// Charlie after Alpha.
+	tt.Move(alpha.X+20, alpha.Y+alpha.H-4)
+	tt.Frame()
+	if got := groupNames(a.Groups); !slices.Equal(got, []string{"Alpha", "Charlie", "Bravo"}) {
+		t.Fatalf("order at the last hover = %q, want Charlie after Alpha", got)
+	}
+	// The release lands higher, over Alpha's top half: the drop belongs to
+	// the frame that reads the release, not the one the pointer last crossed.
+	alpha = rowBox(t, tt, "Alpha")
+	tt.Release(alpha.X+20, alpha.Y+4)
+	tt.Frame()
+	if got := groupNames(a.Groups); !slices.Equal(got, []string{"Charlie", "Alpha", "Bravo"}) {
+		t.Fatalf("order after the flick release = %q, want Charlie above Alpha", got)
 	}
 }
