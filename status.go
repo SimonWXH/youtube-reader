@@ -677,6 +677,9 @@ func newStatusBar(w *Window) *statusBar {
 		s.tray = item
 	}
 	s.online = mygo.Network.Status().Online
+	// The window's refresh control and content pane read the same answer as
+	// the menu bar item, so offline never shows two different stories.
+	s.w.offline = !s.online
 	s.tray.OnClick(s.toggle)
 	// A pause already in force at launch is shown by the Paused state; only a
 	// pause that begins while the app runs raises the alert.
@@ -689,6 +692,7 @@ func newStatusBar(w *Window) *statusBar {
 	})
 	mygo.Network.OnChanged(func(state mygo.NetworkStatus) {
 		s.online = state.Online
+		s.w.offline = !state.Online
 		s.refresh()
 		s.invalidate()
 	})

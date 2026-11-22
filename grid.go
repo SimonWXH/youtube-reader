@@ -85,16 +85,10 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 	padding := mui.Space(4)
 	ui.Column(c).Grow(1).Padding(padding - gridDecorInset).Children(func() {
 		if len(videos) == 0 {
-			if w.app.SelectedVideoID != "" {
-				w.app.SelectedVideoID = ""
-			}
-			none := -1
-			w.selectedIndex = &none
-			state := mui.Default
-			if w.app.refreshBlocked(time.Now()) {
-				state = mui.Disabled
-			}
-			w.emptyState(c, t, "Nothing here yet", "Try another filter or refresh your subscriptions.", "empty-refresh", "Refresh now", state, func(c *ui.Context) { w.runRefresh(true) })
+			// The content pane routes an empty destination to its own state;
+			// this keeps a frame that lost its last card in the same shape
+			// instead of drawing an empty grid.
+			w.emptyPane(c, t, w.contentPaneInput())
 			return
 		}
 		target := -1
