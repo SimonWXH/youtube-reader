@@ -3,6 +3,7 @@ package main
 import (
 	_ "embed"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -213,7 +214,7 @@ func deriveStatus(in statusInput) status {
 	case len(settings.RecentFailures) > 0:
 		m.State = statusFailed
 		m.Title = "Couldn't refresh subscriptions"
-		message := core.RedactKey(settings.RecentFailures[0].Message)
+		message := statusFailureText(settings.RecentFailures[0].Message)
 		m.Body = message
 		m.Primary = statusRetry
 		at, hasAt := stampTime(settings.RecentFailures[0].At)
@@ -261,6 +262,19 @@ func deriveStatus(in statusInput) status {
 		}
 	}
 	return m
+}
+
+// statusFailureQuery matches a request URL's path and leaves out its query,
+// which carries only request parameters. A transport failure's reason comes
+// after the URL, so dropping the query keeps that reason inside the popover's
+// body instead of letting the URL ellipsize it.
+var statusFailureQuery = regexp.MustCompile(`(https?://[^\s"?]+)\?[^\s"]*`)
+
+// statusFailureText is the popover's wording of one recorded failure: the
+// request keeps its scheme, host and path and loses its query, and any key that
+// still reached the disk is redacted before display.
+func statusFailureText(raw string) string {
+	return core.RedactKey(statusFailureQuery.ReplaceAllString(raw, "$1"))
 }
 
 // rejectedKey reports whether the API's own words name the key as the problem,
@@ -446,9 +460,17 @@ func statusPanelView(m status, actions statusActions, arrow float32) func(*ui.Co
 							// the desktop asks for less motion: the words still say so.
 							glyph = glyph.Rotate(glyph.Loop("status-refreshing", time.Second, ui.Linear) * 360)
 						}
-						ui.Column(c).Grow(1).Children(func() {
+						// The text column shrinks to the width the row gives it:
+						// without MinWidth(0) a long unbroken failure URL holds
+						// its full intrinsic width and the body paints past the
+						// panel's edge instead of wrapping.
+						ui.Column(c).Grow(1).MinWidth(0).Children(func() {
 							mui.PopoverTitle.Apply(ui.Text(c, m.Title)).TextColor(tokens.Text).SingleLine()
-							mui.PopoverBody.Apply(ui.Text(c, m.Body)).TextColor(tokens.Muted).MaxLines(3).Wrap()
+							// A transport failure quotes the request it failed and
+							// the reason at the end of that sentence; the six lines
+							// keep the reason visible instead of ellipsizing it
+							// behind the URL.
+							mui.PopoverBody.Apply(ui.Text(c, m.Body)).TextColor(tokens.Muted).MaxLines(6).Wrap()
 						})
 					})
 				})

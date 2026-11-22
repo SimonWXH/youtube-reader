@@ -71,8 +71,8 @@ type Window struct {
 	frame  *ui.Context // the last frame's context, for menu commands
 	status *statusBar
 
-	// pendingToasts are messages raised between frames, as a refresh outcome
-	// is; the next frame shows them, since AddToast only works while building.
+	// pendingToasts are messages raised while no frame is building; the next
+	// frame shows them, since AddToast only works while building.
 	pendingToasts []ui.Toast
 
 	// sidebarHidden folds the sidebar pane away from the toolbar's leading

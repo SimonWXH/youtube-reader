@@ -336,7 +336,7 @@ func TestDeriveStatusCopy(t *testing.T) {
 			}},
 			state:   statusFailed,
 			title:   "Couldn't refresh subscriptions",
-			body:    "Get \"https://www.googleapis.com/youtube/v3/channels?part=snippet&key=[redacted]\": dial tcp: no route to host",
+			body:    "Get \"https://www.googleapis.com/youtube/v3/channels\": dial tcp: no route to host",
 			primary: statusRetry, secondary: statusOpenSettings,
 			details: []string{"Failed: 4 min ago", "Channels: 42"},
 		},
@@ -526,8 +526,11 @@ func TestStoredFailureRedactsAPIKey(t *testing.T) {
 	if strings.Contains(m.Body, key) || strings.Contains(statusTooltip(m), key) {
 		t.Fatalf("stored failure leaks the key: body=%q tooltip=%q", m.Body, statusTooltip(m))
 	}
-	if !strings.Contains(m.Body, "key=[redacted]") {
-		t.Fatalf("stored failure lost its redaction: %q", m.Body)
+	if !strings.Contains(m.Body, `https://www.googleapis.com/youtube/v3/channels"`) {
+		t.Fatalf("stored failure lost the operation it names: %q", m.Body)
+	}
+	if strings.Contains(m.Body, "part=snippet") {
+		t.Fatalf("stored failure keeps the request query that hides the reason: %q", m.Body)
 	}
 }
 
@@ -560,6 +563,33 @@ func TestStatusPopoverCap(t *testing.T) {
 	}
 	if got := measure(tall); got != statusPopoverMaxHeight {
 		t.Fatalf("a forty-row panel is %v pt tall, want the %v pt cap", got, statusPopoverMaxHeight)
+	}
+}
+
+// TestFailedBodyWrapsInsideThePopover proves a recorded failure stays inside
+// the 320 pt panel. A transport error carries the whole request URL, one
+// unbroken word wider than the panel, and the body used to keep that intrinsic
+// width and paint past the panel's edge instead of wrapping.
+func TestFailedBodyWrapsInsideThePopover(t *testing.T) {
+	body := `Get "https://www.googleapis.com/youtube/v3/channels?id=UCaaaa%2CUCbbbb%2CUCcccc&key=[redacted]&maxResults=50&part=snippet%2CcontentDetails": read tcp 127.0.0.1:60311->127.0.0.1:18081: read: connection reset by peer`
+	m := status{
+		State:     statusFailed,
+		Title:     "Couldn't refresh subscriptions",
+		Body:      body,
+		Primary:   statusRetry,
+		Secondary: statusOpenSettings,
+	}
+	tt := ui.NewTester(statusPanelView(m, statusActions{}, -1), int(statusPopoverWidth), int(statusPopoverMaxHeight)+200)
+	tt.Frame()
+	box, ok := tt.Find(body)
+	if !ok {
+		t.Fatal("the popover does not show the recorded failure")
+	}
+	if box.X < 0 || box.X+box.W > statusPopoverWidth {
+		t.Fatalf("the failure body is %v..%v pt, past the %v pt panel", box.X, box.X+box.W, statusPopoverWidth)
+	}
+	if box.H <= mui.PopoverBody.LineHeight {
+		t.Fatalf("the failure body is %v pt tall: it did not wrap", box.H)
 	}
 }
 
