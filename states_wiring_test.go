@@ -302,6 +302,36 @@ func TestRefreshErrorIsInlineAndRedacted(t *testing.T) {
 	}
 }
 
+// TestExpiredQuotaPaneOffersRetry proves a stored quota failure whose pause has
+// ended no longer tells the reader to wait: the pane invites Retry, and the
+// action is enabled so it can run.
+func TestExpiredQuotaPaneOffersRetry(t *testing.T) {
+	a := statesTestApp(t)
+	a.Videos = nil
+	a.Settings.QuotaPausedUntil = time.Now().Add(-time.Hour).Format(time.RFC3339)
+	a.Settings.RecentFailures = []core.RefreshFailure{{
+		At:      time.Now().Add(-2 * time.Hour).Format(time.RFC3339),
+		Message: "quota paused until " + time.Now().Add(-time.Hour).Format(time.RFC3339),
+	}}
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := statesTester(t, w)
+
+	_, sentence := mui.RefreshErrorCopy(mui.CauseQuotaExpired)
+	if !tt.HasText(sentence) {
+		t.Fatalf("expired quota pane texts = %q, want %q", tt.Texts(), sentence)
+	}
+	if _, stale := mui.RefreshErrorCopy(mui.CauseQuota); tt.HasText(stale) {
+		t.Fatalf("expired quota pane still says to wait: %q", tt.Texts())
+	}
+	retry, ok := tt.AccessByRole(ui.RoleButton, "Retry")
+	if !ok {
+		t.Fatalf("expired quota pane has no Retry: %q", tt.Texts())
+	}
+	if retry.Disabled {
+		t.Fatal("expired quota Retry is disabled though the pause has ended")
+	}
+}
+
 // TestCachedContentBeatsOfflineAndErrors checks the pane a cached library
 // still owns: a filter that matches nothing shows the filtered empty state,
 // not the offline or failed-refresh state, because the content is still there
@@ -356,24 +386,6 @@ func TestRefreshErrorCause(t *testing.T) {
 				t.Fatalf("refreshErrorCause(%q) = %v, want %v", tt.message, got, tt.want)
 			}
 		})
-	}
-}
-
-// TestEmptyDetailFallbackDraws checks the detail pane's default branch: an open
-// pane with no video shows its one sentence instead of a blank column.
-func TestEmptyDetailFallbackDraws(t *testing.T) {
-	a := statesTestApp(t)
-	w := &Window{app: a, selectedIndex: new(int)}
-	tt := ui.NewTester(func(c *ui.Context) {
-		tokens := mui.NewTokens(c.Theme(), c.Theme().Dark)
-		ui.Column(c).Fill().Width(defaultDetailsWidth).Background(tokens.App).Children(func() {
-			w.drawer(c, tokens)
-		})
-	}, int(defaultDetailsWidth), 520)
-	tt.Frame()
-
-	if !tt.HasText(mui.EmptyDetailSentence) {
-		t.Fatalf("the open empty detail pane texts = %q, want %q", tt.Texts(), mui.EmptyDetailSentence)
 	}
 }
 

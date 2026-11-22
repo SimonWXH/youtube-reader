@@ -237,9 +237,6 @@ const (
 	EmptySidebarSentence = "Import an OPML file to add the channels you follow."
 	// EmptySidebarAction opens the OPML importer.
 	EmptySidebarAction = "Add channel..."
-	// EmptyDetailSentence is the detail pane's fallback when no video is
-	// chosen; it is one 13 pt secondary line, with no title or action.
-	EmptyDetailSentence = "Select a video to see details"
 	// LoadingCancelLabel ends a refresh that has nothing on screen yet.
 	LoadingCancelLabel = "Cancel"
 	// LoadingGridLabel names the skeleton for assistive technology. The cards
@@ -270,6 +267,9 @@ const (
 	CauseRejectedKey
 	// CauseQuota is the API quota that paused refreshes.
 	CauseQuota
+	// CauseQuotaExpired is the stored pause that has since ended, so Retry
+	// can run and the copy must not tell the reader to wait.
+	CauseQuotaExpired
 )
 
 // RefreshErrorCopy is the inline error's words: what failed, and the next
@@ -282,6 +282,8 @@ func RefreshErrorCopy(cause ErrorCause) (title, sentence string) {
 		sentence = "The YouTube API rejected the key. Check it in Settings, then try again."
 	case CauseQuota:
 		sentence = "YouTube API quota reached. Try again after the pause ends."
+	case CauseQuotaExpired:
+		sentence = "YouTube API quota reached. Retry to refresh again."
 	default:
 		sentence = "Check your connection, then try again."
 	}
@@ -293,14 +295,14 @@ func RefreshErrorCopy(cause ErrorCause) (title, sentence string) {
 func StateCopy() []string {
 	out := []string{
 		EmptySidebarTitle, EmptySidebarSentence, EmptySidebarAction,
-		EmptyDetailSentence, LoadingCancelLabel,
+		LoadingCancelLabel,
 		OfflineTitle, OfflineSentence, OfflineTooltip, OfflineActionLabel,
 	}
 	for _, v := range []EmptyVariant{EmptySetup, EmptyImportChannels, EmptyNoVideos, EmptyChannel, EmptyFavorites, EmptyFiltered} {
 		c := CopyForEmpty(v)
 		out = append(out, c.Title, c.Sentence, c.Action)
 	}
-	for _, cause := range []ErrorCause{CauseConnection, CauseRejectedKey, CauseQuota} {
+	for _, cause := range []ErrorCause{CauseConnection, CauseRejectedKey, CauseQuota, CauseQuotaExpired} {
 		title, sentence := RefreshErrorCopy(cause)
 		out = append(out, title, sentence)
 	}
@@ -525,16 +527,6 @@ func SidebarEmpty(c *ui.Context, tokens Tokens, onAdd func()) ui.Element {
 		}
 	})
 	return el
-}
-
-// DetailEmpty is the detail pane's fallback when the pane is open with no
-// video: one 13 pt secondary sentence. The pane is normally absent instead of
-// empty, so this state says what to do rather than leaving a blank column.
-func DetailEmpty(c *ui.Context, tokens Tokens) ui.Element {
-	return ui.Column(c).Grow(1).Center().AlignItems(ui.Center).Padding(Space(8)).Children(func() {
-		EmptyBody.Apply(ui.Text(c, EmptyDetailSentence)).TextColor(tokens.Muted).
-			TextAlign(ui.Center).Wrap()
-	})
 }
 
 // SkeletonSpec is the skeleton grid's geometry. The caller passes the same

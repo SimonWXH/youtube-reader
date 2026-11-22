@@ -410,9 +410,13 @@ func (w *Window) errorPane(c *ui.Context, t mui.Tokens, in mui.PaneInput) {
 		reason = ""
 	}
 	disabled, tooltip := w.refreshDisabledReason()
+	cause := refreshErrorCause(message)
+	if cause == mui.CauseQuota && !w.app.refreshBlocked(time.Now()) {
+		cause = mui.CauseQuotaExpired
+	}
 	mui.ErrorPane(c, t, mui.ErrorSpec{
 		Key:            "pane-error",
-		Cause:          refreshErrorCause(message),
+		Cause:          cause,
 		Reason:         reason,
 		ActionDisabled: disabled,
 		ActionTooltip:  tooltip,

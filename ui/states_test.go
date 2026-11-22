@@ -22,7 +22,6 @@ func statesTestTokens(c *ui.Context) Tokens { return NewTokens(c.Theme(), c.Them
 func TestStateCopyContract(t *testing.T) {
 	required := []string{
 		EmptySidebarTitle, EmptySidebarAction,
-		EmptyDetailSentence,
 		OfflineTitle, OfflineTooltip,
 		LoadingCancelLabel,
 	}
@@ -43,9 +42,6 @@ func TestStateCopyContract(t *testing.T) {
 	}
 	if EmptySidebarAction != "Add channel..." {
 		t.Fatalf("EmptySidebarAction = %q, want %q", EmptySidebarAction, "Add channel...")
-	}
-	if EmptyDetailSentence != "Select a video to see details" {
-		t.Fatalf("EmptyDetailSentence = %q, want %q", EmptyDetailSentence, "Select a video to see details")
 	}
 	if title, _ := RefreshErrorCopy(CauseConnection); title != "Could not refresh subscriptions" {
 		t.Fatalf("error title = %q, want %q", title, "Could not refresh subscriptions")
@@ -135,12 +131,13 @@ func TestEmptyVariantFor(t *testing.T) {
 	}
 }
 
-// TestRefreshErrorCopy pins the three causes' sentences.
+// TestRefreshErrorCopy pins the causes' sentences.
 func TestRefreshErrorCopy(t *testing.T) {
 	tests := map[ErrorCause]string{
-		CauseConnection:  "Check your connection, then try again.",
-		CauseRejectedKey: "The YouTube API rejected the key. Check it in Settings, then try again.",
-		CauseQuota:       "YouTube API quota reached. Try again after the pause ends.",
+		CauseConnection:   "Check your connection, then try again.",
+		CauseRejectedKey:  "The YouTube API rejected the key. Check it in Settings, then try again.",
+		CauseQuota:        "YouTube API quota reached. Try again after the pause ends.",
+		CauseQuotaExpired: "YouTube API quota reached. Retry to refresh again.",
 	}
 	for cause, want := range tests {
 		if _, got := RefreshErrorCopy(cause); got != want {
@@ -308,25 +305,6 @@ func TestSidebarEmptyIsNeverBlank(t *testing.T) {
 	}
 }
 
-// TestDetailEmptyIsOneSecondarySentence checks the detail pane's fallback: one
-// 13 pt line and nothing else.
-func TestDetailEmptyIsOneSecondarySentence(t *testing.T) {
-	tt := ui.NewTester(func(c *ui.Context) {
-		tokens := statesTestTokens(c)
-		ui.Column(c).Fill().Background(tokens.App).Children(func() {
-			DetailEmpty(c, tokens)
-		})
-	}, 340, 420)
-	tt.Frame()
-
-	if !tt.HasText(EmptyDetailSentence) {
-		t.Fatalf("detail empty texts = %q, want %q", tt.Texts(), EmptyDetailSentence)
-	}
-	if got := tt.Texts(); len(got) != 1 {
-		t.Fatalf("the empty detail pane draws %q; want only its one sentence", got)
-	}
-}
-
 // TestFailedThumbnailIsANeutralFrame checks the failed-thumbnail state the C
 // zone's media surface exposes: a real 16:9 neutral frame, a play glyph, and a
 // tooltip, never a broken-image icon.
@@ -382,8 +360,8 @@ func TestSkeletonGridKeepsTheCardCount(t *testing.T) {
 }
 
 // TestStateComponentScreenshots renders the components that have no whole
-// window of their own (the sidebar's empty section, the detail fallback, and a
-// failed thumbnail) in both appearances under YTREADER_STATE_SCREENSHOTS.
+// window of their own (the sidebar's empty section and a failed thumbnail) in
+// both appearances under YTREADER_STATE_SCREENSHOTS.
 func TestStateComponentScreenshots(t *testing.T) {
 	dir := os.Getenv("YTREADER_STATE_SCREENSHOTS")
 	if dir == "" {
@@ -401,12 +379,6 @@ func TestStateComponentScreenshots(t *testing.T) {
 			tokens := statesTestTokens(c)
 			ui.Column(c).Fill().Background(tokens.Sidebar).Padding(Space(2)).Children(func() {
 				SidebarEmpty(c, tokens, func() {})
-			})
-		}},
-		{"empty-detail", 340, 420, func(c *ui.Context) {
-			tokens := statesTestTokens(c)
-			ui.Column(c).Fill().Background(tokens.App).Children(func() {
-				DetailEmpty(c, tokens)
 			})
 		}},
 		{"failed-thumbnail", 280, 234, func(c *ui.Context) {
