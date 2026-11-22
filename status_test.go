@@ -135,15 +135,13 @@ func TestRemainingTime(t *testing.T) {
 
 // TestNextRefreshFollowsIntervalChange proves the popover's "Next refresh" row
 // follows the current interval, the same LastRefresh plus RefreshMinutes rule
-// the scheduler uses, so changing the interval shows the new schedule at once
-// and a stamp stored under the old interval cannot keep showing the old one.
+// the scheduler uses, so changing the interval shows the new schedule at once.
 func TestNextRefreshFollowsIntervalChange(t *testing.T) {
 	now := time.Date(2026, 3, 1, 9, 30, 0, 0, time.Local)
 	settings := core.Settings{
 		APIKey:         "key",
 		RefreshMinutes: 60,
 		LastRefresh:    now.Add(-30 * time.Minute).Format(time.RFC3339),
-		NextRefresh:    now.Add(10 * time.Minute).Format(time.RFC3339),
 	}
 	nextRow := func(s core.Settings) string {
 		t.Helper()

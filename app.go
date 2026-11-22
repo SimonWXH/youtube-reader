@@ -126,7 +126,6 @@ func (a *App) mergeNewerDiskStatus() {
 		return
 	}
 	a.Settings.LastRefresh = disk.LastRefresh
-	a.Settings.NextRefresh = disk.NextRefresh
 	a.Settings.RecentFailures = disk.RecentFailures
 	a.Settings.QuotaPausedUntil = disk.QuotaPausedUntil
 }
@@ -558,13 +557,11 @@ func (a *App) Refresh(force bool) RefreshOutcome {
 	ctx := context.Background()
 	now := time.Now()
 	settings := a.settingsSnapshot()
-	interval := time.Duration(settings.RefreshMinutes) * time.Minute
 	client := core.YouTube{Key: settings.APIKey}
 	outcome := core.RefreshYoutube(ctx, client, settings, a.Sync, a.Store, a.Videos, a.Revision, force, now)
 	_, _ = a.updateSettings(func(s *core.Settings) bool {
 		if outcome.Changed {
 			s.LastRefresh = core.FormatRFC3339(now)
-			s.NextRefresh = core.FormatRFC3339(now.Add(interval))
 			s.RecentFailures = outcome.Failures
 		} else if len(outcome.Failures) > 0 {
 			s.RecentFailures = outcome.Failures
@@ -683,7 +680,6 @@ func (a *App) ConsumeHandoff() error {
 		return nil
 	}
 	currentStatus := a.settingsSnapshot()
-	refreshInterval := time.Duration(currentStatus.RefreshMinutes) * time.Minute
 	if handoff.ID != "" && handoff.ID == currentStatus.LastHandoffID {
 		return nil
 	}
@@ -710,9 +706,6 @@ func (a *App) ConsumeHandoff() error {
 		}
 		if fresh && handoff.Result != nil && handoff.CreatedAt != "" {
 			s.LastRefresh = handoff.CreatedAt
-			if at, err := time.Parse(time.RFC3339, handoff.CreatedAt); err == nil {
-				s.NextRefresh = core.FormatRFC3339(at.Add(refreshInterval))
-			}
 		}
 		s.LastHandoffID = handoff.ID
 		return true

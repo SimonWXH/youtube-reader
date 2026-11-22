@@ -191,7 +191,6 @@ func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post
 func mergeHelperSettings(settings core.Settings, result core.RefreshResult, now time.Time) core.Settings {
 	if result.Changed {
 		settings.LastRefresh = core.FormatRFC3339(now)
-		settings.NextRefresh = core.FormatRFC3339(now.Add(time.Duration(settings.RefreshMinutes) * time.Minute))
 	}
 	if result.Changed || len(result.Failures) > 0 {
 		settings.RecentFailures = result.Failures

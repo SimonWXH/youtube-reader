@@ -152,8 +152,8 @@ type status struct {
 	// what explains it rather than the action vanishing.
 	PrimaryDisabled bool
 	// PausedUntil is when a quota pause ends, zero when refreshes run. A pause
-	// is a warning: it is raised as an alert, never shown in the popover as a
-	// warning of its own.
+	// is raised once as an alert when it begins, and the popover shows its
+	// resume time.
 	PausedUntil time.Time
 }
 
@@ -417,8 +417,9 @@ func statusTooltip(m status) string {
 	return m.Title + " - " + m.Body
 }
 
-// pausedAlert is the warning a quota pause raises instead of showing in the
-// popover: what stopped, when refreshes resume, and the one action that helps.
+// pausedAlert is the warning a quota pause raises once when it begins; the
+// popover shows its resume time. It says what stopped, when refreshes resume,
+// and the one action that helps.
 func pausedAlert(until time.Time) (title, message, detail string) {
 	return "Refresh paused",
 		"YouTube API quota reached, so automatic refresh has stopped.",
@@ -732,6 +733,11 @@ func (s *statusBar) refresh() {
 			s.w.window.Invalidate()
 		}
 	}
+	paused := !m.PausedUntil.IsZero()
+	if paused && !s.paused {
+		s.raisePaused(m.PausedUntil)
+	}
+	s.paused = paused
 	if s.tray == nil {
 		return
 	}
@@ -745,11 +751,6 @@ func (s *statusBar) refresh() {
 		s.shownTitle = title
 	}
 	s.tray.SetToolTip(statusTooltip(m))
-	paused := !m.PausedUntil.IsZero()
-	if paused && !s.paused {
-		s.raisePaused(m.PausedUntil)
-	}
-	s.paused = paused
 }
 
 // invalidate redraws the window and the open popover after a change the status
@@ -855,9 +856,9 @@ func (s *statusBar) close() {
 	}
 }
 
-// raisePaused raises the quota pause as an alert, never as a warning inside the
-// popover. The dialog blocks, and it is no sheet over the panel: the popover is
-// closed first.
+// raisePaused raises the quota pause as the alert that announces it when it
+// begins; the popover shows its resume time. The dialog blocks, and it is no
+// sheet over the panel: the popover is closed first.
 func (s *statusBar) raisePaused(until time.Time) {
 	s.close()
 	title, message, detail := pausedAlert(until)

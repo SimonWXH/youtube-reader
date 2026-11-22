@@ -217,8 +217,19 @@ func TestCommitHelperResultLeavesRefreshAndHandoffOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings = loadHelperSettings(dir)
-	if settings.LastRefresh != now.Format(time.RFC3339) || settings.NextRefresh != now.Add(240*time.Minute).Format(time.RFC3339) {
+	if settings.LastRefresh != now.Format(time.RFC3339) {
 		t.Fatalf("successful refresh status: %+v", settings)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted map[string]any
+	if err := json.Unmarshal(raw, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := persisted["nextRefresh"]; ok {
+		t.Fatal("helper wrote a next refresh stamp")
 	}
 	if settings.LastHandoffID != "app-owned" {
 		t.Fatalf("helper changed app-owned handoff ID: %+v", settings)
