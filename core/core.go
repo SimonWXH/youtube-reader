@@ -74,6 +74,9 @@ type Settings struct {
 	DetailsWidth   float32         `json:"detailsWidth,omitempty"`
 	MaxGridColumns int             `json:"maxGridColumns,omitempty"`
 	ExpandedGroups map[string]bool `json:"expandedGroups,omitempty"`
+	// GroupOrder is the sidebar's group order, by group ID, as the user
+	// left it. A group the list does not name joins in alphabetical order.
+	GroupOrder []string `json:"groupOrder,omitempty"`
 }
 
 type FavoriteRecord struct {

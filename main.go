@@ -89,6 +89,10 @@ type Window struct {
 	contentWidth       float32
 	gridAvailableWidth float32
 	detail             detailState
+	// groupDragOrder is the group order before the drag that is moving one of
+	// them began, so giving that drag up puts the groups back as they were.
+	// nil when no group drag has moved the list.
+	groupDragOrder []string
 }
 
 func (w *Window) toast(c *ui.Context, msg string, isError bool) {
