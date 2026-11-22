@@ -37,18 +37,19 @@ context.clip()
 context.drawLinearGradient(gradient, start: CGPoint(x: 0, y: side),
                            end: CGPoint(x: side, y: 0), options: [])
 
-// Ring: white disc between ringOuter and ringInner. Clear the centre first
-// against the clipped tile so no gradient leaks into the hole at small sizes.
+// The ring is the white area between the outer and inner circles. Filling
+// both ellipses with the even-odd rule leaves the gradient visible through the
+// centre instead of covering it with a white disc.
 let outerRing = CGRect(x: ringCenter - ringOuter, y: ringCenter - ringOuter,
                        width: 2 * ringOuter, height: 2 * ringOuter)
 let innerHole = CGRect(x: ringCenter - ringInner, y: ringCenter - ringInner,
                        width: 2 * ringInner, height: 2 * ringInner)
-context.saveGState()
-context.setBlendMode(.clear)
-context.fillEllipse(in: innerHole)
-context.restoreGState()
+let ringPath = CGMutablePath()
+ringPath.addEllipse(in: outerRing)
+ringPath.addEllipse(in: innerHole)
+context.addPath(ringPath)
 context.setFillColor(NSColor.white.cgColor)
-context.fillEllipse(in: outerRing)
+context.fillPath(using: .evenOdd)
 
 guard let image = context.makeImage() else { fatalError("could not render icon") }
 let rep = NSBitmapImageRep(cgImage: image)
