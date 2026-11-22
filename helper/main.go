@@ -86,9 +86,9 @@ func loadHelperSettings(dir string) core.Settings {
 	if data, err := os.ReadFile(filepath.Join(dir, "settings.json")); err == nil {
 		_ = json.Unmarshal(data, &settings)
 	}
-	if settings.RefreshMinutes <= 0 {
-		settings.RefreshMinutes = 60
-	}
+	settings.APIKey = strings.TrimSpace(settings.APIKey)
+	// A zero interval is Manual: no automatic refresh, so a helper launched by
+	// a stale login item must do nothing. Keep it as settings.json has it.
 	if settings.SyncPath == "" {
 		settings.SyncPath = filepath.Join(dir, "youtube-reader-sync.json")
 	}
@@ -124,6 +124,10 @@ func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post
 
 	if dryRun {
 		handoff.Description = "Dry run: no refresh performed"
+		return handoff, writeHandoff()
+	}
+	if settings.RefreshMinutes <= 0 {
+		handoff.Description = "Manual: no background refresh scheduled."
 		return handoff, writeHandoff()
 	}
 	if settings.APIKey == "" {

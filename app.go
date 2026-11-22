@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -32,7 +33,6 @@ type App struct {
 	Search          string
 	ChannelFilter   string
 	UnreadOnly      bool
-	SettingsOpen    bool
 	SelectedVideoID string
 	Busy            bool
 	Revision        int64
@@ -85,6 +85,45 @@ func cloneSettings(s core.Settings) core.Settings {
 		cloned.GroupOrder = append([]string(nil), s.GroupOrder...)
 	}
 	return cloned
+}
+
+func cloneSyncState(s core.SyncState) core.SyncState {
+	cloned := s
+	cloned.Groups = make(map[string]core.ChannelGroup, len(s.Groups))
+	for id, group := range s.Groups {
+		cloned.Groups[id] = group
+	}
+	cloned.Channels = make(map[string]core.Channel, len(s.Channels))
+	for id, channel := range s.Channels {
+		cloned.Channels[id] = channel
+	}
+	cloned.ReadStates = make(map[string]map[string]core.ReadRecord, len(s.ReadStates))
+	for id, reads := range s.ReadStates {
+		inner := make(map[string]core.ReadRecord, len(reads))
+		for videoID, record := range reads {
+			inner[videoID] = record
+		}
+		cloned.ReadStates[id] = inner
+	}
+	cloned.Favorites = make(map[string]core.FavoriteRecord, len(s.Favorites))
+	for id, favorite := range s.Favorites {
+		cloned.Favorites[id] = favorite
+	}
+	return cloned
+}
+
+type refreshSnapshot struct {
+	state    core.SyncState
+	videos   []core.Video
+	revision int64
+}
+
+func (a *App) refreshSnapshot() refreshSnapshot {
+	return refreshSnapshot{
+		state:    cloneSyncState(a.Sync),
+		videos:   append([]core.Video(nil), a.Videos...),
+		revision: a.Revision,
+	}
 }
 
 func (a *App) settingsSnapshot() core.Settings {
@@ -150,7 +189,7 @@ func localLockDir() string {
 func defaultSettings() core.Settings {
 	dir := appDir()
 	return core.Settings{
-		RefreshMinutes:  60,
+		RefreshMinutes:  defaultRefreshMinutes,
 		SyncPath:        filepath.Join(dir, "youtube-reader-sync.json"),
 		BackupPath:      filepath.Join(dir, "favorites-backup.json"),
 		NotificationIDs: []string{},
@@ -171,9 +210,10 @@ func LoadApp() (*App, error) {
 	if data, err := os.ReadFile(filepath.Join(dir, "settings.json")); err == nil {
 		_ = json.Unmarshal(data, &settings)
 	}
-	if settings.RefreshMinutes <= 0 {
-		settings.RefreshMinutes = 60
-	}
+	settings.APIKey = strings.TrimSpace(settings.APIKey)
+	// A zero refresh interval is Manual, a choice the Settings window
+	// offers, so it is kept as it is. A file without the key keeps the
+	// default the struct started with.
 	if settings.SyncPath == "" {
 		settings.SyncPath = filepath.Join(dir, "youtube-reader-sync.json")
 	}
@@ -182,6 +222,9 @@ func LoadApp() (*App, error) {
 	}
 	if settings.MaxGridColumns < minMaxGridColumns || settings.MaxGridColumns > maxMaxGridColumns {
 		settings.MaxGridColumns = defaultMaxGridColumns
+	}
+	if err := reconcileHelperInterval(settings.RefreshMinutes); err != nil {
+		log.Printf("helper schedule: %v", err)
 	}
 	device := core.StableDeviceID()
 	lock, err := core.AcquireLock(localLockDir())
@@ -629,12 +672,16 @@ func (a *App) refreshBlocked(now time.Time) bool {
 	return false
 }
 
-func (a *App) Refresh(force bool) RefreshOutcome {
+func (a *App) Refresh(force bool, snapshot refreshSnapshot) RefreshOutcome {
 	ctx := context.Background()
 	now := time.Now()
 	settings := a.settingsSnapshot()
 	client := core.YouTube{Key: settings.APIKey}
-	outcome := core.RefreshYoutube(ctx, client, settings, a.Sync, a.Store, a.Videos, a.Revision, force, now)
+	// RefreshYoutube commits refreshed channel metadata into the state's
+	// channel map; the snapshot must come back holding the records the
+	// refresh started from, so the writeback guard can still tell a
+	// concurrent edit apart from the refresh's own update.
+	outcome := core.RefreshYoutube(ctx, client, settings, cloneSyncState(snapshot.state), a.Store, snapshot.videos, snapshot.revision, force, now)
 	_, _ = a.updateSettings(func(s *core.Settings) bool {
 		if outcome.Changed {
 			s.LastRefresh = core.FormatRFC3339(now)
@@ -647,11 +694,41 @@ func (a *App) Refresh(force bool) RefreshOutcome {
 		}
 		return true
 	})
-	_ = a.reload()
-	if outcome.Changed {
-		outcome.Channels = a.Channels
-	}
 	return outcome
+}
+
+// applyRefreshedChannels writes the channel metadata a refresh produced into
+// the sync state and persists it, so the Notifications pane and the sync file
+// carry the titles and avatars YouTube has now. A refresh refreshes the
+// subscriptions the sync state holds; it never adds or removes one, and a
+// record that changed since the refresh snapshot is left alone: the writeback
+// lands only while the stored record is still the one the snapshot copied.
+func (a *App) applyRefreshedChannels(channels []core.Channel, snapshotChannels map[string]core.Channel) {
+	if len(channels) == 0 {
+		return
+	}
+	for _, channel := range channels {
+		stored, ok := a.Sync.Channels[channel.ID]
+		if !ok {
+			continue
+		}
+		base, ok := snapshotChannels[channel.ID]
+		if !ok || !sameChannelRecord(stored, base) {
+			continue
+		}
+		a.Sync.Channels[channel.ID] = channel
+	}
+	_ = a.SaveSync()
+}
+
+// sameChannelRecord reports whether two records hold the same fields, so a
+// record's identity never rests on its UpdatedAt alone.
+func sameChannelRecord(a, b core.Channel) bool {
+	return a.Title == b.Title &&
+		a.AvatarURL == b.AvatarURL &&
+		a.UploadedAt == b.UploadedAt &&
+		a.UpdatedAt == b.UpdatedAt &&
+		slices.Equal(a.GroupIDs, b.GroupIDs)
 }
 
 func (a *App) notificationEnabled(channelID string) bool {
@@ -665,26 +742,29 @@ func (a *App) notificationEnabled(channelID string) bool {
 	return false
 }
 
-func (a *App) EnableNotificationsForSelection() {
-	var ids []string
-	if a.Selected == "all" {
-		for id := range a.Sync.Channels {
-			ids = append(ids, id)
-		}
-	} else if strings.HasPrefix(a.Selected, "group:") {
-		if g, ok := a.Sync.Groups[strings.TrimPrefix(a.Selected, "group:")]; ok {
-			ids = append(ids, g.ChannelIDs...)
-		}
-	} else if strings.HasPrefix(a.Selected, "channel:") {
-		ids = append(ids, strings.TrimPrefix(a.Selected, "channel:"))
+// channelSnapshot copies the subscriptions the sync state holds, so a pane or
+// action never iterates the live map a refresh could touch.
+func (a *App) channelSnapshot() []core.Channel {
+	channels := make([]core.Channel, 0, len(a.Sync.Channels))
+	for _, channel := range a.Sync.Channels {
+		channels = append(channels, channel)
 	}
-	_, _ = a.updateSettings(func(s *core.Settings) bool {
-		known := make(map[string]bool, len(s.NotificationIDs)+len(ids))
+	return channels
+}
+
+// EnableAllNotifications turns on notifications for every subscription in the
+// sync state, whichever main-window view happens to be selected. It reports
+// whether any consent was newly recorded.
+func (a *App) EnableAllNotifications() bool {
+	channels := a.channelSnapshot()
+	changed, _ := a.updateSettings(func(s *core.Settings) bool {
+		known := make(map[string]bool, len(s.NotificationIDs)+len(channels))
 		for _, id := range s.NotificationIDs {
 			known[id] = true
 		}
 		changed := false
-		for _, id := range ids {
+		for _, channel := range channels {
+			id := channel.ID
 			if id == "" || known[id] {
 				continue
 			}
@@ -694,25 +774,7 @@ func (a *App) EnableNotificationsForSelection() {
 		}
 		return changed
 	})
-}
-
-func (a *App) StartupRefreshIfDue() {
-	a.settingsMu.RLock()
-	lastRefresh := a.Settings.LastRefresh
-	refreshMinutes := a.Settings.RefreshMinutes
-	quotaPausedUntil := a.Settings.QuotaPausedUntil
-	a.settingsMu.RUnlock()
-	if lastRefresh == "" {
-		return
-	}
-	last, err := time.Parse(time.RFC3339, lastRefresh)
-	if err != nil || time.Since(last) < time.Duration(refreshMinutes)*time.Minute {
-		return
-	}
-	if paused, err := time.Parse(time.RFC3339, quotaPausedUntil); err == nil && time.Now().Before(paused) {
-		return
-	}
-	go func() { _ = a.Refresh(false) }()
+	return changed
 }
 
 func (a *App) DrainQueuedSyncWrites() error {

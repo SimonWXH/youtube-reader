@@ -473,7 +473,9 @@ func (w *Window) closeDetails(c *ui.Context) {
 		d.errDismissed = true
 	}
 	w.app.SelectedVideoID = ""
-	d.returnFocus = !w.app.SettingsOpen
+	// Settings is its own window now, so closing the pane always hands the
+	// keyboard back to the grid.
+	d.returnFocus = true
 }
 
 func (w *Window) drawer(c *ui.Context, t mui.Tokens) {
