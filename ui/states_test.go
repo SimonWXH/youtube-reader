@@ -355,21 +355,30 @@ func TestFailedThumbnailIsANeutralFrame(t *testing.T) {
 }
 
 // TestSkeletonGridKeepsTheCardCount pins the first-load shape: 12 neutral
-// cards, no spinner inside the pane, so the toolbar's control is the pane's
-// only activity sign.
+// cards in three rows of four, no spinner inside the pane, so the toolbar's
+// control is the pane's only activity sign.
 func TestSkeletonGridKeepsTheCardCount(t *testing.T) {
-	spec := SkeletonSpec{Count: SkeletonCards, Columns: 4, CardWidth: 241, CardHeight: 211, ThumbHeight: 135, Gap: 8}
+	const cardWidth, cardHeight, gap float32 = 241, 211, 8
+	spec := SkeletonSpec{Count: SkeletonCards, Columns: 4, CardWidth: cardWidth, CardHeight: cardHeight, ThumbHeight: 135, Gap: gap}
 	tt := ui.NewTester(func(c *ui.Context) {
-		SkeletonGrid(c, statesTestTokens(c), spec)
-	}, 1010, 640)
+		ui.Column(c).Fill().AlignItems(ui.Start).Children(func() {
+			SkeletonGrid(c, statesTestTokens(c), spec)
+		})
+	}, 1010, 900)
 	tt.Frame()
 	for _, info := range tt.AccessAll() {
 		if info.Role == ui.RoleProgress {
 			t.Fatal("the skeleton draws its own spinner; the toolbar refresh control owns the one spinner")
 		}
 	}
-	if SkeletonCards != 12 {
-		t.Fatalf("SkeletonCards = %d, want 12", SkeletonCards)
+	group, ok := tt.Find(LoadingGridLabel)
+	if !ok {
+		t.Fatalf("the skeleton grid is not laid out: %q", tt.Texts())
+	}
+	wantW := 4*cardWidth + 3*gap
+	wantH := 3*cardHeight + 2*gap
+	if group.W < wantW-0.5 || group.W > wantW+0.5 || group.H < wantH-0.5 || group.H > wantH+0.5 {
+		t.Fatalf("the skeleton grid is %v x %v, want %v x %v for 12 cards in three rows of four", group.W, group.H, wantW, wantH)
 	}
 }
 
