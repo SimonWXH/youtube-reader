@@ -20,9 +20,14 @@ guard let context = CGContext(data: nil, width: side, height: side,
 
 // The gradient runs top-left to bottom-right. CGContext has its origin at the
 // bottom-left, so its start is (0, side) and end is (side, 0).
-let start = CGColor(red: 0xff/255, green: 0x4e/255, blue: 0x00/255, alpha: 1)
-let end = CGColor(red: 0xd1/255, green: 0x0b/255, blue: 0x28/255, alpha: 1)
-guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+let deviceRGB = CGColorSpaceCreateDeviceRGB()
+func color(_ red: Int, _ green: Int, _ blue: Int) -> CGColor {
+    CGColor(colorSpace: deviceRGB,
+            components: [CGFloat(red)/255, CGFloat(green)/255, CGFloat(blue)/255, 1])!
+}
+let start = color(0xff, 0x4e, 0x00)
+let end = color(0xd1, 0x0b, 0x28)
+guard let gradient = CGGradient(colorsSpace: deviceRGB,
                                 colors: [start, end] as CFArray,
                                 locations: [0, 1]) else {
     fatalError("could not create gradient")
