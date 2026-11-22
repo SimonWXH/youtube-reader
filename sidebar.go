@@ -208,7 +208,7 @@ type groupDragFrame struct {
 // the order a drop would make shows before the pointer lets go.
 func (w *Window) groupSectionDrop(c *ui.Context, section ui.Element, index int, drag *groupDragFrame) {
 	dragged, over := ui.DragOver[groupDrag](section)
-	_, dropped := ui.Drop[groupDrag](section)
+	droppedGroup, dropped := ui.Drop[groupDrag](section)
 	if dropped {
 		drag.dropped = true
 	}
@@ -219,7 +219,14 @@ func (w *Window) groupSectionDrop(c *ui.Context, section ui.Element, index int, 
 	if _, y, inside := section.PointerPosition(); inside && y >= section.LayoutBounds().H/2 {
 		to = index + 1
 	}
-	if w.liveMoveGroup(dragged.ID, to) {
+	// On the frame a release lands on, the drag is already over and DragOver
+	// carries no value; the value the pointer delivered is the one that says
+	// which group the drop moves.
+	id := dragged.ID
+	if dropped {
+		id = droppedGroup.ID
+	}
+	if w.liveMoveGroup(id, to) {
 		// The blocks built this frame show the order before the move: ask for
 		// the frame that lays them out in it.
 		c.Invalidate()

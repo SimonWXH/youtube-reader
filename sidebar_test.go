@@ -845,3 +845,31 @@ func TestSidebarGroupDragToTheEnd(t *testing.T) {
 		t.Fatalf("order after dropping past the last block = %q, want Alpha at the end", got)
 	}
 }
+
+// TestSidebarGroupDragDropLandsAtTheReleasePoint releases a fast drag where
+// the pointer never settles between moves: the group lands at the boundary the
+// release point shows, not where the last hovered frame left it.
+func TestSidebarGroupDragDropLandsAtTheReleasePoint(t *testing.T) {
+	a := reorderTestApp(t)
+	tt := sidebarTester(t, a)
+	charlie := rowBox(t, tt, "Charlie")
+	alpha := rowBox(t, tt, "Alpha")
+	sx, sy := charlie.X+20, charlie.Y+charlie.H/2
+	tt.Press(sx, sy)
+	tt.Move(sx, sy-10)
+	// The last build sees the pointer over Alpha's bottom half, which puts
+	// Charlie after Alpha.
+	tt.Move(alpha.X+20, alpha.Y+alpha.H-4)
+	tt.Frame()
+	if got := groupNames(a.Groups); !slices.Equal(got, []string{"Alpha", "Charlie", "Bravo"}) {
+		t.Fatalf("order at the last hover = %q, want Charlie after Alpha", got)
+	}
+	// The release lands higher, over Alpha's top half: the drop belongs to
+	// the frame that reads the release, not the one the pointer last crossed.
+	alpha = rowBox(t, tt, "Alpha")
+	tt.Release(alpha.X+20, alpha.Y+4)
+	tt.Frame()
+	if got := groupNames(a.Groups); !slices.Equal(got, []string{"Charlie", "Alpha", "Bravo"}) {
+		t.Fatalf("order after the flick release = %q, want Charlie above Alpha", got)
+	}
+}
