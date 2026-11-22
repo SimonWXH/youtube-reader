@@ -102,7 +102,7 @@ func TestEmptyCenterStatesInTheWindow(t *testing.T) {
 		if !tt.HasText(mui.EmptySidebarTitle) {
 			t.Fatalf("the sidebar is blank: %q", tt.Texts())
 		}
-		if _, ok := tt.AccessByRole(ui.RoleButton, "Open Settings"); !ok {
+		if _, ok := tt.AccessByRole(ui.RoleButton, "Open Settings…"); !ok {
 			t.Fatalf("setup has no settings action: %q", tt.Texts())
 		}
 		previousCreate := newSettingsWindow
@@ -112,11 +112,11 @@ func TestEmptyCenterStatesInTheWindow(t *testing.T) {
 			created++
 			return &mygo.Window{}
 		}
-		if err := tt.Click("Open Settings"); err != nil {
-			t.Fatalf("click Open Settings: %v", err)
+		if err := tt.Click("Open Settings…"); err != nil {
+			t.Fatalf("click Open Settings…: %v", err)
 		}
 		if created != 1 {
-			t.Fatalf("Open Settings created %d settings windows, want 1", created)
+			t.Fatalf("Open Settings… created %d settings windows, want 1", created)
 		}
 	})
 

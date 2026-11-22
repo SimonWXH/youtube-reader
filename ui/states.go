@@ -176,7 +176,7 @@ var (
 		Symbol:   "key.fill",
 		Title:    "Set up YouTube Reader",
 		Sentence: "Add a YouTube Data API key in Settings to start following channels.",
-		Action:   "Open Settings",
+		Action:   "Open Settings…",
 	}
 	emptyCopyImportChannels = EmptyStateCopy{
 		Symbol:   "tray.and.arrow.down",
@@ -236,7 +236,7 @@ const (
 	// EmptySidebarSentence says how channels get here.
 	EmptySidebarSentence = "Import an OPML file to add the channels you follow."
 	// EmptySidebarAction opens the OPML importer.
-	EmptySidebarAction = "Add channel..."
+	EmptySidebarAction = "Add channel…"
 	// LoadingCancelLabel ends a refresh that has nothing on screen yet.
 	LoadingCancelLabel = "Cancel"
 	// LoadingGridLabel names the skeleton for assistive technology. The cards
@@ -492,11 +492,6 @@ func PaneAction(c *ui.Context, tokens Tokens, key, label string, primary, disabl
 	return el
 }
 
-// statesIconPlus is the sidebar empty state's action glyph. It follows the
-// shared 24 pt box, 1.5 pt stroke, round joins in ui/icons.go without adding a
-// role to that file.
-var statesIconPlus = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>`))
-
 // SidebarEmpty fills the sidebar's channel section when no channel is
 // imported: a 13 pt Semibold title, one 12 pt secondary sentence, and a 28 pt
 // quiet "Add channel..." action, so the sidebar is never a blank column.
@@ -511,7 +506,7 @@ func SidebarEmpty(c *ui.Context, tokens Tokens, onAdd func()) ui.Element {
 			Justify(ui.Start).Transition(Fade).FocusRingColor(tokens.Focus).
 			FocusRingOffset(FocusRingGap).Cursor(ui.CursorPointer)
 		add.Children(func() {
-			ui.Icon(c, statesIconPlus).Size(Space(4), Space(4))
+			sfsymbols.Symbol(c, "plus").Size(Space(4)).Color(tokens.Accent).Element.Role(ui.RoleNone)
 			Control.Apply(ui.Text(c, EmptySidebarAction)).SingleLine()
 		})
 		add.Draw(func(p *ui.Painter, r ui.Rect) {

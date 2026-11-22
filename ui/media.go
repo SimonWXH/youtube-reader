@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"github.com/egoist/mygo/plugins/sfsymbols"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/netimage"
 )
@@ -68,7 +69,7 @@ func thumbnailPlaceholder(c *ui.Context, tokens Tokens, label string, failed boo
 		return frame
 	}
 	return frame.Tooltip(label).Center().Children(func() {
-		ui.Icon(c, IconPlay).Size(28, 28).TextColor(tokens.Muted)
+		sfsymbols.Symbol(c, "play.fill").Size(28).Color(tokens.Muted).Element.Role(ui.RoleNone)
 	})
 }
 

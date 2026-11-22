@@ -30,7 +30,12 @@ type ytChannelsResponse struct {
 	Items []struct {
 		ID      string `json:"id"`
 		Snippet struct {
-			Title string `json:"title"`
+			Title      string `json:"title"`
+			Thumbnails struct {
+				Default struct {
+					URL string `json:"url"`
+				} `json:"default"`
+			} `json:"thumbnails"`
 		} `json:"snippet"`
 		ContentDetails struct {
 			RelatedPlaylists struct {
@@ -132,7 +137,13 @@ func (y YouTube) ChannelInfo(ctx context.Context, ids []string) ([]Channel, erro
 			return nil, apiError(message, httpResp.StatusCode)
 		}
 		for _, item := range resp.Items {
-			ch := Channel{ID: item.ID, Title: item.Snippet.Title, UploadedAt: item.ContentDetails.RelatedPlaylists.Uploads, UpdatedAt: time.Now().UnixMilli()}
+			ch := Channel{
+				ID:         item.ID,
+				Title:      item.Snippet.Title,
+				AvatarURL:  item.Snippet.Thumbnails.Default.URL,
+				UploadedAt: item.ContentDetails.RelatedPlaylists.Uploads,
+				UpdatedAt:  time.Now().UnixMilli(),
+			}
 			out = append(out, ch)
 		}
 	}

@@ -40,8 +40,8 @@ func TestStateCopyContract(t *testing.T) {
 	if EmptySidebarTitle != "No channels yet" {
 		t.Fatalf("EmptySidebarTitle = %q, want %q", EmptySidebarTitle, "No channels yet")
 	}
-	if EmptySidebarAction != "Add channel..." {
-		t.Fatalf("EmptySidebarAction = %q, want %q", EmptySidebarAction, "Add channel...")
+	if EmptySidebarAction != "Add channel…" {
+		t.Fatalf("EmptySidebarAction = %q, want %q", EmptySidebarAction, "Add channel…")
 	}
 	if title, _ := RefreshErrorCopy(CauseConnection); title != "Could not refresh subscriptions" {
 		t.Fatalf("error title = %q, want %q", title, "Could not refresh subscriptions")

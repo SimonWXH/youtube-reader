@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -244,10 +246,14 @@ func TestSidebarRendersDestinationCounts(t *testing.T) {
 	assertSidebarCount(t, tt, "Favorites", fmt.Sprintf("%d", favoriteVideos), 1)
 	assertSidebarCount(t, tt, "Alpha group", fmt.Sprintf("%d", perChannel["ch-a"]+perChannel["ch-b"]), 1)
 	assertSidebarCount(t, tt, "Beta group", fmt.Sprintf("%d", perChannel["ch-c"]+perChannel["ch-d"]), 1)
-	assertSidebarCount(t, tt, "Alpha channel", fmt.Sprintf("%d", perChannel["ch-a"]), 2)
-	assertSidebarCount(t, tt, "Beta channel", fmt.Sprintf("%d", perChannel["ch-b"]), 2)
-	assertSidebarCount(t, tt, "Gamma channel", fmt.Sprintf("%d", perChannel["ch-c"]), 1)
-	assertSidebarCount(t, tt, "Delta channel", fmt.Sprintf("%d", perChannel["ch-d"]), 1)
+	assertSidebarCount(t, tt, "Alpha channel", fmt.Sprintf("%d", perChannel["ch-a"]), 1)
+	assertSidebarCount(t, tt, "Beta channel", fmt.Sprintf("%d", perChannel["ch-b"]), 1)
+	if n := countText(tt, "Gamma channel"); n != 0 {
+		t.Fatalf("a channel in a group must not appear again below the groups: %q", tt.Texts())
+	}
+	if n := countText(tt, "Delta channel"); n != 0 {
+		t.Fatalf("a channel in a group must not appear again below the groups: %q", tt.Texts())
+	}
 }
 
 // sidebarRowBoxes returns the boxes of the sidebar rows named name. A group
@@ -329,20 +335,24 @@ func TestSidebarArrowKeysWalkSelection(t *testing.T) {
 		t.Fatal("the arrow keys stopped on the fold row instead of skipping it")
 	}
 
-	_, before, _ := ringLines(t, tt, mui.NewTokens(nil, false), int(defaultSidebarWidth))
+	// The grouped channel is now the last row: Down at the end must leave
+	// both the selection and the ring where they are.
+	_, before, ok := ringLines(t, tt, mui.NewTokens(nil, false), int(defaultSidebarWidth))
+	if !ok {
+		t.Fatal("the channel row has no focus ring")
+	}
 	tt.Key(0, ui.KeyDown)
 	if a.Selected != "channel:ch-a" {
-		t.Fatalf("Down to the Channels row selected %q, want the same channel", a.Selected)
+		t.Fatalf("Down past the last row selected %q, want the same channel", a.Selected)
 	}
 	_, after, ok := ringLines(t, tt, mui.NewTokens(nil, false), int(defaultSidebarWidth))
-	if !ok || after <= before {
-		t.Fatalf("focus ring stayed at %d after Down; want it to move down", after)
+	if !ok || after != before {
+		t.Fatalf("Down past the last row moved the ring from %d to %d", before, after)
 	}
 
 	tt.Key(0, ui.KeyUp)
-	tt.Key(0, ui.KeyUp)
 	if a.Selected != "favorites" {
-		t.Fatalf("two Ups selected %q, want favorites", a.Selected)
+		t.Fatalf("Up from the last row selected %q, want favorites", a.Selected)
 	}
 	tt.Key(0, ui.KeyUp)
 	if a.Selected != "all" {
@@ -467,14 +477,14 @@ func TestSidebarReturnOpensFocusedRow(t *testing.T) {
 	if a.GroupCollapsed("group-a") {
 		t.Fatal("Return on the group row did not expand the group")
 	}
-	if n := countText(tt, "Alpha channel"); n != 2 {
-		t.Fatalf("expanded group should add its channel row; got %d in %q", n, tt.Texts())
+	if n := countText(tt, "Alpha channel"); n != 1 {
+		t.Fatalf("expanded group should show its channel exactly once; got %d in %q", n, tt.Texts())
 	}
 	tt.Key(0, ui.KeyEnter)
 	if !a.GroupCollapsed("group-a") {
 		t.Fatal("Return on the expanded group row did not collapse it")
 	}
-	if n := countText(tt, "Alpha channel"); n != 1 {
+	if n := countText(tt, "Alpha channel"); n != 0 {
 		t.Fatalf("collapsed group should drop its channel row; got %d in %q", n, tt.Texts())
 	}
 }
@@ -919,5 +929,130 @@ func TestSidebarGroupDragDropLandsAtTheReleasePoint(t *testing.T) {
 	tt.Frame()
 	if got := groupNames(a.Groups); !slices.Equal(got, []string{"Charlie", "Alpha", "Bravo"}) {
 		t.Fatalf("order after the flick release = %q, want Charlie above Alpha", got)
+	}
+}
+
+// TestGroupedChannelAppearsOnce proves F-02: a channel in a group is listed
+// only inside that group; an unlisted channel appears only in the Ungrouped
+// section beneath it. The section stays out of the sidebar when every
+// channel is grouped.
+func TestGroupedChannelAppearsOnce(t *testing.T) {
+	a := sidebarTestApp(t, true)
+	a.Channels = []core.Channel{
+		{ID: "ch-a", Title: "Alpha channel", AvatarURL: "https://example.invalid/alpha.png"},
+		{ID: "ch-lone", Title: "Lone channel"},
+	}
+	a.Sync.Channels = map[string]core.Channel{
+		"ch-a":    a.Channels[0],
+		"ch-lone": a.Channels[1],
+	}
+	tt := sidebarTester(t, a)
+
+	if got := countText(tt, "Alpha channel"); got != 1 {
+		t.Fatalf("a grouped channel appears %d times, want once: %q", got, tt.Texts())
+	}
+	if got := countText(tt, "Lone channel"); got != 1 {
+		t.Fatalf("an ungrouped channel appears %d times, want once: %q", got, tt.Texts())
+	}
+	if !tt.HasText("Ungrouped") {
+		t.Fatalf("the ungrouped section has no header: %q", tt.Texts())
+	}
+	alpha, ok := tt.Find("Alpha channel")
+	if !ok {
+		t.Fatal("the grouped channel row is missing")
+	}
+	lone, ok := tt.Find("Lone channel")
+	if !ok {
+		t.Fatal("the ungrouped channel row is missing")
+	}
+	if lone.Y <= alpha.Y {
+		t.Fatalf("the ungrouped row at %v is not below the group row at %v", lone.Y, alpha.Y)
+	}
+}
+
+// TestUngroupedHeaderIsLocalized checks the agreed Ungrouped / 未分组 label
+// through the framework's Context.Locale, as set by ui.Tester.SetLocale.
+func TestUngroupedHeaderIsLocalized(t *testing.T) {
+	a := sidebarTestApp(t, false)
+	a.Channels = append(a.Channels, core.Channel{ID: "ch-lone", Title: "Lone channel"})
+	a.Sync.Channels["ch-lone"] = a.Channels[len(a.Channels)-1]
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 808)
+	tt.SetLocale("zh-Hans")
+	tt.Frame()
+	if !tt.HasText("未分组") {
+		t.Fatalf("Chinese locale did not localize the ungrouped header: %q", tt.Texts())
+	}
+	if tt.HasText("Ungrouped") {
+		t.Fatalf("Chinese locale still shows the English header: %q", tt.Texts())
+	}
+}
+
+// TestNoUngroupedSectionWhenAllChannelsAreGrouped checks that the header and
+// its empty state stay out of the sidebar once every channel has a group.
+func TestNoUngroupedSectionWhenAllChannelsAreGrouped(t *testing.T) {
+	a := sidebarTestApp(t, false)
+	tt := sidebarTester(t, a)
+	if tt.HasText("Ungrouped") {
+		t.Fatalf("an all-grouped sidebar shows an empty Ungrouped header: %q", tt.Texts())
+	}
+}
+
+// TestSidebarChannelRowUsesItsOwnMetrics pins F-04 at the 260 pt design width:
+// channel rows are 34 pt with a 24 pt avatar, while navigation rows and the
+// fold row stay at 28 pt.
+func TestSidebarChannelRowUsesItsOwnMetrics(t *testing.T) {
+	a := sidebarTestApp(t, true)
+	a.Channels = append(a.Channels, core.Channel{ID: "ch-lone", Title: "Lone channel"})
+	a.Sync.Channels["ch-lone"] = a.Channels[len(a.Channels)-1]
+	tt := sidebarTester(t, a)
+
+	if mui.SidebarChannelRowHeight != 34 || mui.SidebarChannelAvatar != 24 || mui.SidebarRowHeight != 28 {
+		t.Fatalf("sidebar metrics: channel row %v, avatar %v, nav row %v", mui.SidebarChannelRowHeight, mui.SidebarChannelAvatar, mui.SidebarRowHeight)
+	}
+	channel := rowBox(t, tt, "Lone channel")
+	nav := rowBox(t, tt, "All videos")
+	if diff := abs(channel.H - mui.SidebarChannelRowHeight); diff > 0.5 {
+		t.Fatalf("channel row is %v pt tall, want %v", channel.H, mui.SidebarChannelRowHeight)
+	}
+	if diff := abs(nav.H - mui.SidebarRowHeight); diff > 0.5 {
+		t.Fatalf("navigation row is %v pt tall, want %v", nav.H, mui.SidebarRowHeight)
+	}
+}
+
+// TestChannelAvatarURLReachesTheSidebarRow proves F-03 from a refreshed
+// channel's stored URL down to the sidebar: a real image is drawn in the
+// channel's row instead of a monogram, and the row reserves the 24 pt slot.
+func TestChannelAvatarURLReachesTheSidebarRow(t *testing.T) {
+	// A tiny PNG served locally makes the avatar a real, loadable image.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write([]byte{137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 8, 215, 99, 248, 207, 192, 240, 31, 0, 5, 0, 1, 255, 233, 131, 138, 167, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130})
+	}))
+	defer srv.Close()
+
+	a := sidebarTestApp(t, false)
+	a.Groups[0].ChannelIDs = nil
+	a.Sync.Groups["group-a"] = a.Groups[0]
+	a.Channels = []core.Channel{{ID: "ch-a", Title: "Alpha channel", AvatarURL: srv.URL + "/avatar.png"}}
+	a.Sync.Channels["ch-a"] = a.Channels[0]
+	tt := sidebarTester(t, a)
+
+	row := rowBox(t, tt, "Alpha channel")
+	// With a URL ChannelAvatar creates an image element at the 24 pt slot,
+	// where the monogram fallback instead paints a letter into a coloured
+	// disc. Compare the two renders at the slot's centre to prove the URL is
+	// what the row draws.
+	withURL := tt.Image().RGBAAt(int(row.X+14), int(row.Y+row.H/2))
+
+	a.Channels[0].AvatarURL = ""
+	a.Sync.Channels["ch-a"] = a.Channels[0]
+	tt = sidebarTester(t, a)
+	withoutURL := tt.Image().RGBAAt(int(row.X+14), int(row.Y+row.H/2))
+	if withURL == withoutURL {
+		t.Fatalf("the row renders identically with and without an avatar URL: %v", withURL)
+	}
+	if got := countText(tt, "Alpha channel"); got != 1 {
+		t.Fatalf("monogram fallback lost its channel row: %q", tt.Texts())
 	}
 }
