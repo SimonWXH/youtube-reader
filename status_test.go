@@ -292,6 +292,20 @@ func TestDeriveStatusCopy(t *testing.T) {
 			details: []string{"Channels: 3"},
 		},
 		{
+			// Setup owns the panel until a key exists: a pause in force adds
+			// no row there, while the model keeps carrying it so the status
+			// bar neither seeds nor raises an alert for it.
+			name: "paused without a key",
+			in: statusInput{Now: now, Online: true, Channels: 3, Settings: core.Settings{
+				QuotaPausedUntil: now.Add(24 * time.Hour).Format(time.RFC3339),
+			}},
+			state:   statusNotConfigured,
+			title:   "Set up YouTube Reader",
+			body:    "Add a YouTube Data API key in Settings to get started.",
+			primary: statusOpenSettings, secondary: statusNoAction,
+			details: []string{"Channels: 3"},
+		},
+		{
 			name: "quota paused",
 			in: statusInput{Now: now, Online: true, Channels: 42, Settings: core.Settings{
 				APIKey:           "key",
@@ -417,7 +431,7 @@ func TestDeriveStatusCopy(t *testing.T) {
 				t.Fatalf("details = %q, want %q", details, tt.details)
 			}
 			wantPaused := tt.name == "quota paused" || tt.name == "quota failure" || tt.name == "refreshing while paused" ||
-				tt.name == "never refreshed while paused" || tt.name == "offline while paused"
+				tt.name == "never refreshed while paused" || tt.name == "offline while paused" || tt.name == "paused without a key"
 			if paused := !got.PausedUntil.IsZero(); paused != wantPaused {
 				t.Fatalf("paused = %v, want %v", paused, wantPaused)
 			}

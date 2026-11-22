@@ -157,6 +157,41 @@ func TestConsumeHandoffQuotaFailurePausesRefresh(t *testing.T) {
 	}
 }
 
+// TestConsumeHandoffDoesNotRearmPauseFromHistory proves a quota pause is
+// armed only by the failure the refresh itself produced: a handoff whose
+// current failure is an ordinary error keeps the earlier quota failure as
+// history without arming a pause the refresh did not earn.
+func TestConsumeHandoffDoesNotRearmPauseFromHistory(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+	failures := []core.RefreshFailure{
+		{At: "2026-03-02T12:00:00Z", Message: "Get \"https://www.googleapis.com/youtube/v3/channels\": dial tcp: no route to host"},
+		{At: "2026-03-01T12:00:00Z", Message: "quota paused until 2026-03-02T12:00:00Z"},
+	}
+	handoff := map[string]any{
+		"id":          "handoff-stale-quota",
+		"createdAt":   "2026-03-02T12:00:00Z",
+		"description": failures[0].Message,
+		"failures":    failures,
+	}
+	data, _ := json.Marshal(handoff)
+	if err := os.WriteFile(filepath.Join(dir, "inbox.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ConsumeHandoff(); err != nil {
+		t.Fatal(err)
+	}
+	if a.Settings.QuotaPausedUntil != "" {
+		t.Fatalf("carried quota history re-armed a pause: %+v", a.Settings.QuotaPausedUntil)
+	}
+	if len(a.Settings.RecentFailures) != 2 ||
+		a.Settings.RecentFailures[0].Message != failures[0].Message ||
+		a.Settings.RecentFailures[1].Message != failures[1].Message {
+		t.Fatalf("failures: %+v", a.Settings.RecentFailures)
+	}
+}
+
 func TestRefreshNoopDoesNotAdvanceLastRefresh(t *testing.T) {
 	dir := t.TempDir()
 	a := newTestApp(t, dir)

@@ -173,7 +173,8 @@ type statusInput struct {
 // flight wins over offline, because the attempt the user just started must be
 // the one the surface reports; a missing API key and a reader that has never
 // refreshed are setup conditions, so neither is reported as healthy or as a
-// failed refresh.
+// failed refresh, and setup owns the panel until a key exists: a pause in
+// force adds no row there and raises no alert.
 func deriveStatus(in statusInput) status {
 	settings := in.Settings
 	last, hasLast := stampTime(settings.LastRefresh)
@@ -193,6 +194,7 @@ func deriveStatus(in statusInput) status {
 		m.Body = "Add a YouTube Data API key in Settings to get started."
 		m.Primary = statusOpenSettings
 		m.Secondary = statusNoAction
+		pauseShown = true
 		m.Details = append(m.Details, statusDetail{Symbol: "arrow.triangle.2.circlepath", Label: "Channels", Value: fmt.Sprintf("%d", in.Channels)})
 
 	case in.Refreshing:

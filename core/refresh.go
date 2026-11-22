@@ -7,6 +7,7 @@ import (
 	"net"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -182,6 +183,14 @@ func RefreshYoutube(ctx context.Context, client YouTube, settings Settings, stat
 		}
 	}
 	return result
+}
+
+// FailedOnQuota reports whether a refresh's own failure is the quota failure.
+// RefreshYoutube puts the failure the attempt produced first, so the retained
+// history a failed refresh carries never reads as this attempt's quota
+// failure; the settings' quota pause is armed from this answer alone.
+func FailedOnQuota(failures []RefreshFailure) bool {
+	return len(failures) > 0 && strings.HasPrefix(failures[0].Message, "quota paused")
 }
 
 // apiKeyQuery matches the key parameter Go's request errors quote in the full

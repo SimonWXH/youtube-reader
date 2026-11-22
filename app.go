@@ -569,7 +569,7 @@ func (a *App) Refresh(force bool) RefreshOutcome {
 		} else if len(outcome.Failures) > 0 {
 			s.RecentFailures = outcome.Failures
 		}
-		if containsQuotaFailure(outcome.Failures) {
+		if core.FailedOnQuota(outcome.Failures) {
 			s.QuotaPausedUntil = core.FormatRFC3339(now.Add(24 * time.Hour))
 		}
 		return true
@@ -579,15 +579,6 @@ func (a *App) Refresh(force bool) RefreshOutcome {
 		outcome.Channels = a.Channels
 	}
 	return outcome
-}
-
-func containsQuotaFailure(failures []core.RefreshFailure) bool {
-	for _, f := range failures {
-		if strings.HasPrefix(f.Message, "quota paused") {
-			return true
-		}
-	}
-	return false
 }
 
 func (a *App) notificationEnabled(channelID string) bool {
@@ -711,14 +702,9 @@ func (a *App) ConsumeHandoff() error {
 	_, _ = a.updateSettings(func(s *core.Settings) bool {
 		if fresh && len(handoff.Failures) > 0 {
 			s.RecentFailures = handoff.Failures
-			if containsQuotaFailure(handoff.Failures) {
-				for _, f := range handoff.Failures {
-					if strings.HasPrefix(f.Message, "quota paused") {
-						if at, err := time.Parse(time.RFC3339, f.At); err == nil {
-							s.QuotaPausedUntil = core.FormatRFC3339(at.Add(24 * time.Hour))
-						}
-						break
-					}
+			if core.FailedOnQuota(handoff.Failures) {
+				if at, err := time.Parse(time.RFC3339, handoff.Failures[0].At); err == nil {
+					s.QuotaPausedUntil = core.FormatRFC3339(at.Add(24 * time.Hour))
 				}
 			}
 		}
