@@ -152,6 +152,7 @@ func (n *sidebarNav) move(delta int) func() {
 // over its channels rather than only over its row.
 func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, index int, nav *sidebarNav, counts sidebarCounts, drag *groupDragFrame) {
 	collapsed := w.app.GroupCollapsed(g.ID)
+	focused := false
 	section := ui.Column(c.Key("group-block:" + g.ID))
 	section.Children(func() {
 		row := nav.row(c, t, mui.SidebarRow{
@@ -159,6 +160,7 @@ func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, 
 			Fold: true, Expanded: !collapsed,
 			OnClick: func() { _ = w.app.SetGroupCollapsed(g.ID, !collapsed) },
 		})
+		focused = focused || row.Focused()
 		// The row drags its group. MyGo keeps a press that moved a few DIPs
 		// from clicking, so the fold switch still works and a drag never
 		// toggles it; the row stays as the place the group would land.
@@ -176,14 +178,18 @@ func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, 
 		for _, id := range g.ChannelIDs {
 			id := id
 			ch := w.channelByID(id)
-			nav.row(c, t, mui.SidebarRow{
+			row := nav.row(c, t, mui.SidebarRow{
 				Key: fmt.Sprintf("group:%s:channel:%s", g.Name, id), Label: ch.Title, Channel: true, Avatar: ch.AvatarURL,
 				Count:    fmt.Sprintf("%d", counts.perChannel[id]),
 				Selected: w.app.Selected == "channel:"+id,
 				OnClick:  func() { w.app.Selected = "channel:" + id },
 			})
+			focused = focused || row.Focused()
 		}
 	})
+	if focused {
+		section.ZIndex(1)
+	}
 	w.groupSectionDrop(c, section, index, drag)
 }
 

@@ -503,6 +503,52 @@ func TestSidebarFocusRingOnEveryRow(t *testing.T) {
 	}
 }
 
+// TestSidebarGroupFocusRingClosesAtBlockEdge focuses a group block's last row
+// with another block right below it. The ring reaches 5 pt past the row and
+// the next block's opaque row background begins 2 pt below, so the block must
+// paint above its following sibling or the ring's bottom band disappears, in
+// both the collapsed and the expanded block.
+func TestSidebarGroupFocusRingClosesAtBlockEdge(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		focus  string
+		expand bool
+	}{
+		{"collapsed group", "Alpha", false},
+		{"expanded group", "Alpha channel", true},
+	} {
+		for _, dark := range []bool{false, true} {
+			a := reorderTestApp(t)
+			a.Channels = []core.Channel{{ID: "ch-a1", Title: "Alpha channel"}}
+			a.Sync.Channels = map[string]core.Channel{"ch-a1": {ID: "ch-a1", Title: "Alpha channel"}}
+			a.Groups[0].ChannelIDs = []string{"ch-a1"}
+			a.Sync.Groups["group-a"] = a.Groups[0]
+			a.Settings.ExpandedGroups["group-a"] = tc.expand
+			w := &Window{app: a, selectedIndex: new(int)}
+			tt := ui.NewTester(w.view, 1280, 808)
+			tt.SetDark(dark)
+			tt.Frame()
+			tokens := mui.NewTokens(nil, dark)
+			focusByTab(t, tt, tc.focus)
+			boxes := sidebarRowBoxes(tt, tc.focus)
+			if len(boxes) == 0 {
+				t.Fatalf("%s dark=%v: %q has no sidebar row", tc.name, dark, tc.focus)
+			}
+			box := boxes[0]
+			_, last, ok := ringLines(t, tt, tokens, int(defaultSidebarWidth))
+			if !ok {
+				t.Fatalf("%s dark=%v: %q has no visible focus ring", tc.name, dark, tc.focus)
+			}
+			// The ring's outer edge sits FocusRingGap+FocusRing below the row,
+			// and the 2 pt stroke covers the last row inside it.
+			want := int(box.Y + box.H + mui.FocusRingGap + mui.FocusRing - 1)
+			if last < want {
+				t.Fatalf("%s dark=%v: %q ring ends at y=%d, want at least %d (row box %+v)", tc.name, dark, tc.focus, last, want, box)
+			}
+		}
+	}
+}
+
 // TestSidebarDragHandleClampsAndPersists proves the divider keeps the agreed
 // 220 to 320 pt range, keeps a 6 pt grab band around the 1 pt rule with the
 // resize cursor, and writes the chosen width to settings.
