@@ -135,11 +135,10 @@ func TestEmptyVariantFor(t *testing.T) {
 	}
 }
 
-// TestRefreshErrorCopy pins the four causes' sentences.
+// TestRefreshErrorCopy pins the three causes' sentences.
 func TestRefreshErrorCopy(t *testing.T) {
 	tests := map[ErrorCause]string{
 		CauseConnection:  "Check your connection, then try again.",
-		CauseOffline:     "You are offline. Reconnect, then try again.",
 		CauseRejectedKey: "The YouTube API rejected the key. Check it in Settings, then try again.",
 		CauseQuota:       "YouTube API quota reached. Try again after the pause ends.",
 	}

@@ -266,8 +266,6 @@ type ErrorCause uint8
 const (
 	// CauseConnection is a transport failure or an unknown cause.
 	CauseConnection ErrorCause = iota
-	// CauseOffline is a refresh attempt while macOS reports no network.
-	CauseOffline
 	// CauseRejectedKey is the API rejecting the stored key.
 	CauseRejectedKey
 	// CauseQuota is the API quota that paused refreshes.
@@ -280,8 +278,6 @@ const (
 func RefreshErrorCopy(cause ErrorCause) (title, sentence string) {
 	title = "Could not refresh subscriptions"
 	switch cause {
-	case CauseOffline:
-		sentence = "You are offline. Reconnect, then try again."
 	case CauseRejectedKey:
 		sentence = "The YouTube API rejected the key. Check it in Settings, then try again."
 	case CauseQuota:
@@ -304,7 +300,7 @@ func StateCopy() []string {
 		c := CopyForEmpty(v)
 		out = append(out, c.Title, c.Sentence, c.Action)
 	}
-	for _, cause := range []ErrorCause{CauseConnection, CauseOffline, CauseRejectedKey, CauseQuota} {
+	for _, cause := range []ErrorCause{CauseConnection, CauseRejectedKey, CauseQuota} {
 		title, sentence := RefreshErrorCopy(cause)
 		out = append(out, title, sentence)
 	}

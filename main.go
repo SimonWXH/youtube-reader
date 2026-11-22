@@ -133,9 +133,11 @@ func (w *Window) toast(c *ui.Context, msg string, isError bool) {
 // runRefresh starts one refresh off the main thread. Refresh feedback belongs
 // to the menu bar status item, so a refresh neither toasts nor writes status
 // text into the window; the item and an open popover follow the refresh as it
-// starts and returns. An offline window offers no refresh at all.
+// starts and returns. The window's own refresh faces gate on offline through
+// refreshDisabledReason; the status popover's Retry stays available and reaches
+// this path so an offline reader still has a working next action.
 func (w *Window) runRefresh(force bool) {
-	if w.app.Busy || w.offline || w.app.refreshBlocked(time.Now()) {
+	if w.app.Busy || w.app.refreshBlocked(time.Now()) {
 		return
 	}
 	// The refresh runs under a context the content pane can cancel while it
@@ -410,7 +412,7 @@ func (w *Window) errorPane(c *ui.Context, t mui.Tokens, in mui.PaneInput) {
 	disabled, tooltip := w.refreshDisabledReason()
 	mui.ErrorPane(c, t, mui.ErrorSpec{
 		Key:            "pane-error",
-		Cause:          refreshErrorCause(message, in.Online),
+		Cause:          refreshErrorCause(message),
 		Reason:         reason,
 		ActionDisabled: disabled,
 		ActionTooltip:  tooltip,
@@ -419,11 +421,11 @@ func (w *Window) errorPane(c *ui.Context, t mui.Tokens, in mui.PaneInput) {
 }
 
 // refreshErrorCause tells the error copy why the refresh failed, using the
-// same reading of the stored message as the status surface.
-func refreshErrorCause(message string, online bool) mui.ErrorCause {
+// same reading of the stored message as the status surface. The offline state
+// is never an error cause: the pane shows its own offline state whenever the
+// library is empty and offline, so an error pane is always online.
+func refreshErrorCause(message string) mui.ErrorCause {
 	switch {
-	case !online:
-		return mui.CauseOffline
 	case rejectedKey(message):
 		return mui.CauseRejectedKey
 	case strings.HasPrefix(message, "quota paused"):

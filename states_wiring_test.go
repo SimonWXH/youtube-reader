@@ -344,18 +344,16 @@ func TestRefreshErrorCause(t *testing.T) {
 	tests := []struct {
 		name    string
 		message string
-		online  bool
 		want    mui.ErrorCause
 	}{
-		{"offline", "dial tcp: no route to host", false, mui.CauseOffline},
-		{"rejected key", "Error 400: API key not valid", true, mui.CauseRejectedKey},
-		{"quota", "quota paused until 2026-03-02T14:32:00Z", true, mui.CauseQuota},
-		{"connection", "dial tcp: no route to host", true, mui.CauseConnection},
+		{"rejected key", "Error 400: API key not valid", mui.CauseRejectedKey},
+		{"quota", "quota paused until 2026-03-02T14:32:00Z", mui.CauseQuota},
+		{"connection", "dial tcp: no route to host", mui.CauseConnection},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := refreshErrorCause(tt.message, tt.online); got != tt.want {
-				t.Fatalf("refreshErrorCause(%q, %v) = %v, want %v", tt.message, tt.online, got, tt.want)
+			if got := refreshErrorCause(tt.message); got != tt.want {
+				t.Fatalf("refreshErrorCause(%q) = %v, want %v", tt.message, got, tt.want)
 			}
 		})
 	}
