@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1020,14 +1024,17 @@ func TestSidebarChannelRowUsesItsOwnMetrics(t *testing.T) {
 	}
 }
 
-// TestChannelAvatarURLReachesTheSidebarRow proves F-03 from a refreshed
-// channel's stored URL down to the sidebar: a real image is drawn in the
-// channel's row instead of a monogram, and the row reserves the 24 pt slot.
-func TestChannelAvatarURLReachesTheSidebarRow(t *testing.T) {
-	// A tiny PNG served locally makes the avatar a real, loadable image.
+// TestChannelAvatarShowsLoadedImageAndFallsBack proves F-03 from a stored
+// avatar URL down to the sidebar row. With a loadable picture the row draws
+// that picture in the 24 pt slot; with a failed (or absent) URL it draws the
+// monogram instead of a blank disc. The failure path is compared against a
+// no-URL render, which is the defined monogram behaviour.
+func TestChannelAvatarShowsLoadedImageAndFallsBack(t *testing.T) {
+	// A tiny solid-colour PNG served locally makes the avatar a real,
+	// loadable image whose centre pixel is known independently of the app.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
-		w.Write([]byte{137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 8, 215, 99, 248, 207, 192, 240, 31, 0, 5, 0, 1, 255, 233, 131, 138, 167, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130})
+		w.Write(pngAvatar(t, color.RGBA{12, 200, 34, 255}))
 	}))
 	defer srv.Close()
 
@@ -1036,23 +1043,81 @@ func TestChannelAvatarURLReachesTheSidebarRow(t *testing.T) {
 	a.Sync.Groups["group-a"] = a.Groups[0]
 	a.Channels = []core.Channel{{ID: "ch-a", Title: "Alpha channel", AvatarURL: srv.URL + "/avatar.png"}}
 	a.Sync.Channels["ch-a"] = a.Channels[0]
-	tt := sidebarTester(t, a)
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 808)
+	tt.Frame()
 
+	// The picture arrives asynchronously; keep rendering until the avatar's
+	// slot shows the picture's green rather than the neutral placeholder.
 	row := rowBox(t, tt, "Alpha channel")
-	// With a URL ChannelAvatar creates an image element at the 24 pt slot,
-	// where the monogram fallback instead paints a letter into a coloured
-	// disc. Compare the two renders at the slot's centre to prove the URL is
-	// what the row draws.
-	withURL := tt.Image().RGBAAt(int(row.X+14), int(row.Y+row.H/2))
+	center := func(img *image.RGBA) color.RGBA {
+		return img.RGBAAt(int(row.X+mui.SidebarChannelAvatar/2), int(row.Y+row.H/2))
+	}
+	loaded := false
+	for range 100 {
+		tt.Frame()
+		c := center(tt.Image())
+		if c.G > 150 && c.R < 80 && c.B < 80 {
+			loaded = true
+			break
+		}
+	}
+	if !loaded {
+		t.Fatalf("the avatar slot never showed the loaded image: %v", center(tt.Image()))
+	}
 
+	// A failed URL must fall back to the same monogram an absent URL draws,
+	// not a blank disc. Compare a patch of the slot against a render with no
+	// URL at all: that is the defined monogram behaviour, so equality proves
+	// the failure path reaches it.
+	a.Channels[0].AvatarURL = "http://127.0.0.1:1/avatar.png"
+	a.Sync.Channels["ch-a"] = a.Channels[0]
+	tt = ui.NewTester(w.view, 1280, 808)
+	tt.Frame()
+	failedSlot := slotPixels(t, tt, row)
 	a.Channels[0].AvatarURL = ""
 	a.Sync.Channels["ch-a"] = a.Channels[0]
-	tt = sidebarTester(t, a)
-	withoutURL := tt.Image().RGBAAt(int(row.X+14), int(row.Y+row.H/2))
-	if withURL == withoutURL {
-		t.Fatalf("the row renders identically with and without an avatar URL: %v", withURL)
+	tt = ui.NewTester(w.view, 1280, 808)
+	tt.Frame()
+	monogramSlot := slotPixels(t, tt, row)
+	if failedSlot != monogramSlot {
+		t.Fatalf("a failed avatar URL did not render the monogram: %v vs %v", failedSlot, monogramSlot)
 	}
 	if got := countText(tt, "Alpha channel"); got != 1 {
-		t.Fatalf("monogram fallback lost its channel row: %q", tt.Texts())
+		t.Fatalf("the avatar fallback lost its channel row: %q", tt.Texts())
 	}
+}
+
+// slotPixels hashes the rendered pixels of the avatar slot in row, so two
+// renders can be compared for having drawn the same picture or monogram.
+func slotPixels(t *testing.T, tt *ui.Tester, row ui.Rect) uint32 {
+	t.Helper()
+	img := tt.Image()
+	const n = 12
+	midX, midY := int(row.X+mui.SidebarChannelAvatar/2), int(row.Y+row.H/2)
+	h := uint32(2166136261)
+	for dy := -n; dy <= n; dy++ {
+		for dx := -n; dx <= n; dx++ {
+			c := img.RGBAAt(midX+dx, midY+dy)
+			h = (h ^ uint32(c.R) ^ uint32(c.G)<<8 ^ uint32(c.B)<<16) * 16777619
+		}
+	}
+	return h
+}
+
+// pngAvatar encodes a solid square test image, the picture the avatar test
+// serves for its loadable URL.
+func pngAvatar(t *testing.T, c color.RGBA) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
+	for y := range 8 {
+		for x := range 8 {
+			img.SetRGBA(x, y, c)
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }

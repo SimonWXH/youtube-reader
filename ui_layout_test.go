@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"image/color"
 	"math"
 	"testing"
 	"time"
@@ -397,8 +398,14 @@ func TestGridFillsPaneAtFourColumns(t *testing.T) {
 	if fifth, ok := tt.Find("Video 4"); ok && fifth.Y-first.Y < 100 {
 		t.Fatalf("a fifth card shares the first row at y=%v; the row starts at %v", fifth.Y, first.Y)
 	}
-	if right := fourth.X + metrics.Width; right > 1920-16+1.5 {
-		t.Fatalf("the last card ends at %v; want the trailing margin inside %v", right, 1920-16-gridScrollbarGap)
+	// Independent oracle: the label box starts 8 pt inside the card, so the
+	// card's trailing edge is fourth.X - 8 + card width. The centre pane
+	// ends at the window edge; after the 16 pt grid padding and the 8 pt
+	// scrollbar clearance, the last card must end at 1920 - 16 - 8 = 1896.
+	const textInset, rightPadding float32 = 8, 16
+	wantRight := float32(1920) - rightPadding - gridScrollbarGap
+	if right := fourth.X - textInset + metrics.Width; abs(right-wantRight) > 1.5 {
+		t.Fatalf("the last card ends at %v; want the scrollbar clearance at %v", right, wantRight)
 	}
 }
 
@@ -626,15 +633,74 @@ func TestGridFocusFollowsMovedSelection(t *testing.T) {
 	}
 }
 
-// TestScrollSurfacesReserveBottomInset checks F-05: the three scrolling
-// surfaces share one bottom inset so the last row, last card and detail
-// action clear the window's bottom edge.
+// TestScrollSurfacesReserveBottomInset checks F-05 through the rendered
+// window: at the minimum height the three scrolling surfaces must lay their
+// last item out short of the window's bottom edge by at least the shared
+// inset, so nothing is clipped there.
 func TestScrollSurfacesReserveBottomInset(t *testing.T) {
-	if mui.ScrollBottomInset < 12 {
-		t.Fatalf("ScrollBottomInset = %v; too small to clear the window edge", mui.ScrollBottomInset)
+	const h float32 = 640
+	videos := make([]core.Video, 24)
+	for i := range videos {
+		videos[i] = core.Video{
+			ID:           fmt.Sprintf("video-%d", i),
+			Title:        fmt.Sprintf("Video %d", i),
+			ChannelID:    "ch-a",
+			ChannelTitle: "Alpha channel",
+			PublishedAt:  time.Now().Add(-time.Duration(i) * time.Hour).UTC().Format(time.RFC3339),
+		}
 	}
-	if gridBottomInset != mui.ScrollBottomInset {
-		t.Fatalf("grid bottom inset %v != shared %v", gridBottomInset, mui.ScrollBottomInset)
+	a := sidebarTestApp(t, true)
+	a.Channels = append(a.Channels, core.Channel{ID: "ch-lone", Title: "Lone channel"})
+	a.Sync.Channels["ch-lone"] = a.Channels[len(a.Channels)-1]
+	a.Videos = videos
+	a.SelectedVideoID = videos[0].ID
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 960, int(h))
+	tt.Frame()
+	tt.Advance(300 * time.Millisecond)
+
+	// Scroll every surface to its end with pointer scrolls, then check the
+	// last item's visible edge sits above the reserved bottom inset.
+	scrollToEnd := func(x, y float32) {
+		for range 60 {
+			tt.Scroll(x, y, 0, 400)
+		}
+	}
+	check := func(label string, r ui.Rect) {
+		t.Helper()
+		if r.Y+r.H > h+0.5 {
+			t.Fatalf("%s ends at %v, past the %v window bottom", label, r.Y+r.H, h)
+		}
+		if gap := h - (r.Y + r.H); gap < mui.ScrollBottomInset-1.5 {
+			t.Fatalf("%s leaves only %v below it; want >= the %v shared inset", label, gap, mui.ScrollBottomInset)
+		}
+	}
+	// Sidebar: scroll inside its column, then check the last ungrouped row.
+	scrollToEnd(120, 300)
+	lastSidebar, ok := tt.Find("Lone channel")
+	if !ok {
+		t.Fatalf("sidebar's last row is missing: %q", tt.Texts())
+	}
+	check("sidebar last row", lastSidebar)
+	// Grid: scroll inside the centre pane, then check the last card's title.
+	// At 960 pt with the detail open the grid spans roughly x 221..541.
+	scrollToEnd(400, 300)
+	lastCard, ok := tt.Find(fmt.Sprintf("Video %d", len(videos)-1))
+	if !ok {
+		t.Fatalf("grid's last card is missing: %q", tt.Texts())
+	}
+	check("grid last card", lastCard)
+	// Detail: its actions are in a fixed column under the scroll body; the
+	// bottom action's box must end short of the window bottom by the inset.
+	action, ok := tt.Find("Copy link")
+	if !ok {
+		t.Fatalf("detail's bottom action is missing: %q", tt.Texts())
+	}
+	if action.Y+action.H > h+0.5 {
+		t.Fatalf("detail bottom action ends at %v, past the %v window bottom", action.Y+action.H, h)
+	}
+	if gap := h - (action.Y + action.H); gap < mui.ScrollBottomInset-1.5 {
+		t.Fatalf("detail leaves only %v below its bottom action; want >= %v", gap, mui.ScrollBottomInset)
 	}
 }
 
@@ -652,7 +718,7 @@ func TestMinimumHeightLayoutKeepsControlsVisible(t *testing.T) {
 			PublishedAt:  time.Now().Add(-time.Duration(i) * time.Hour).UTC().Format(time.RFC3339),
 		}
 	}
-	a := sidebarTestApp(t, false)
+	a := sidebarTestApp(t, true)
 	a.Channels = append(a.Channels, core.Channel{ID: "ch-lone", Title: "Lone channel"})
 	a.Sync.Channels["ch-lone"] = a.Channels[len(a.Channels)-1]
 	a.Videos = videos
@@ -662,13 +728,14 @@ func TestMinimumHeightLayoutKeepsControlsVisible(t *testing.T) {
 	tt.Frame()
 	tt.Advance(300 * time.Millisecond) // finish the detail pane's width transition
 
-	for _, label := range []string{"Alpha channel", "Lone channel"} {
-		r, ok := tt.Find(label)
-		if !ok {
-			t.Fatalf("minimum height: missing sidebar row %q: %q", label, tt.Texts())
+	for _, name := range []string{"Alpha channel", "Lone channel"} {
+		boxes := sidebarRowBoxes(tt, name)
+		if len(boxes) == 0 {
+			t.Fatalf("minimum height: missing sidebar row %q: %q", name, tt.Texts())
 		}
+		r := boxes[0]
 		if r.Y < 0 || r.Y+r.H > 640 {
-			t.Fatalf("minimum height: sidebar row %q at %v is clipped", label, r)
+			t.Fatalf("minimum height: sidebar row %q at %v is clipped", name, r)
 		}
 	}
 	for _, label := range []string{"Open on YouTube…", "Copy link", "Favorite"} {
@@ -685,30 +752,97 @@ func TestMinimumHeightLayoutKeepsControlsVisible(t *testing.T) {
 	}
 }
 
-// TestGridScrollbarTrailingEdge documents F-06's geometry: the vertical bar
-// is inset from the trailing edge of the centre pane by gridScrollbarGap,
-// beside the detail divider, and the cards end before that gap. The headless
-// tester does not expose scrollbar geometry, so the card-edge arithmetic and
-// the stable helper below pin the placement; the visual check is manual.
+// TestGridScrollbarTrailingEdge checks F-06 through the rendered frame: the
+// grid's vertical scrollbar sits at the centre pane's trailing edge and does
+// not move with the column setting. A test-only scrollbar colour makes the
+// otherwise translucent bar measurable in the captured image; the expected
+// behaviour comes from the board's requirement that the bar track the pane.
 func TestGridScrollbarTrailingEdge(t *testing.T) {
-	const pane float32 = 1280 - 260 - 1
-	const leftEdge float32 = 260 + 1
-	metrics := gridCardMetrics(pane-2*16-gridScrollbarGap, 8, defaultMaxGridColumns)
-	rightEdge := leftEdge + 16 + metrics.gridWidth(8)
-	if abs((leftEdge+pane-16)-rightEdge-gridScrollbarGap) > 0.01 {
-		t.Fatalf("space between the last card and the pane edge = %v; want the %v scrollbar gap", (leftEdge+pane-16)-rightEdge, gridScrollbarGap)
-	}
-	// The scrollbar position is derived from the pane's trailing edge, not
-	// the detail pane's width or the column count, so it cannot move when
-	// either changes.
-	for _, columns := range []int{minMaxGridColumns, 4, maxMaxGridColumns} {
-		for _, detailShown := range []float32{0, defaultDetailsWidth, maxDetailsWidth} {
-			gridRight := 1280 - 260 - 1 - detailShown
-			want := gridRight - gridScrollbarGap
-			if want >= gridRight || want <= gridRight-2*gridScrollbarGap {
-				t.Fatalf("columns %d detail %v: scrollbar at %v is not beside the divider at %v", columns, detailShown, want, gridRight)
-			}
-			_ = columns
+	const windowWidth, windowHeight float32 = 1280, 808
+	trackColor := color.RGBA{211, 31, 47, 255}
+	videos := make([]core.Video, 120)
+	for i := range videos {
+		videos[i] = core.Video{
+			ID:           fmt.Sprintf("video-%d", i),
+			Title:        fmt.Sprintf("Video %d", i),
+			ChannelID:    "ch-1",
+			ChannelTitle: "Channel",
+			PublishedAt:  time.Now().Add(-time.Duration(i) * time.Hour).UTC().Format(time.RFC3339),
 		}
+	}
+	a := &App{
+		Dir:      t.TempDir(),
+		Selected: "all",
+		Settings: core.Settings{
+			APIKey: "test", ExpandedGroups: map[string]bool{},
+			MaxGridColumns: defaultMaxGridColumns, RefreshMinutes: 60,
+		},
+		Sync: core.SyncState{
+			Favorites: map[string]core.FavoriteRecord{}, ReadStates: map[string]map[string]core.ReadRecord{},
+			Groups: map[string]core.ChannelGroup{}, Channels: map[string]core.Channel{"ch-1": {ID: "ch-1", Title: "Channel"}},
+		},
+		Channels: []core.Channel{{ID: "ch-1", Title: "Channel"}},
+		Videos:   videos,
+	}
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(func(c *ui.Context) {
+		th := *c.Theme()
+		th.ScrollbarStyle = ui.ScrollbarStyle{TrackWidth: 12, ThumbWidth: 6, Track: ui.RGBA(trackColor.R, trackColor.G, trackColor.B, float32(trackColor.A)/255), Thumb: ui.RGBA(trackColor.R, trackColor.G, trackColor.B, float32(trackColor.A)/255)}
+		c.SetTheme(&th)
+		w.shell(c)
+	}, int(windowWidth), int(windowHeight))
+	tt.Frame()
+	// Scrollbars paint only while the pointer is over the scroll container.
+	// Move into the grid's trailing region so its vertical bar shows.
+	tt.Move(600, 300)
+
+	// Locate the track's painted column by colour. The bar must sit at the
+	// trailing edge of the centre pane: moving the pointer over the grid
+	// reveals it, and its position must not depend on the column setting.
+	trackRight := func() int {
+		t.Helper()
+		img := tt.Image()
+		maxX := -1
+		for x := 0; x < int(windowWidth); x++ {
+			for y := 200; y < 600; y++ {
+				c := img.RGBAAt(x, y)
+				if c.R == trackColor.R && c.G == trackColor.G && c.B == trackColor.B {
+					maxX = x
+					break
+				}
+			}
+		}
+		if maxX < 0 {
+			t.Fatalf("no scrollbar track painted in the frame")
+		}
+		return maxX + 1
+	}
+	baseRight := trackRight()
+	if abs(float32(baseRight)-1253) > 2 {
+		t.Fatalf("scrollbar track ends at x=%d; want it at the centre pane's trailing edge near 1253", baseRight)
+	}
+	// Changing the column setting must not move the bar: it is anchored to
+	// the pane, not to the cards.
+	for _, columns := range []int{minMaxGridColumns, maxMaxGridColumns} {
+		a.Settings.MaxGridColumns = columns
+		tt.Frame()
+		tt.Move(600, 300)
+		if got := trackRight(); got != baseRight {
+			t.Fatalf("%d columns moved the scrollbar to x=%d; want x=%d", columns, got, baseRight)
+		}
+	}
+	a.Settings.MaxGridColumns = defaultMaxGridColumns
+	tt.Frame()
+	// The cards must end before the bar's leading edge. The last card's
+	// label box is inset 8 pt inside the card, so add that back for the
+	// card's right edge.
+	metrics := gridCardMetrics((windowWidth-defaultSidebarWidth-splitDividerWidth())-32-gridScrollbarGap, 8, defaultMaxGridColumns)
+	last, ok := tt.Find(fmt.Sprintf("Video %d", defaultMaxGridColumns-1))
+	if !ok {
+		t.Fatalf("the last card of the first row is missing: %q", tt.Texts())
+	}
+	cardRight := last.X - 8 + metrics.Width
+	if abs(cardRight-float32(baseRight-12)) > 20 {
+		t.Fatalf("last card ends at %v, far from the scrollbar near x=%d", cardRight, baseRight-12)
 	}
 }
