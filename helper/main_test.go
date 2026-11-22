@@ -43,6 +43,12 @@ func TestHelperRunDryRunWritesAtomicHandoff(t *testing.T) {
 
 func TestHelperRunNoAPIKeyDoesNotCallNetwork(t *testing.T) {
 	dir := t.TempDir()
+	if err := writeSettings(dir, core.Settings{
+		SyncPath:       filepath.Join(dir, "sync.json"),
+		RefreshMinutes: 60,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	h, err := HelperRun(context.Background(), dir, false, time.Now(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -108,6 +114,39 @@ func TestHelperRunStaleQuotaHistoryDoesNotRearmPause(t *testing.T) {
 		persisted.RecentFailures[0].Message != "backend error" ||
 		persisted.RecentFailures[1].Message != history.Message {
 		t.Fatalf("failures: %+v", persisted.RecentFailures)
+	}
+}
+
+func TestHelperRunManualDoesNotRefresh(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeSettings(dir, core.Settings{
+		SyncPath:       filepath.Join(dir, "sync.json"),
+		RefreshMinutes: 0,
+		APIKey:         "test-key",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	previous := refreshForHelper
+	refreshForHelper = func(context.Context, core.YouTube, core.Settings, core.SyncState, *core.Store, []core.Video, int64, bool, time.Time) core.RefreshResult {
+		t.Error("Manual ran a background refresh")
+		return core.RefreshResult{}
+	}
+	previousNetwork := networkAvailableForHelper
+	networkAvailableForHelper = func(context.Context) bool { return true }
+	t.Cleanup(func() {
+		refreshForHelper = previous
+		networkAvailableForHelper = previousNetwork
+	})
+
+	h, err := HelperRun(context.Background(), dir, false, time.Now(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Result != nil {
+		t.Fatalf("Manual produced a refresh result: %+v", h.Result)
+	}
+	if h.Description == "" {
+		t.Fatal("Manual produced no explanation")
 	}
 }
 

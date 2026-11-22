@@ -615,41 +615,6 @@ func menuLabels(items []*mygo.MenuItem) []string {
 	return labels
 }
 
-// TestSettingsCommandAlwaysOpensThePage checks Settings… is a command, not a
-// toggle: choosing it from the App menu or the overflow menu while the page is
-// open leaves the page open, and its Done button is what closes it.
-func TestSettingsCommandAlwaysOpensThePage(t *testing.T) {
-	w := chromeWindow(t)
-	w.installMenu()
-	app := mygo.App.Menu().Items()[0]
-	settings := menuItemWithLabel(app.Submenu, "Settings…")
-	if settings == nil || settings.Click == nil {
-		t.Fatalf("App menu's Settings… is %+v", settings)
-	}
-	settings.Click(settings, nil)
-	if !w.app.SettingsOpen {
-		t.Fatal("the App menu's Settings… did not open the page")
-	}
-	settings.Click(settings, nil)
-	if !w.app.SettingsOpen {
-		t.Fatal("choosing Settings… again closed the page")
-	}
-
-	tt := ui.NewTester(w.shell, 1280, 808)
-	tt.Frame()
-	for i := 0; i < 2; i++ {
-		if err := tt.Click("More"); err != nil {
-			t.Fatal(err)
-		}
-		if err := tt.ChooseMenuItem("Settings…"); err != nil {
-			t.Fatal(err)
-		}
-		if !w.app.SettingsOpen {
-			t.Fatalf("the overflow menu's Settings… closed the page on press %d", i+1)
-		}
-	}
-}
-
 // TestToolbarRefreshDimsWhileBusy checks the unavailable state the board
 // asks for: the control and the menu command are dimmed, not hidden.
 func TestToolbarRefreshDimsWhileBusy(t *testing.T) {
@@ -768,21 +733,6 @@ func focusedName(tt *ui.Tester) string {
 		}
 	}
 	return ""
-}
-
-// TestSettingsTakesTheWindowTitle checks the toolbar's contextual title and
-// that the settings page replaces the filter strip.
-func TestSettingsTakesTheWindowTitle(t *testing.T) {
-	w := chromeWindow(t)
-	w.app.SettingsOpen = true
-	tt := ui.NewTester(w.shell, 1280, 808)
-	tt.Frame()
-	if !tt.HasText("Settings") {
-		t.Fatalf("toolbar title is not Settings: %q", tt.Texts())
-	}
-	if tt.HasText("All channels") {
-		t.Fatal("filter strip is drawn over the settings page")
-	}
 }
 
 // TestToolbarSidebarHiddenKeepsTheDetailPane checks the hidden sidebar leaves

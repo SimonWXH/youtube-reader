@@ -161,6 +161,15 @@ func TestNextRefreshFollowsIntervalChange(t *testing.T) {
 	if got := nextRow(settings); got != "4 hr" {
 		t.Fatalf("four-hour next refresh = %q, want %q", got, "4 hr")
 	}
+	// Manual is the Settings window's zero interval: nothing is scheduled, so
+	// the popover must not name a next refresh.
+	settings.RefreshMinutes = 0
+	m := deriveStatus(statusInput{Now: now, Online: true, Settings: settings, Channels: 1})
+	for _, d := range m.Details {
+		if d.Label == "Next refresh" {
+			t.Fatalf("Manual showed a next refresh of %q", d.Value)
+		}
+	}
 }
 
 // TestDeriveStatusCopy pins the states' copy and actions to the design board,

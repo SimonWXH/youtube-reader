@@ -3,14 +3,45 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/simon/youtube-reader/core"
 )
+
+// stubYouTube answers the YouTube API endpoints a refresh calls with canned
+// bodies by swapping the default transport, which core.YouTube uses when no
+// client is set. The returned func restores the original transport.
+func stubYouTube(t *testing.T, responses map[string]string) func() {
+	t.Helper()
+	original := http.DefaultTransport
+	http.DefaultTransport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		for path, body := range responses {
+			if strings.Contains(req.URL.Path, path) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(body)),
+				}, nil
+			}
+		}
+		return nil, fmt.Errorf("unexpected YouTube API path %s", req.URL.Path)
+	})
+	return func() { http.DefaultTransport = original }
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func newTestApp(t *testing.T, dir string) *App {
 	t.Helper()
@@ -201,7 +232,7 @@ func TestRefreshNoopDoesNotAdvanceLastRefresh(t *testing.T) {
 	a.Settings.APIKey = "local-key"
 	a.Settings.LastRefresh = last
 	a.Settings.RefreshMinutes = 240
-	outcome := a.Refresh(false)
+	outcome := a.Refresh(false, a.refreshSnapshot())
 	if outcome.Changed || outcome.Description != "Up to date" {
 		t.Fatalf("outcome: %+v", outcome)
 	}
@@ -235,7 +266,7 @@ func TestRefreshBlockedKeepsRecordedFailures(t *testing.T) {
 			}
 			a.Settings.RecentFailures = []core.RefreshFailure{failure}
 			tc.block(&a.Settings)
-			outcome := a.Refresh(true)
+			outcome := a.Refresh(true, a.refreshSnapshot())
 			if outcome.Changed {
 				t.Fatalf("blocked refresh reported a change: %+v", outcome)
 			}
@@ -322,6 +353,84 @@ func loadTestSettings(t *testing.T, path string) core.Settings {
 		t.Fatal(err)
 	}
 	return settings
+}
+
+// TestRefreshFinishedAppliesRefreshedChannels checks the refreshed channel
+// metadata a real refresh run produced reaches the sync state and the sync
+// file, so the Notifications pane and other devices see the titles YouTube
+// has now. It drives the whole path through RefreshYoutube, whose in-place
+// channel writes must not corrupt the snapshot the writeback guard compares
+// against: a guard fed the refresh's own output would discard every record
+// the refresh updated.
+func TestRefreshFinishedAppliesRefreshedChannels(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+	a.Settings.APIKey = "test-key"
+	a.Sync.Channels["ch-1"] = core.Channel{ID: "ch-1", Title: "Old title", UpdatedAt: 10}
+	restore := stubYouTube(t, map[string]string{
+		"/channels":      `{"items":[{"id":"ch-1","snippet":{"title":"New title"},"contentDetails":{"relatedPlaylists":{"uploads":"uploads-1"}}}]}`,
+		"/playlistItems": `{"items":[]}`,
+	})
+	defer restore()
+	w := &Window{app: a, selectedIndex: new(int)}
+	snapshot := a.refreshSnapshot()
+	outcome := a.Refresh(true, snapshot)
+	if !outcome.Changed {
+		t.Fatalf("refresh did not run: %+v", outcome)
+	}
+	w.refreshFinished(outcome, snapshot)
+	if got := a.Sync.Channels["ch-1"].Title; got != "New title" {
+		t.Fatalf("sync state kept stale title %q", got)
+	}
+	saved, err := core.LoadSyncWithConflicts(a.Settings.SyncPath, a.DeviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := saved.Channels["ch-1"].Title; got != "New title" {
+		t.Fatalf("sync file kept stale title %q", got)
+	}
+}
+
+// TestRefreshFinishedKeepsNewerImportedChannel checks a refresh that began
+// before an OPML import finished does not write its stale snapshot back over
+// the import's channel record, in memory or in the sync file, whether the
+// import's stamp is newer than the refresh's or landed inside the window the
+// refresh stamped later.
+func TestRefreshFinishedKeepsNewerImportedChannel(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		refreshStamp int64
+		importStamp  int64
+	}{
+		{"import stamped after the refresh", 20, 30},
+		{"import stamped before the refresh", 30, 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			a := newTestApp(t, dir)
+			defer a.Close()
+			w := &Window{app: a, selectedIndex: new(int)}
+			a.Sync.Channels["ch-1"] = core.Channel{ID: "ch-1", Title: "Old title", UpdatedAt: 10}
+			snapshot := a.refreshSnapshot()
+			a.Sync.Channels["ch-1"] = core.Channel{ID: "ch-1", Title: "Imported title", GroupIDs: []string{"g1", "g2"}, UpdatedAt: tc.importStamp}
+			w.refreshFinished(RefreshOutcome{
+				Changed:  true,
+				Channels: []core.Channel{{ID: "ch-1", Title: "Fetched title", GroupIDs: []string{"g1"}, UpdatedAt: tc.refreshStamp}},
+			}, snapshot)
+			stored, ok := a.Sync.Channels["ch-1"]
+			if !ok || stored.Title != "Imported title" || !slices.Equal(stored.GroupIDs, []string{"g1", "g2"}) {
+				t.Fatalf("refresh rolled back the import: %+v", stored)
+			}
+			saved, err := core.LoadSyncWithConflicts(a.Settings.SyncPath, a.DeviceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := saved.Channels["ch-1"]; got.Title != "Imported title" || !slices.Equal(got.GroupIDs, []string{"g1", "g2"}) {
+				t.Fatalf("sync file rolled back the import: %+v", got)
+			}
+		})
+	}
 }
 
 func TestDrainQueuedSyncWritesAfterHelper(t *testing.T) {

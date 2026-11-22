@@ -262,8 +262,12 @@ func deriveStatus(in statusInput) status {
 	default:
 		m.Title = "Up to date"
 		m.Body = "Last refresh " + relativeTime(in.Now, last)
-		next := last.Add(time.Duration(settings.RefreshMinutes) * time.Minute)
-		m.Details = append(m.Details, statusDetail{Symbol: "clock", Label: "Next refresh", Value: remainingTime(in.Now, next)})
+		// Manual schedules no automatic refresh, so naming a next one would
+		// promise a run that never comes.
+		if settings.RefreshMinutes > 0 {
+			next := last.Add(time.Duration(settings.RefreshMinutes) * time.Minute)
+			m.Details = append(m.Details, statusDetail{Symbol: "clock", Label: "Next refresh", Value: remainingTime(in.Now, next)})
+		}
 		m.Details = append(m.Details, statusDetail{Symbol: "arrow.triangle.2.circlepath", Label: "Channels", Value: fmt.Sprintf("%d", in.Channels)})
 		m.Details = append(m.Details, statusDetail{Symbol: "play.rectangle", Label: "New videos today", Value: fmt.Sprintf("%d", videosToday(in.Videos, in.Now))})
 	}
@@ -717,7 +721,7 @@ func (s *statusBar) actions() statusActions {
 		},
 		settings: func() {
 			s.close()
-			s.w.openSettings()
+			s.w.openSettingsWindow()
 		},
 	}
 }
@@ -873,19 +877,7 @@ func (s *statusBar) raisePaused(until time.Time) {
 			CancelButton:  1,
 		})
 		if err == nil && result.Button == 0 {
-			mygo.RunOnMain(s.w.openSettings)
+			mygo.RunOnMain(s.w.openSettingsWindow)
 		}
 	}()
-}
-
-// openSettings brings the app's settings forward in the main window, the action
-// the popover and its alert share.
-func (w *Window) openSettings() {
-	w.app.SettingsOpen = true
-	if w.window == nil {
-		return
-	}
-	w.window.Show()
-	w.window.Focus()
-	w.window.Invalidate()
 }

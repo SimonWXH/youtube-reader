@@ -8,3 +8,6 @@ DerivedData/
 dist/
 .mygo/
 resources/darwin/ytreader-helper
+
+# Throwaway E2E run home directories
+.e2e-*/

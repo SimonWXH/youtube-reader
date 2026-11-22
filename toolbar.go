@@ -7,6 +7,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/simon/youtube-reader/core"
 	mui "github.com/simon/youtube-reader/ui"
 )
 
@@ -196,7 +197,7 @@ func (w *Window) overflowMenu(m *ui.Menu) {
 		w.runRefresh(true)
 	}
 	if m.Item("Settings…").Shortcut(ui.Cmd, ui.KeyComma).Chosen() {
-		w.openSettings()
+		w.openSettingsWindow()
 	}
 	m.Separator()
 	if m.Item("Import OPML…").Chosen() {
@@ -213,9 +214,14 @@ func (w *Window) overflowMenu(m *ui.Menu) {
 func (w *Window) exportFavorites(c *ui.Context) {
 	if err := w.app.ExportFavorites(); err != nil {
 		w.toast(c, "Export failed: "+err.Error(), true)
-	} else {
-		w.toast(c, "Favorites exported", false)
+		return
 	}
+	w.saveSettings(func(s *core.Settings) bool {
+		s.LastFavoritesExport = core.FormatRFC3339(time.Now())
+		return true
+	})
+	w.toast(c, "Favorites exported", false)
+	w.refreshSettingsWindow()
 }
 
 // contentStrip is the 44 pt list filter: the channel drop-down, the search
@@ -357,9 +363,6 @@ func fitFilterStrip(inner, checkbox, checkboxIcon, count float32) (channel, sear
 }
 
 func (w *Window) title() string {
-	if w.app.SettingsOpen {
-		return "Settings"
-	}
 	switch {
 	case w.app.Selected == "all":
 		return "All videos"
@@ -383,7 +386,7 @@ func (w *Window) title() string {
 // a shortcut surface and never the only way to run a command.
 func (w *Window) installMenu() {
 	settings := &mygo.MenuItem{Label: "Settings…", Accelerator: "Cmd+,", Click: func(*mygo.MenuItem, *mygo.Window) {
-		w.openSettings()
+		w.openSettingsWindow()
 	}}
 	w.menuSidebar = &mygo.MenuItem{Label: w.sidebarMenuLabel(), Accelerator: "Ctrl+Cmd+S", Click: func(*mygo.MenuItem, *mygo.Window) {
 		w.setSidebarHidden(!w.sidebarHidden)

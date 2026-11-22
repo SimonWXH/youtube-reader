@@ -97,6 +97,9 @@ type Window struct {
 	// them began, so giving that drag up puts the groups back as they were.
 	// nil when no group drag has moved the list.
 	groupDragOrder []string
+
+	// settingsWindow is the standalone Settings window and its view state.
+	settingsWindow settingsWindow
 }
 
 func (w *Window) toast(c *ui.Context, msg string, isError bool) {
@@ -135,34 +138,40 @@ func (w *Window) runRefresh(force bool) {
 		w.status.refresh()
 		w.status.invalidate()
 	}
+	snapshot := w.app.refreshSnapshot()
 	go func() {
-		outcome := w.app.Refresh(force)
-		if w.window == nil {
-			w.app.Busy = false
-			w.syncRefreshMenu()
-			if w.status != nil {
-				w.status.refresh()
-			}
-			return
+		outcome := w.app.Refresh(force, snapshot)
+		if w.window != nil {
+			w.window.Update(func() { w.refreshFinished(outcome, snapshot) })
+		} else {
+			w.refreshFinished(outcome, snapshot)
 		}
-		w.window.Update(func() {
-			w.app.Busy = false
-			w.syncRefreshMenu()
-			if w.status != nil {
-				w.status.started = time.Time{}
-				w.status.refresh()
-				w.status.invalidate()
-			}
-			if outcome.Changed {
-				for _, n := range outcome.Notified {
-					postNotification(n)
-				}
-			}
-		})
 	}()
 }
 
-func postNotification(plan NotificationPlan) {
+// refreshFinished returns the window and the status item to idle and applies
+// what the refresh brought: channel metadata reaches the sync state, and the
+// views reload. Every completion path, with or without a window, ends here.
+func (w *Window) refreshFinished(outcome RefreshOutcome, snapshot refreshSnapshot) {
+	w.app.Busy = false
+	w.syncRefreshMenu()
+	if w.status != nil {
+		w.status.started = time.Time{}
+		w.status.refresh()
+		w.status.invalidate()
+	}
+	if outcome.Changed {
+		w.app.applyRefreshedChannels(outcome.Channels, snapshot.state.Channels)
+		for _, n := range outcome.Notified {
+			w.postNotification(n)
+		}
+		_ = w.app.reload()
+	}
+}
+
+// postNotification shows one local notification and reports what the system
+// said, so a refusal can be recorded for the Notifications pane.
+func postNotification(plan NotificationPlan) error {
 	body := fmt.Sprintf("%d new video%s", plan.Count, plural(plan.Count))
 	if plan.NewestTitle != "" {
 		body += "\n" + plan.NewestTitle
@@ -175,7 +184,9 @@ func postNotification(plan NotificationPlan) {
 	})
 	if err := n.Show(); err != nil {
 		log.Printf("notification: %v", err)
+		return err
 	}
+	return nil
 }
 
 func registerNotificationClick(app *App) (off func()) {
@@ -214,15 +225,9 @@ func plural(n int) string {
 
 func (w *Window) content(c *ui.Context, t mui.Tokens) {
 	ui.Column(c).Grow(1).MinWidth(0).Background(t.App).Children(func() {
-		if !w.app.SettingsOpen {
-			w.contentStrip(c, t)
-		}
-		if w.app.SettingsOpen {
-			w.settings(c, t)
-			return
-		}
+		w.contentStrip(c, t)
 		if w.app.settingsSnapshot().APIKey == "" {
-			w.emptyState(c, t, "Set up YouTube Reader", "Add a YouTube Data API key in Settings to start following channels.", "setup-settings", "Open Settings", mui.Default, func(*ui.Context) { w.app.SettingsOpen = true })
+			w.emptyState(c, t, "Set up YouTube Reader", "Add a YouTube Data API key in Settings to start following channels.", "setup-settings", "Open Settings", mui.Default, func(*ui.Context) { w.openSettingsWindow() })
 			return
 		}
 		if len(w.app.Sync.Channels) == 0 {
