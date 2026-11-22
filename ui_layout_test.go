@@ -851,16 +851,35 @@ func TestGridScrollbarTrailingEdge(t *testing.T) {
 			t.Fatalf("%d columns moved the scrollbar to %d..%d; want %d..%d", columns, left, right, trackLeft, trackRightX)
 		}
 	}
-	// The bar follows the centre pane when the detail pane opens, but must
-	// still sit clear of the cards at its new trailing edge.
+	// The bar follows the centre pane when the detail pane opens: it keeps
+	// its width, moves left with the pane, and still leaves the 8 pt clearance
+	// from the trailing card at its new edge. The card's right edge comes from
+	// the rendered step, as before, but using the open pane's column count.
 	a.Settings.MaxGridColumns = defaultMaxGridColumns
 	tt.Frame()
 	a.SelectedVideoID = "video-0"
 	tt.Frame()
 	tt.Advance(300 * time.Millisecond)
+	// Put the pointer inside the narrower centre pane so its bar paints.
 	tt.Move(400, 300)
 	openLeft, openRight := trackXs()
 	if openRight-openLeft != 12 {
 		t.Fatalf("with the detail open the bar is %d pt wide; want 12", openRight-openLeft)
+	}
+	if want := float32(openRight); want >= float32(trackRightX) {
+		t.Fatalf("with the detail open the bar ends at %d; want it left of %d", openRight, trackRightX)
+	}
+	openFirst, ok := tt.Find("Video 0")
+	if !ok {
+		t.Fatalf("with the detail open the first card is missing: %q", tt.Texts())
+	}
+	openLast, ok := tt.Find(fmt.Sprintf("Video %d", defaultMaxGridColumns-1))
+	if !ok {
+		t.Fatalf("with the detail open the last card of the first row is missing: %q", tt.Texts())
+	}
+	openStep := (openLast.X - openFirst.X) / float32(defaultMaxGridColumns-1)
+	openCardRight := openLast.X - 8 + openStep - 8
+	if gap := float32(openLeft) - openCardRight; abs(gap-gridScrollbarGap) > 3 {
+		t.Fatalf("with the detail open the last card ends at %v and the bar starts at %d: gap %v; want %v", openCardRight, openLeft, gap, gridScrollbarGap)
 	}
 }
