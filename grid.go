@@ -84,19 +84,6 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 	gap := c.Theme().Space(2)
 	padding := mui.Space(4)
 	ui.Column(c).Grow(1).Padding(padding - gridDecorInset).Children(func() {
-		if len(videos) == 0 {
-			if w.app.SelectedVideoID != "" {
-				w.app.SelectedVideoID = ""
-			}
-			none := -1
-			w.selectedIndex = &none
-			state := mui.Default
-			if w.app.refreshBlocked(time.Now()) {
-				state = mui.Disabled
-			}
-			w.emptyState(c, t, "Nothing here yet", "Try another filter or refresh your subscriptions.", "empty-refresh", "Refresh now", state, func(c *ui.Context) { w.runRefresh(true) })
-			return
-		}
 		target := -1
 		if w.app.SelectedVideoID != "" {
 			for i := range videos {

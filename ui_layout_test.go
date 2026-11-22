@@ -439,6 +439,28 @@ func TestGridRendersCeilingWhenCapBinds(t *testing.T) {
 	}
 }
 
+// TestLoadingSkeletonStartsAtGridOrigin renders the first load in a 1920 pt
+// window, where the five-column cap leaves a trailing margin: the skeleton's
+// cards must start at the grid's leading padding instead of being centred in
+// the pane and snapping left when the real cards arrive.
+func TestLoadingSkeletonStartsAtGridOrigin(t *testing.T) {
+	a := statesTestApp(t)
+	a.Videos = nil
+	a.Busy = true
+	w := &Window{app: a, selectedIndex: new(int)}
+	w.cancelRefresh = func() {}
+	tt := ui.NewTester(w.view, 1920, 840)
+	tt.Frame()
+
+	skeleton, ok := tt.Find(mui.LoadingGridLabel)
+	if !ok {
+		t.Fatalf("the first load draws no skeleton: %q", tt.Texts())
+	}
+	if want := defaultSidebarWidth + splitDividerWidth() + 16; abs(skeleton.X-want) > 1.5 {
+		t.Fatalf("the skeleton starts at %v; want the grid's 16 pt leading padding at %v", skeleton.X, want)
+	}
+}
+
 // TestGridCardFitsFrameworkColumns guards the link between our metrics and
 // ui.GridView, which counts its columns from the width and minimum width it is
 // given: the two must agree or the cards and their gap change under the design.

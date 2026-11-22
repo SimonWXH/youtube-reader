@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -82,6 +84,14 @@ type Window struct {
 	menuRefresh *mygo.MenuItem
 	menuSidebar *mygo.MenuItem
 
+	// offline is macOS's network answer, kept by the status surface: the
+	// content pane and the refresh control read it, so no surface asks the
+	// network twice or disagrees with the menu bar item. False means online.
+	offline bool
+	// cancelRefresh ends the refresh in flight, when the pane that has
+	// nothing cached offers Cancel. Nil when no refresh is running.
+	cancelRefresh context.CancelFunc
+
 	grid               ui.GridState
 	gridKeyboardFocus  bool
 	selectedIndex      *int
@@ -123,11 +133,18 @@ func (w *Window) toast(c *ui.Context, msg string, isError bool) {
 // runRefresh starts one refresh off the main thread. Refresh feedback belongs
 // to the menu bar status item, so a refresh neither toasts nor writes status
 // text into the window; the item and an open popover follow the refresh as it
-// starts and returns.
+// starts and returns. The window's own refresh faces gate on offline through
+// refreshDisabledReason; the status popover's Retry stays available and reaches
+// this path so an offline reader still has a working next action.
 func (w *Window) runRefresh(force bool) {
 	if w.app.Busy || w.app.refreshBlocked(time.Now()) {
 		return
 	}
+	// The refresh runs under a context the content pane can cancel while it
+	// shows the initial-load skeleton, which is the only refresh with nothing
+	// on screen to lose.
+	ctx, cancel := context.WithCancel(context.Background())
+	w.cancelRefresh = cancel
 	w.app.Busy = true
 	w.syncRefreshMenu()
 	if w.window != nil {
@@ -140,11 +157,28 @@ func (w *Window) runRefresh(force bool) {
 	}
 	snapshot := w.app.refreshSnapshot()
 	go func() {
-		outcome := w.app.Refresh(force, snapshot)
-		if w.window != nil {
-			w.window.Update(func() { w.refreshFinished(outcome, snapshot) })
-		} else {
+		outcome, cancelled := w.app.RefreshContext(ctx, force, snapshot)
+		cancel()
+		finish := func() {
+			w.cancelRefresh = nil
+			// A cancelled attempt has no result to apply: the reader ended it,
+			// and there is no failure or new content to report.
+			if cancelled {
+				w.app.Busy = false
+				w.syncRefreshMenu()
+				if w.status != nil {
+					w.status.started = time.Time{}
+					w.status.refresh()
+					w.status.invalidate()
+				}
+				return
+			}
 			w.refreshFinished(outcome, snapshot)
+		}
+		if w.window != nil {
+			w.window.Update(finish)
+		} else {
+			finish()
 		}
 	}()
 }
@@ -167,6 +201,15 @@ func (w *Window) refreshFinished(outcome RefreshOutcome, snapshot refreshSnapsho
 		}
 		_ = w.app.reload()
 		w.refreshSettingsWindow()
+	}
+}
+
+// cancelRefreshRun ends the refresh in flight from the pane that has nothing
+// cached to keep. It only cancels: the returning goroutine clears Busy and
+// rebuilds the frame once the attempt has stopped.
+func (w *Window) cancelRefreshRun() {
+	if w.cancelRefresh != nil {
+		w.cancelRefresh()
 	}
 }
 
@@ -227,26 +270,187 @@ func plural(n int) string {
 func (w *Window) content(c *ui.Context, t mui.Tokens) {
 	ui.Column(c).Grow(1).MinWidth(0).Background(t.App).Children(func() {
 		w.contentStrip(c, t)
-		if w.app.settingsSnapshot().APIKey == "" {
-			w.emptyState(c, t, "Set up YouTube Reader", "Add a YouTube Data API key in Settings to start following channels.", "setup-settings", "Open Settings", mui.Default, func(*ui.Context) { w.openSettingsWindow() })
-			return
+		in := w.contentPaneInput()
+		switch mui.ContentPaneState(in) {
+		case mui.PaneLoading:
+			w.loadingPane(c, t)
+		case mui.PaneOffline:
+			mui.OfflinePane(c, t, mui.OfflineSpec{Key: "offline-pane"})
+		case mui.PaneError:
+			w.errorPane(c, t, in)
+		case mui.PaneEmpty:
+			w.emptyPane(c, t, in)
+		default:
+			w.gridArea(c, t)
 		}
-		if len(w.app.Sync.Channels) == 0 {
-			w.emptyState(c, t, "Import your channels", "Choose an OPML file from your Mac to import channel groups.", "setup-import", "Import OPML", mui.Default, w.importOPML)
-			return
-		}
-		w.gridArea(c, t)
 	})
 }
 
-func (w *Window) emptyState(c *ui.Context, t mui.Tokens, title, body, key, label string, state mui.State, action func(*ui.Context)) {
-	ui.Column(c).Grow(1).AlignItems(ui.Center).Center().Gap(20).Padding(32).Children(func() {
-		ui.Column(c).Width(480).AlignItems(ui.Center).Gap(12).Children(func() {
-			ui.Text(c, title).Bold().FontSize(32).FixedLineHeight(38).TextColor(t.Text).TextAlign(ui.Center)
-			ui.Text(c, body).FontSize(15).FixedLineHeight(22).TextColor(t.Muted).TextAlign(ui.Center)
-		})
-		mui.StatefulButton(c, t, key, label, nil, true, state, func() {
-			action(c)
+// contentPaneInput reads the content pane's state from the app. One function
+// builds the input for the pane and its strip, so the empty state, the
+// skeleton, and the toolbar's refresh control never disagree.
+func (w *Window) contentPaneInput() mui.PaneInput {
+	settings := w.app.settingsSnapshot()
+	counts := w.sidebarCounts()
+	in := mui.PaneInput{
+		HasAPIKey:         settings.APIKey != "",
+		ChannelCount:      len(w.app.Sync.Channels),
+		LibraryVideos:     counts.total,
+		DestinationVideos: w.destinationCount(counts),
+		VisibleVideos:     len(w.app.VisibleVideos()),
+		Refreshing:        w.app.Busy,
+		Online:            !w.offline,
+		Selected:          w.app.Selected,
+		Search:            w.app.Search,
+		ChannelFilter:     w.app.ChannelFilter,
+		UnreadOnly:        w.app.UnreadOnly,
+	}
+	if len(settings.RecentFailures) > 0 {
+		in.Failure = settings.RecentFailures[0].Message
+	}
+	return in
+}
+
+// destinationCount is how many videos the selected destination holds before
+// the filter bar, the same count its sidebar row shows. It is what tells an
+// empty destination apart from one the filters hide, and what keeps Favorites
+// from drawing the initial-load skeleton while the library refreshes.
+func (w *Window) destinationCount(counts sidebarCounts) int {
+	switch {
+	case w.app.Selected == "favorites":
+		return counts.favorites
+	case w.app.Selected == "all":
+		return counts.total
+	case destinationID(w.app.Selected, "channel:") != "":
+		return counts.perChannel[destinationID(w.app.Selected, "channel:")]
+	case destinationID(w.app.Selected, "group:") != "":
+		if g, ok := w.app.Sync.Groups[destinationID(w.app.Selected, "group:")]; ok {
+			return counts.group(g.ChannelIDs)
+		}
+	}
+	return counts.total
+}
+
+// destinationID returns the id a destination names after prefix, or empty.
+func destinationID(selected, prefix string) string {
+	if len(selected) > len(prefix) && selected[:len(prefix)] == prefix {
+		return selected[len(prefix):]
+	}
+	return ""
+}
+
+// emptyPane draws the pane's empty state for its destination. The action is
+// the one step that moves the reader forward: settings, the importer, a
+// cleared filter bar, or a refresh, and the refresh face stays visible and
+// disabled while it cannot run.
+func (w *Window) emptyPane(c *ui.Context, t mui.Tokens, in mui.PaneInput) {
+	// An empty library with a destination to show clears a selection that is no
+	// longer visible. Setup and import leave it alone: they are not a filter
+	// hiding the reader's selection.
+	if in.HasAPIKey && in.ChannelCount > 0 {
+		if w.app.SelectedVideoID != "" {
+			w.app.SelectedVideoID = ""
+		}
+		none := -1
+		w.selectedIndex = &none
+	}
+
+	variant := mui.EmptyVariantFor(in)
+	spec := mui.EmptySpec{Key: "empty-pane", Copy: mui.CopyForEmpty(variant)}
+	switch variant {
+	case mui.EmptySetup:
+		spec.OnAction = func() { w.openSettingsWindow() }
+	case mui.EmptyImportChannels:
+		spec.OnAction = func() { w.importOPML(c) }
+	case mui.EmptyFiltered:
+		spec.OnAction = func() {
+			w.app.Search = ""
+			w.app.ChannelFilter = ""
+			w.app.UnreadOnly = false
+		}
+	case mui.EmptyFavorites:
+		spec.OnAction = func() { w.app.Selected = "all" }
+	default:
+		spec.OnAction = func() { w.runRefresh(true) }
+		spec.ActionDisabled, spec.ActionTooltip = w.refreshDisabledReason()
+	}
+	mui.EmptyPane(c, t, spec)
+}
+
+// loadingPane draws the first load. The cards keep the real grid's geometry.
+// The Cancel that ends it sits in the strip above, which is this pane's header,
+// so the skeleton itself carries no control and no spinner.
+func (w *Window) loadingPane(c *ui.Context, t mui.Tokens) {
+	gap := c.Theme().Space(2)
+	padding := mui.Space(4)
+	metrics := gridCardMetrics(w.gridContentWidth(padding), gap, w.app.settingsSnapshot().MaxGridColumns)
+	ui.Column(c).Grow(1).Padding(padding).AlignItems(ui.Start).Children(func() {
+		mui.SkeletonGrid(c, t, mui.SkeletonSpec{
+			Count:       mui.SkeletonCards,
+			Columns:     metrics.Columns,
+			CardWidth:   metrics.Width,
+			CardHeight:  metrics.Height,
+			ThumbHeight: metrics.Width * gridThumbAspect,
+			Gap:         gap,
 		})
 	})
+}
+
+// errorPane draws the last refresh's failure inside the pane. It appears only
+// when the pane has nothing cached to keep; with content on screen the status
+// surface carries the failure, so it is never reported twice.
+func (w *Window) errorPane(c *ui.Context, t mui.Tokens, in mui.PaneInput) {
+	settings := w.app.settingsSnapshot()
+	message := ""
+	if len(settings.RecentFailures) > 0 {
+		message = settings.RecentFailures[0].Message
+	}
+	reason := statusFailureText(message)
+	if strings.HasPrefix(message, "quota paused") {
+		reason = ""
+	}
+	disabled, tooltip := w.refreshDisabledReason()
+	cause := refreshErrorCause(message)
+	if cause == mui.CauseQuota && !w.app.refreshBlocked(time.Now()) {
+		cause = mui.CauseQuotaExpired
+	}
+	mui.ErrorPane(c, t, mui.ErrorSpec{
+		Key:            "pane-error",
+		Cause:          cause,
+		Reason:         reason,
+		ActionDisabled: disabled,
+		ActionTooltip:  tooltip,
+		OnRetry:        func() { w.runRefresh(true) },
+	})
+}
+
+// refreshErrorCause tells the error copy why the refresh failed, using the
+// same reading of the stored message as the status surface. The offline state
+// is never an error cause: the pane shows its own offline state whenever the
+// library is empty and offline, so an error pane is always online.
+func refreshErrorCause(message string) mui.ErrorCause {
+	switch {
+	case rejectedKey(message):
+		return mui.CauseRejectedKey
+	case strings.HasPrefix(message, "quota paused"):
+		return mui.CauseQuota
+	default:
+		return mui.CauseConnection
+	}
+}
+
+// refreshDisabledReason says whether a refresh action cannot run and why. The
+// offline reason is the tooltip the board specifies; the others keep the face
+// disabled without inventing a short explanation the status surface already
+// gives.
+func (w *Window) refreshDisabledReason() (bool, string) {
+	switch {
+	case w.offline:
+		return true, mui.OfflineTooltip
+	case w.app.Busy:
+		return true, "Refreshing"
+	case w.app.refreshBlocked(time.Now()):
+		return true, ""
+	}
+	return false, ""
 }

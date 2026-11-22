@@ -673,7 +673,16 @@ func (a *App) refreshBlocked(now time.Time) bool {
 }
 
 func (a *App) Refresh(force bool, snapshot refreshSnapshot) RefreshOutcome {
-	ctx := context.Background()
+	outcome, _ := a.RefreshContext(context.Background(), force, snapshot)
+	return outcome
+}
+
+// RefreshContext performs one refresh under a caller's context, so the window
+// can offer Cancel while the initial-load skeleton is the only thing on screen.
+// It reports whether the reader ended the attempt before its result was applied.
+// A cancelled attempt records no failure and no refresh stamp: the reader
+// ended it, and the next refresh must not inherit a failure they did not cause.
+func (a *App) RefreshContext(ctx context.Context, force bool, snapshot refreshSnapshot) (RefreshOutcome, bool) {
 	now := time.Now()
 	settings := a.settingsSnapshot()
 	client := core.YouTube{Key: settings.APIKey}
@@ -682,6 +691,9 @@ func (a *App) Refresh(force bool, snapshot refreshSnapshot) RefreshOutcome {
 	// refresh started from, so the writeback guard can still tell a
 	// concurrent edit apart from the refresh's own update.
 	outcome := core.RefreshYoutube(ctx, client, settings, cloneSyncState(snapshot.state), a.Store, snapshot.videos, snapshot.revision, force, now)
+	if ctx.Err() != nil && !outcome.Changed {
+		return RefreshOutcome{Description: "Cancelled"}, true
+	}
 	_, _ = a.updateSettings(func(s *core.Settings) bool {
 		if outcome.Changed {
 			s.LastRefresh = core.FormatRFC3339(now)
@@ -694,7 +706,7 @@ func (a *App) Refresh(force bool, snapshot refreshSnapshot) RefreshOutcome {
 		}
 		return true
 	})
-	return outcome
+	return outcome, false
 }
 
 // applyRefreshedChannels writes the channel metadata a refresh produced into

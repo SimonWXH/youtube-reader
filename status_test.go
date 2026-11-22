@@ -2,14 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
 	"image/png"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -610,6 +613,80 @@ func TestStatusPausedPrimaryIsDisabled(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("the healthy primary did not refresh")
+	}
+}
+
+// countingTransport observes whether a refresh reached the network. It signals
+// the first call with the request's context and blocks until released, so the
+// test sees the attempt and its feedback before the goroutine finishes, and no
+// real API is reached. Teardown waits for that context to be cancelled, which
+// runRefresh does only after RefreshContext has returned and the store is idle.
+type countingTransport struct {
+	calls   int64
+	called  chan context.Context
+	release chan struct{}
+}
+
+func (t *countingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if atomic.AddInt64(&t.calls, 1) == 1 {
+		t.called <- req.Context()
+	}
+	<-t.release
+	return nil, fmt.Errorf("offline retry test: network unavailable")
+}
+
+// TestOfflinePopoverRetryStartsRefresh proves the offline state's next action is
+// real: the status popover's Retry reaches a refresh attempt, which shows the
+// reader feedback, instead of silently doing nothing. The window's own refresh
+// faces stay disabled while offline, so the popover is the one action available.
+func TestOfflinePopoverRetryStartsRefresh(t *testing.T) {
+	a := statesTestApp(t)
+	store, err := core.OpenStore(context.Background(), filepath.Join(t.TempDir(), "videos.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	a.Store = store
+	a.Videos = nil
+
+	transport := &countingTransport{called: make(chan context.Context, 1), release: make(chan struct{})}
+	previous := http.DefaultTransport
+	http.DefaultTransport = transport
+	var refreshCtx context.Context
+	defer func() {
+		close(transport.release)
+		if refreshCtx != nil {
+			<-refreshCtx.Done()
+		}
+		http.DefaultTransport = previous
+	}()
+
+	w := &Window{app: a, selectedIndex: new(int), offline: true}
+	s := &statusBar{w: w, online: false}
+	now := time.Now()
+	m := deriveStatus(statusInput{
+		Now:      now,
+		Online:   false,
+		Settings: a.settingsSnapshot(),
+		Channels: len(a.Sync.Channels),
+	})
+	if m.Primary != statusRetry {
+		t.Fatalf("offline popover primary = %v, want Retry", m.Primary)
+	}
+	tt := ui.NewTester(statusPanelView(m, s.actions(), -1),
+		int(statusPopoverWidth), int(statusPopoverMaxHeight))
+	tt.Frame()
+
+	if err := tt.Click(statusActionLabel(statusRetry, statusOffline)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case refreshCtx = <-transport.called:
+	case <-time.After(2 * time.Second):
+		t.Fatal("clicking the offline popover Retry made no refresh attempt")
+	}
+	if !a.Busy {
+		t.Fatal("the offline Retry gave no feedback: the app did not enter its refreshing state")
 	}
 }
 
