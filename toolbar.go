@@ -167,6 +167,12 @@ func (w *Window) refreshControl(c *ui.Context, t mui.Tokens) {
 	if w.app.refreshBlocked(time.Now()) {
 		spec.disabled = true
 	}
+	// Offline disables the control and names the reason, as the board asks;
+	// the status surface keeps the Retry that can actually run.
+	if w.offline {
+		spec.disabled = true
+		spec.tooltip = mui.OfflineTooltip
+	}
 	if w.app.Busy {
 		spec.label, spec.tooltip, spec.disabled = "Refreshing", "Refreshing", true
 		spec.content = func() { ui.Spinner(c).Size(toolbarGlyph, toolbarGlyph).TextColor(t.Muted) }
@@ -192,7 +198,7 @@ func (w *Window) overflowControl(c *ui.Context, t mui.Tokens) {
 // cannot run right now is dimmed, not hidden.
 func (w *Window) overflowMenu(m *ui.Menu) {
 	blocked := w.app.refreshBlocked(time.Now())
-	if m.Item("Refresh").Shortcut(ui.Cmd, ui.KeyR).Disabled(w.app.Busy || blocked).Chosen() {
+	if m.Item("Refresh").Shortcut(ui.Cmd, ui.KeyR).Disabled(w.app.Busy || blocked || w.offline).Chosen() {
 		w.runRefresh(true)
 	}
 	if m.Item("Settings…").Shortcut(ui.Cmd, ui.KeyComma).Chosen() {
@@ -220,8 +226,12 @@ func (w *Window) exportFavorites(c *ui.Context) {
 
 // contentStrip is the 44 pt list filter: the channel drop-down, the search
 // field, the unwatched check box, and the count of what is shown, right
-// aligned in tabular figures.
+// aligned in tabular figures. While the content pane loads its first cards,
+// the count's place holds Cancel instead: this strip is the pane's header, so
+// the one control that ends the load belongs here and the skeleton stays free
+// of buttons and spinners.
 func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
+	loading := mui.ContentPaneState(w.contentPaneInput()) == mui.PaneLoading
 	options := []string{"All channels"}
 	ids := []string{""}
 	for _, ch := range w.app.Channels {
@@ -238,13 +248,20 @@ func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
 	count := fmt.Sprintf("%d video%s", n, plural(n))
 	labelWidth, _ := c.MeasureText(0, ui.Span{Text: "Unwatched", Size: mui.Control.Size, Weight: int(mui.Control.Weight)})
 	countWidth, _ := c.MeasureText(0, ui.Span{Text: count, Size: mui.Metadata.Size, Weight: int(mui.Metadata.Weight)})
+	trailingWidth := countWidth + 2
+	if loading {
+		// The trailing item is the Cancel button: its label plus the action's
+		// horizontal padding and hairline.
+		cancelWidth, _ := c.MeasureText(0, ui.Span{Text: mui.LoadingCancelLabel, Size: mui.Control.Size, Weight: int(mui.Control.Weight)})
+		trailingWidth = cancelWidth + 2*mui.Space(3) + 2*mui.Hairline
+	}
 	checkboxWidth := mui.Space(4) + mui.Space(2) + labelWidth
 	available := w.contentWidth
 	if available <= 0 {
 		available = windowWidth(c)
 	}
 	channelWidth, searchWidth, gap, collapsed := fitFilterStrip(
-		max(0, available-2*mui.Space(4)), checkboxWidth, toolbarControl, countWidth+2,
+		max(0, available-2*mui.Space(4)), checkboxWidth, toolbarControl, trailingWidth,
 	)
 	strip := ui.Row(c).Height(contentStripHeight).Shrink(0).FillWidth().
 		Padding(0, mui.Space(4)).AlignItems(ui.Center).Gap(gap).
@@ -310,6 +327,10 @@ func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
 				Shrink(0).FontSize(mui.Control.Size).Label("Unwatched")
 		}
 		ui.Spacer(c)
+		if loading {
+			mui.PaneAction(c, t, "loading-cancel", mui.LoadingCancelLabel, false, false, "", w.cancelRefreshRun)
+			return
+		}
 		mui.Metadata.Apply(ui.Text(c, count)).
 			TextColor(t.Muted).SingleLine().Shrink(0)
 	})
@@ -461,6 +482,6 @@ func (w *Window) sidebarMenuLabel() string {
 // toolbar control is dimmed.
 func (w *Window) syncRefreshMenu() {
 	if w.menuRefresh != nil {
-		w.menuRefresh.SetEnabled(!w.app.Busy && !w.app.refreshBlocked(time.Now()))
+		w.menuRefresh.SetEnabled(!w.app.Busy && !w.offline && !w.app.refreshBlocked(time.Now()))
 	}
 }

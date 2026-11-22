@@ -554,11 +554,22 @@ func (a *App) refreshBlocked(now time.Time) bool {
 }
 
 func (a *App) Refresh(force bool) RefreshOutcome {
-	ctx := context.Background()
+	return a.RefreshContext(context.Background(), force)
+}
+
+// RefreshContext performs one refresh under a caller's context, so the window
+// can offer Cancel while the initial-load skeleton is the only thing on screen.
+// A cancelled attempt records no failure and no refresh stamp: the reader
+// ended it, and the next refresh must not inherit a failure they did not cause.
+func (a *App) RefreshContext(ctx context.Context, force bool) RefreshOutcome {
 	now := time.Now()
 	settings := a.settingsSnapshot()
 	client := core.YouTube{Key: settings.APIKey}
 	outcome := core.RefreshYoutube(ctx, client, settings, a.Sync, a.Store, a.Videos, a.Revision, force, now)
+	if ctx.Err() != nil {
+		_ = a.reload()
+		return RefreshOutcome{Description: "Cancelled"}
+	}
 	_, _ = a.updateSettings(func(s *core.Settings) bool {
 		if outcome.Changed {
 			s.LastRefresh = core.FormatRFC3339(now)

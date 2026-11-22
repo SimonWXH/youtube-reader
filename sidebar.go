@@ -32,7 +32,7 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 			}
 			sectionHeader(c, t, "Channels")
 			if len(w.app.Channels) == 0 {
-				mui.Secondary.Apply(ui.Text(c, "No channels yet")).TextColor(t.Muted).Padding(mui.Space(1), mui.Space(2)).SingleLine()
+				mui.SidebarEmpty(c, t, func() { w.importOPML(c) })
 			}
 			for _, ch := range w.app.Channels {
 				ch := ch

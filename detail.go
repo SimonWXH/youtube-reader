@@ -489,6 +489,10 @@ func (w *Window) drawer(c *ui.Context, t mui.Tokens) {
 			w.detailError(c, t)
 		case d.hasVideo:
 			w.detailVideo(c, t, d.video)
+		default:
+			// The pane is normally absent rather than empty; this is the
+			// fallback that keeps an open pane from showing a blank column.
+			mui.DetailEmpty(c, t)
 		}
 	})
 }
