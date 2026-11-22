@@ -11,6 +11,23 @@ import (
 	mui "github.com/simon/youtube-reader/ui"
 )
 
+// settingsChanged rebuilds the menu bar item after a settings write, so the
+// item and its popover never report different states.
+func (w *Window) settingsChanged() {
+	w.syncRefreshMenu()
+	if w.status == nil {
+		return
+	}
+	w.status.refresh()
+	w.status.invalidate()
+}
+
+// saveSettings applies one settings change and refreshes the menu bar item.
+func (w *Window) saveSettings(fn func(*core.Settings) bool) {
+	_, _ = w.app.updateSettings(fn)
+	w.settingsChanged()
+}
+
 func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 	settings := w.app.settingsSnapshot()
 	apiKey := settings.APIKey
@@ -23,7 +40,7 @@ func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 			ui.Text(c, "Maximum columns in each row (2-8)").FontSize(14)
 			columns := float64(settings.MaxGridColumns)
 			if ui.Stepper(c, &columns, float64(minMaxGridColumns), float64(maxMaxGridColumns), 1).Changed() {
-				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+				w.saveSettings(func(s *core.Settings) bool {
 					if s.MaxGridColumns == int(columns) {
 						return false
 					}
@@ -35,7 +52,7 @@ func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 			ui.Text(c, "API key (local only, never synced)").FontSize(14)
 			apiKeyInput := ui.TextInput(c.Key("api-key"), &apiKey).Password().Placeholder("YouTube Data API v3 key").Width(520)
 			if apiKeyInput.Changed() {
-				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+				w.saveSettings(func(s *core.Settings) bool {
 					if s.APIKey == apiKey {
 						return false
 					}
@@ -46,7 +63,7 @@ func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 			ui.Text(c, "Refresh interval").FontSize(14)
 			selected := refreshLabel(settings.RefreshMinutes)
 			if ui.Select(c.Key("interval"), &selected, []string{"15 minutes", "30 minutes", "1 hour", "2 hours", "4 hours"}).Width(520).Changed() {
-				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+				w.saveSettings(func(s *core.Settings) bool {
 					if s.RefreshMinutes == refreshMinutes(selected) {
 						return false
 					}
@@ -55,7 +72,7 @@ func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 				})
 			}
 			if ui.Checkbox(c.Key("shorts"), &showShorts, "Show Shorts").FontSize(14).Changed() {
-				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+				w.saveSettings(func(s *core.Settings) bool {
 					if s.ShowShorts == showShorts {
 						return false
 					}
@@ -68,7 +85,7 @@ func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 			mui.StatefulButton(c, t, "import-opml", "Choose OPML file...", nil, false, mui.Default, func() { w.importOPML(c) }).AlignSelf(ui.Start)
 			ui.Text(c, "Favorites backup (standalone JSON, no API key or history)").Bold().FontSize(15)
 			if ui.TextInput(c.Key("backup-path"), &backupPath).Width(520).Changed() {
-				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+				w.saveSettings(func(s *core.Settings) bool {
 					if s.BackupPath == backupPath {
 						return false
 					}
@@ -91,7 +108,7 @@ func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 			})
 			ui.Text(c, "Sync file (single JSON shared with Syncthing)").Bold().FontSize(15)
 			if ui.TextInput(c.Key("sync-path"), &syncPath).Width(520).Changed() {
-				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+				w.saveSettings(func(s *core.Settings) bool {
 					if s.SyncPath == syncPath {
 						return false
 					}
@@ -100,7 +117,7 @@ func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 				})
 			}
 			mui.StatefulButton(c, t, "save-paths", "Save paths", nil, false, mui.Default, func() {
-				_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+				w.saveSettings(func(s *core.Settings) bool {
 					changed := s.APIKey != apiKey || s.BackupPath != backupPath || s.SyncPath != syncPath
 					s.APIKey = apiKey
 					s.BackupPath = backupPath
@@ -122,7 +139,7 @@ func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 					enabled := w.app.notificationEnabled(channels[i].ID)
 					id := channels[i].ID
 					if ui.Checkbox(c.Key("notify-"+id), &enabled, channels[i].Title).Changed() {
-						_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+						w.saveSettings(func(s *core.Settings) bool {
 							s.NotificationIDs = toggleID(s.NotificationIDs, id, enabled)
 							return true
 						})
@@ -161,6 +178,7 @@ func (w *Window) settings(c *ui.Context, t mui.Tokens) {
 			}).AlignSelf(ui.Start)
 			mui.StatefulButton(c, t, "close-settings", "Done", nil, true, mui.Default, func() {
 				_ = w.app.SaveSettings()
+				w.settingsChanged()
 				w.app.SettingsOpen = false
 			}).AlignSelf(ui.Start)
 		})

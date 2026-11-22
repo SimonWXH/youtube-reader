@@ -13,8 +13,10 @@ import (
 )
 
 // sidebarTestApp is the smallest window that shows the whole sidebar:
-// Library, one channel group with one channel, the Channels section, and the
-// pinned Status row, in 1280 x 808 as the design board measures it.
+// Library, one channel group with one channel, and the Channels section, in
+// 1280 x 808 as the design board measures it. The refresh status is not in the
+// sidebar: it left with the menu bar status item, and status_test.go pins that
+// it draws nothing here.
 func sidebarTestApp(t *testing.T, expanded bool) *App {
 	t.Helper()
 	// The card footer names the channel too, so give the video a different
@@ -477,7 +479,7 @@ func TestSidebarReturnOpensFocusedRow(t *testing.T) {
 }
 
 // TestSidebarFocusRingOnEveryRow proves the keyboard focus reads on a
-// navigation row, a channel row, a fold row, and the pinned status row.
+// navigation row, a channel row, and a fold row.
 func TestSidebarFocusRingOnEveryRow(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		a := sidebarTestApp(t, true)
@@ -487,7 +489,7 @@ func TestSidebarFocusRingOnEveryRow(t *testing.T) {
 		tt.Frame()
 		tokens := mui.NewTokens(nil, dark)
 
-		for _, name := range []string{"All videos", "Alpha channel", "Alpha", "Status"} {
+		for _, name := range []string{"All videos", "Alpha channel", "Alpha"} {
 			focusByTab(t, tt, name)
 			first, last, ok := ringLines(t, tt, tokens, int(defaultSidebarWidth))
 			if !ok {

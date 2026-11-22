@@ -15,33 +15,6 @@ import (
 	mui "github.com/simon/youtube-reader/ui"
 )
 
-func TestRefreshedLabel(t *testing.T) {
-	old := time.Now().Add(-72 * time.Hour).Truncate(time.Second)
-	tests := []struct {
-		name  string
-		stamp string
-		want  string
-	}{
-		{"empty", "", ""},
-		{"invalid", "not-a-time", "Last refresh not-a-time"},
-		{"just now", time.Now().UTC().Format(time.RFC3339), "Last refresh just now"},
-		{"minutes", time.Now().Add(-5 * time.Minute).UTC().Format(time.RFC3339), "Last refresh 5 min ago"},
-		{"hours", time.Now().Add(-3 * time.Hour).UTC().Format(time.RFC3339), "Last refresh 3 hr ago"},
-		{"older than a day", old.UTC().Format(time.RFC3339), "Last refresh on " + old.Local().Format("Jan 2, 2006 at 15:04")},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := refreshedLabel(tt.stamp)
-			if got != tt.want {
-				t.Fatalf("refreshedLabel(%q) = %q, want %q", tt.stamp, got, tt.want)
-			}
-			if tt.name == "older than a day" && !strings.Contains(got, old.Local().Format("2006")) {
-				t.Fatalf("older refresh label omits the year: %q", got)
-			}
-		})
-	}
-}
-
 func TestRegisterNotificationClickRoutesChannelID(t *testing.T) {
 	dir := t.TempDir()
 	a := newTestApp(t, dir)
@@ -508,50 +481,33 @@ func TestToolbarSidebarToggleFoldsSidebar(t *testing.T) {
 	}
 }
 
-// TestOverflowMenuMirrorsToolbarCommands checks the overflow menu's items,
-// that the status row is dimmed rather than hidden, and that Escape closes
-// the menu.
+// TestOverflowMenuMirrorsToolbarCommands checks the overflow menu's items and
+// that Escape closes the menu. Refresh status belongs to the menu bar item, so
+// the menu carries commands only.
 func TestOverflowMenuMirrorsToolbarCommands(t *testing.T) {
 	w := chromeWindow(t)
 	tt := ui.NewTester(w.shell, 1280, 808)
+	a := w.app
+	a.Settings.LastRefresh = time.Now().Add(-5 * time.Minute).Format(time.RFC3339)
+	a.Settings.RecentFailures = []core.RefreshFailure{{At: time.Now().Format(time.RFC3339), Message: "boom"}}
 	tt.Frame()
 	if err := tt.Click("More"); err != nil {
 		t.Fatalf("open overflow menu: %v", err)
 	}
 	items := tt.Menu()
-	for _, want := range []string{"Last refresh 5 min ago", "Refresh", "Settings…", "Import OPML…", "Export Favorites…", "Restore Favorites…"} {
+	for _, want := range []string{"Refresh", "Settings…", "Import OPML…", "Export Favorites…", "Restore Favorites…"} {
 		if !slices.Contains(items, want) {
 			t.Fatalf("overflow menu %q has no %q", items, want)
 		}
 	}
-	err := tt.ChooseMenuItem("Last refresh 5 min ago")
-	if err == nil || !strings.Contains(err.Error(), "disabled") {
-		t.Fatalf("the status row is choosable: %v", err)
+	for _, unwanted := range []string{"Refresh issue", "Last refresh 5 min ago", "Not refreshed yet"} {
+		if slices.Contains(items, unwanted) {
+			t.Fatalf("overflow menu still carries status copy %q: %q", unwanted, items)
+		}
 	}
 	tt.Key(0, ui.KeyEscape)
 	if items := tt.Menu(); items != nil {
 		t.Fatalf("Escape left the overflow menu open: %q", items)
-	}
-}
-
-// TestRefreshFailureSurfacesItsMessage checks a refresh that reports a failure
-// reaches the view as a toast: the outcome arrives between frames, so the
-// message has to wait for the next build instead of being dropped.
-func TestRefreshFailureSurfacesItsMessage(t *testing.T) {
-	w := chromeWindow(t)
-	tt := ui.NewTester(w.shell, 1280, 808)
-	tt.Frame()
-
-	w.refreshFinished(RefreshOutcome{
-		Description: "Refresh failed: quota paused",
-		Failures:    []core.RefreshFailure{{Message: "quota paused"}},
-	})
-	if tt.HasText("Refresh failed: quota paused") {
-		t.Fatal("the toast showed before a frame consumed it")
-	}
-	tt.Frame()
-	if !tt.HasText("Refresh failed: quota paused") {
-		t.Fatalf("refresh failure has no toast: %q", tt.Texts())
 	}
 }
 
@@ -720,6 +676,61 @@ func TestToolbarRefreshDimsWhileBusy(t *testing.T) {
 	err := tt.ChooseMenuItem("Refresh")
 	if err == nil || !strings.Contains(err.Error(), "disabled") {
 		t.Fatalf("the menu's Refresh is choosable while busy: %v", err)
+	}
+}
+
+// TestRefreshControlsDimWhenRefreshCannotRun checks both conditions
+// core.RefreshYoutube refuses reach every refresh surface: the toolbar control,
+// the overflow item and the View menu command.
+func TestRefreshControlsDimWhenRefreshCannotRun(t *testing.T) {
+	cases := []struct {
+		name  string
+		block func(*App)
+	}{
+		{"missing key", func(a *App) { a.Settings.APIKey = "" }},
+		{"quota pause", func(a *App) {
+			a.Settings.QuotaPausedUntil = time.Now().Add(24 * time.Hour).Format(time.RFC3339)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := chromeWindow(t)
+			w.menuRefresh = &mygo.MenuItem{Label: "Refresh"}
+			tc.block(w.app)
+			w.syncRefreshMenu()
+			if w.menuRefresh.IsEnabled() {
+				t.Fatal("the View menu's Refresh is enabled while a refresh cannot run")
+			}
+			tt := ui.NewTester(w.shell, 1280, 808)
+			tt.Frame()
+			control := chromeControl(t, tt, "Refresh")
+			if !control.Disabled {
+				t.Fatalf("refresh control is not dimmed: %+v", control)
+			}
+			if err := tt.Click("More"); err != nil {
+				t.Fatal(err)
+			}
+			if err := tt.ChooseMenuItem("Refresh"); err == nil || !strings.Contains(err.Error(), "disabled") {
+				t.Fatalf("the overflow Refresh is choosable while a refresh cannot run: %v", err)
+			}
+		})
+	}
+}
+
+// TestSettingsChangeReenablesRefreshImmediately checks the View menu follows a
+// settings write at once instead of waiting for the next refresh or clock tick.
+func TestSettingsChangeReenablesRefreshImmediately(t *testing.T) {
+	w := chromeWindow(t)
+	w.menuRefresh = &mygo.MenuItem{Label: "Refresh"}
+	w.app.Settings.APIKey = ""
+	w.syncRefreshMenu()
+	if w.menuRefresh.IsEnabled() {
+		t.Fatal("Refresh is enabled without an API key")
+	}
+	w.app.Settings.APIKey = "local-key"
+	w.settingsChanged()
+	if !w.menuRefresh.IsEnabled() {
+		t.Fatal("Refresh stayed disabled after the key was saved")
 	}
 }
 

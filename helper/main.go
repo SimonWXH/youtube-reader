@@ -188,24 +188,14 @@ func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post
 	return handoff, writeHandoff()
 }
 
-func containsQuotaFailure(failures []core.RefreshFailure) bool {
-	for _, f := range failures {
-		if strings.HasPrefix(f.Message, "quota paused") {
-			return true
-		}
-	}
-	return false
-}
-
 func mergeHelperSettings(settings core.Settings, result core.RefreshResult, now time.Time) core.Settings {
 	if result.Changed {
 		settings.LastRefresh = core.FormatRFC3339(now)
-		settings.NextRefresh = core.FormatRFC3339(now.Add(time.Duration(settings.RefreshMinutes) * time.Minute))
 	}
 	if result.Changed || len(result.Failures) > 0 {
 		settings.RecentFailures = result.Failures
 	}
-	if containsQuotaFailure(result.Failures) {
+	if core.FailedOnQuota(result.Failures) {
 		settings.QuotaPausedUntil = core.FormatRFC3339(now.Add(24 * time.Hour))
 	}
 	return settings

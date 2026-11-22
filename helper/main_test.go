@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,6 +52,62 @@ func TestHelperRunNoAPIKeyDoesNotCallNetwork(t *testing.T) {
 	}
 	if h.Result != nil {
 		t.Fatal("unexpected refresh result")
+	}
+}
+
+// TestHelperRunStaleQuotaHistoryDoesNotRearmPause proves a quota pause is
+// armed only by the failure the refresh itself produced: after the pause the
+// stored quota failure announces has expired, a refresh that fails on the
+// transport carries that failure as history and must not arm a new pause.
+func TestHelperRunStaleQuotaHistoryDoesNotRearmPause(t *testing.T) {
+	dir := t.TempDir()
+	syncPath := filepath.Join(dir, "sync.json")
+	state := core.SyncState{
+		SchemaVersion: 1,
+		DeviceID:      "device",
+		UpdatedAt:     1,
+		Channels:      map[string]core.Channel{"ch-1": {ID: "ch-1", Title: "Channel"}},
+	}
+	if err := core.SaveSyncAtomic(syncPath, state); err != nil {
+		t.Fatal(err)
+	}
+	expired := "2026-03-02T12:00:00Z"
+	history := core.RefreshFailure{At: "2026-03-01T12:00:00Z", Message: "quota paused until 2026-03-02T12:00:00Z"}
+	if err := writeSettings(dir, core.Settings{
+		APIKey:           "key",
+		RefreshMinutes:   60,
+		SyncPath:         syncPath,
+		QuotaPausedUntil: expired,
+		RecentFailures:   []core.RefreshFailure{history},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":{"message":"backend error"}}`))
+	}))
+	defer srv.Close()
+	refresh, network := refreshForHelper, networkAvailableForHelper
+	refreshForHelper = func(ctx context.Context, client core.YouTube, settings core.Settings, sync core.SyncState, store *core.Store, existing []core.Video, revision int64, force bool, now time.Time) core.RefreshResult {
+		client.BaseURL = srv.URL + "/youtube/v3"
+		return core.RefreshYoutube(ctx, client, settings, sync, store, existing, revision, force, now)
+	}
+	networkAvailableForHelper = func(context.Context) bool { return true }
+	defer func() { refreshForHelper, networkAvailableForHelper = refresh, network }()
+
+	now := time.Date(2026, 3, 3, 12, 0, 0, 0, time.UTC)
+	if _, err := HelperRun(context.Background(), dir, false, now, nil); err != nil {
+		t.Fatal(err)
+	}
+	persisted := loadHelperSettings(dir)
+	if persisted.QuotaPausedUntil != expired {
+		t.Fatalf("carried quota history re-armed the pause: %q", persisted.QuotaPausedUntil)
+	}
+	if len(persisted.RecentFailures) != 2 ||
+		persisted.RecentFailures[0].Message != "backend error" ||
+		persisted.RecentFailures[1].Message != history.Message {
+		t.Fatalf("failures: %+v", persisted.RecentFailures)
 	}
 }
 
@@ -159,8 +217,19 @@ func TestCommitHelperResultLeavesRefreshAndHandoffOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings = loadHelperSettings(dir)
-	if settings.LastRefresh != now.Format(time.RFC3339) || settings.NextRefresh != now.Add(240*time.Minute).Format(time.RFC3339) {
+	if settings.LastRefresh != now.Format(time.RFC3339) {
 		t.Fatalf("successful refresh status: %+v", settings)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted map[string]any
+	if err := json.Unmarshal(raw, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := persisted["nextRefresh"]; ok {
+		t.Fatal("helper wrote a next refresh stamp")
 	}
 	if settings.LastHandoffID != "app-owned" {
 		t.Fatalf("helper changed app-owned handoff ID: %+v", settings)

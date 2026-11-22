@@ -32,7 +32,6 @@ type App struct {
 	Search          string
 	ChannelFilter   string
 	UnreadOnly      bool
-	StatusExpanded  bool
 	SettingsOpen    bool
 	SelectedVideoID string
 	Busy            bool
@@ -127,7 +126,6 @@ func (a *App) mergeNewerDiskStatus() {
 		return
 	}
 	a.Settings.LastRefresh = disk.LastRefresh
-	a.Settings.NextRefresh = disk.NextRefresh
 	a.Settings.RecentFailures = disk.RecentFailures
 	a.Settings.QuotaPausedUntil = disk.QuotaPausedUntil
 }
@@ -540,20 +538,35 @@ func (a *App) ImportFavorites(path string) (int, error) {
 	return changed, nil
 }
 
+// refreshBlocked reports whether a refresh cannot run now: a missing key or a
+// quota pause are the two conditions core.RefreshYoutube refuses. Every refresh
+// surface reads this one answer, so none offers a refresh that would return
+// without doing anything.
+func (a *App) refreshBlocked(now time.Time) bool {
+	settings := a.settingsSnapshot()
+	if settings.APIKey == "" {
+		return true
+	}
+	if until, err := time.Parse(time.RFC3339, settings.QuotaPausedUntil); err == nil && now.Before(until) {
+		return true
+	}
+	return false
+}
+
 func (a *App) Refresh(force bool) RefreshOutcome {
 	ctx := context.Background()
 	now := time.Now()
 	settings := a.settingsSnapshot()
-	interval := time.Duration(settings.RefreshMinutes) * time.Minute
 	client := core.YouTube{Key: settings.APIKey}
 	outcome := core.RefreshYoutube(ctx, client, settings, a.Sync, a.Store, a.Videos, a.Revision, force, now)
 	_, _ = a.updateSettings(func(s *core.Settings) bool {
 		if outcome.Changed {
 			s.LastRefresh = core.FormatRFC3339(now)
-			s.NextRefresh = core.FormatRFC3339(now.Add(interval))
+			s.RecentFailures = outcome.Failures
+		} else if len(outcome.Failures) > 0 {
+			s.RecentFailures = outcome.Failures
 		}
-		s.RecentFailures = outcome.Failures
-		if containsQuotaFailure(outcome.Failures) {
+		if core.FailedOnQuota(outcome.Failures) {
 			s.QuotaPausedUntil = core.FormatRFC3339(now.Add(24 * time.Hour))
 		}
 		return true
@@ -563,15 +576,6 @@ func (a *App) Refresh(force bool) RefreshOutcome {
 		outcome.Channels = a.Channels
 	}
 	return outcome
-}
-
-func containsQuotaFailure(failures []core.RefreshFailure) bool {
-	for _, f := range failures {
-		if strings.HasPrefix(f.Message, "quota paused") {
-			return true
-		}
-	}
-	return false
 }
 
 func (a *App) notificationEnabled(channelID string) bool {
@@ -676,7 +680,6 @@ func (a *App) ConsumeHandoff() error {
 		return nil
 	}
 	currentStatus := a.settingsSnapshot()
-	refreshInterval := time.Duration(currentStatus.RefreshMinutes) * time.Minute
 	if handoff.ID != "" && handoff.ID == currentStatus.LastHandoffID {
 		return nil
 	}
@@ -695,22 +698,14 @@ func (a *App) ConsumeHandoff() error {
 	_, _ = a.updateSettings(func(s *core.Settings) bool {
 		if fresh && len(handoff.Failures) > 0 {
 			s.RecentFailures = handoff.Failures
-			if containsQuotaFailure(handoff.Failures) {
-				for _, f := range handoff.Failures {
-					if strings.HasPrefix(f.Message, "quota paused") {
-						if at, err := time.Parse(time.RFC3339, f.At); err == nil {
-							s.QuotaPausedUntil = core.FormatRFC3339(at.Add(24 * time.Hour))
-						}
-						break
-					}
+			if core.FailedOnQuota(handoff.Failures) {
+				if at, err := time.Parse(time.RFC3339, handoff.Failures[0].At); err == nil {
+					s.QuotaPausedUntil = core.FormatRFC3339(at.Add(24 * time.Hour))
 				}
 			}
 		}
 		if fresh && handoff.Result != nil && handoff.CreatedAt != "" {
 			s.LastRefresh = handoff.CreatedAt
-			if at, err := time.Parse(time.RFC3339, handoff.CreatedAt); err == nil {
-				s.NextRefresh = core.FormatRFC3339(at.Add(refreshInterval))
-			}
 		}
 		s.LastHandoffID = handoff.ID
 		return true

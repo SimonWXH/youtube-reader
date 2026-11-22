@@ -44,7 +44,6 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 				})
 			}
 		})
-		w.statusSection(c, t, nav)
 	})
 	if nav.focused != "" && nav.focused != w.sidebarKeyboard {
 		w.sidebarKeyboard = ""
@@ -165,36 +164,6 @@ func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, 
 	}
 }
 
-// statusSection keeps the refresh status at the foot of the sidebar until
-// the status surface replaces it, styled as one more row of the list.
-func (w *Window) statusSection(c *ui.Context, t mui.Tokens, nav *sidebarNav) {
-	ui.Column(c).Shrink(0).Padding(mui.Space(2), mui.Space(2), mui.Space(2)).Gap(mui.Space(2)).Background(t.Sidebar).Children(func() {
-		status := mui.SidebarRow{
-			Key: "status", Label: "Status", Fold: true, Expanded: w.app.StatusExpanded,
-			OnClick: func() { w.app.StatusExpanded = !w.app.StatusExpanded },
-		}
-		if failures := len(w.app.settingsSnapshot().RecentFailures); failures > 0 {
-			status.Count = fmt.Sprintf("%d", failures)
-		}
-		nav.row(c, t, status)
-		if !w.app.StatusExpanded {
-			return
-		}
-		statusSettings := w.app.settingsSnapshot()
-		// The details align with the status label, one fold indent in.
-		ui.Column(c).Gap(mui.Space(2)).Padding(0, 0, 0, mui.Space(5)).Children(func() {
-			mui.Secondary.Apply(ui.Text(c, "Last: "+orDash(statusSettings.LastRefresh))).TextColor(t.Muted).SingleLine()
-			mui.Secondary.Apply(ui.Text(c, "Next: "+orDash(statusSettings.NextRefresh))).TextColor(t.Muted).SingleLine()
-			for _, f := range statusSettings.RecentFailures {
-				ui.Row(c).Gap(mui.Space(2)).AlignItems(ui.Start).Children(func() {
-					ui.Icon(c, mui.IconAlert).Size(16, 16).TextColor(t.Danger)
-					mui.Secondary.Apply(ui.Text(c, f.Message)).TextColor(t.Danger).MaxLines(2).Grow(1)
-				})
-			}
-		})
-	})
-}
-
 // sectionHeader titles a section of the sidebar. Its 13 pt Semibold Muted
 // label is the token pair that clears the 4.5:1 floor on the sidebar
 // surface in both appearances.
@@ -252,11 +221,4 @@ func (w *Window) channelByID(id string) core.Channel {
 		}
 	}
 	return core.Channel{ID: id, Title: id}
-}
-
-func orDash(s string) string {
-	if s == "" {
-		return "never"
-	}
-	return s
 }

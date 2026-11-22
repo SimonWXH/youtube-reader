@@ -68,3 +68,100 @@ func TestRefreshYoutubeQuotaFailurePauses(t *testing.T) {
 		t.Fatalf("quota pause message=%q", result.Failures[0].Message)
 	}
 }
+
+func refreshTestState() SyncState {
+	return SyncState{
+		SchemaVersion: 1,
+		Channels:      map[string]Channel{"ch-1": {ID: "ch-1", Title: "Channel"}},
+		ReadStates:    map[string]map[string]ReadRecord{},
+		Favorites:     map[string]FavoriteRecord{},
+	}
+}
+
+// abortBody drops the connection mid-response, so the client returns the
+// request error a real transport failure gives, with the full URL.
+func abortBody(t *testing.T, w http.ResponseWriter) {
+	t.Helper()
+	conn, _, err := w.(http.Hijacker).Hijack()
+	if err != nil {
+		t.Errorf("hijack: %v", err)
+		return
+	}
+	conn.Close()
+}
+
+func TestRefreshYoutubeRedactsAPIKeyFromFailedRefresh(t *testing.T) {
+	const key = "AIzaSyD-transport-failure-key"
+	srv := httptest.NewServer(http.NotFoundHandler())
+	baseURL := srv.URL + "/youtube/v3"
+	srv.Close()
+	client := YouTube{Key: key, Client: srv.Client(), BaseURL: baseURL}
+	settings := Settings{APIKey: key, RefreshMinutes: 60}
+	result := RefreshYoutube(context.Background(), client, settings, refreshTestState(), nil, nil, 0, true, time.Now())
+	if len(result.Failures) != 1 {
+		t.Fatalf("failures=%+v", result.Failures)
+	}
+	message := result.Failures[0].Message
+	if strings.Contains(message, key) || strings.Contains(result.Description, key) {
+		t.Fatalf("failure leaks the API key: message=%q description=%q", message, result.Description)
+	}
+	if !strings.Contains(message, "/channels?") {
+		t.Fatalf("failure lost the request context: %q", message)
+	}
+}
+
+func TestRefreshYoutubeRedactsAPIKeyFromChannelFailure(t *testing.T) {
+	const key = "AIzaSyD-channel-failure-key"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "channels") {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"items":[{"id":"ch-1","snippet":{"title":"Channel"},"contentDetails":{"relatedPlaylists":{"uploads":"uploads-1"}}}]}`))
+			return
+		}
+		abortBody(t, w)
+	}))
+	defer srv.Close()
+	client := YouTube{Key: key, Client: srv.Client(), BaseURL: srv.URL + "/youtube/v3"}
+	settings := Settings{APIKey: key, RefreshMinutes: 60}
+	result := RefreshYoutube(context.Background(), client, settings, refreshTestState(), nil, nil, 0, true, time.Now())
+	if len(result.Failures) != 1 {
+		t.Fatalf("failures=%+v", result.Failures)
+	}
+	message := result.Failures[0].Message
+	if strings.Contains(message, key) {
+		t.Fatalf("failure leaks the API key: %q", message)
+	}
+	if !strings.HasPrefix(message, "Channel: ") {
+		t.Fatalf("failure lost the channel prefix: %q", message)
+	}
+}
+
+func TestRefreshYoutubeRedactsAPIKeyFromHydrateFailure(t *testing.T) {
+	const key = "AIzaSyD-hydrate-failure-key"
+	published := time.Now().UTC().Format(time.RFC3339)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "channels"):
+			w.Write([]byte(`{"items":[{"id":"ch-1","snippet":{"title":"Channel"},"contentDetails":{"relatedPlaylists":{"uploads":"uploads-1"}}}]}`))
+		case strings.Contains(r.URL.Path, "playlistItems"):
+			w.Write([]byte(`{"items":[{"contentDetails":{"videoId":"v1"},"snippet":{"title":"Video","publishedAt":"` + published + `"}}]}`))
+		default:
+			abortBody(t, w)
+		}
+	}))
+	defer srv.Close()
+	client := YouTube{Key: key, Client: srv.Client(), BaseURL: srv.URL + "/youtube/v3"}
+	settings := Settings{APIKey: key, RefreshMinutes: 60}
+	result := RefreshYoutube(context.Background(), client, settings, refreshTestState(), nil, nil, 0, true, time.Now())
+	if len(result.Failures) != 1 {
+		t.Fatalf("failures=%+v", result.Failures)
+	}
+	message := result.Failures[0].Message
+	if strings.Contains(message, key) {
+		t.Fatalf("failure leaks the API key: %q", message)
+	}
+	if !strings.HasPrefix(message, "hydrate: ") {
+		t.Fatalf("failure lost the hydrate prefix: %q", message)
+	}
+}

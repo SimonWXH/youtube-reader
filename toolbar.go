@@ -100,10 +100,9 @@ type toolbarControlSpec struct {
 	key      string
 	label    string
 	tooltip  string
-	on       bool     // drawn as chosen, in the accent tint
-	disabled bool     // no pointer, no keyboard activation
-	face     ui.Color // glyph colour; zero keeps the token default
-	content  func()   // the glyph, or a spinner while the control works
+	on       bool   // drawn as chosen, in the accent tint
+	disabled bool   // no pointer, no keyboard activation
+	content  func() // the glyph, or a spinner while the control works
 	onClick  func()
 }
 
@@ -114,8 +113,6 @@ func (w *Window) toolbarControl(c *ui.Context, t mui.Tokens, spec toolbarControl
 		face = t.Faint
 	case spec.on:
 		face = t.Accent
-	case spec.face.A > 0:
-		face = spec.face
 	}
 	var bg ui.Color
 	if spec.on {
@@ -167,14 +164,12 @@ func (w *Window) refreshControl(c *ui.Context, t mui.Tokens) {
 		content: func() { ui.Icon(c, mui.IconRefresh).Size(toolbarGlyph, toolbarGlyph) },
 		onClick: func() { w.runRefresh(true) },
 	}
-	switch {
-	case w.app.Busy:
+	if w.app.refreshBlocked(time.Now()) {
+		spec.disabled = true
+	}
+	if w.app.Busy {
 		spec.label, spec.tooltip, spec.disabled = "Refreshing", "Refreshing", true
 		spec.content = func() { ui.Spinner(c).Size(toolbarGlyph, toolbarGlyph).TextColor(t.Muted) }
-	case len(w.app.settingsSnapshot().RecentFailures) > 0:
-		// The failure words live in the overflow menu; the tinted glyph keeps
-		// the last refresh from failing silently.
-		spec.face, spec.tooltip = t.Danger, "Refresh issue"
 	}
 	w.toolbarControl(c, t, spec)
 }
@@ -192,13 +187,12 @@ func (w *Window) overflowControl(c *ui.Context, t mui.Tokens) {
 		ui.PopoverMenuButtonOptions{At: ui.AnchorBottomEnd, Self: ui.AnchorTopEnd})
 }
 
-// overflowMenu is the toolbar's overflow: the refresh status first, then the
-// commands that also exist as toolbar controls or menu commands, then the
-// secondary ones. Anything that cannot run right now is dimmed, not hidden.
+// overflowMenu is the toolbar's overflow: the commands that also exist as
+// toolbar controls or menu commands, then the secondary ones. Anything that
+// cannot run right now is dimmed, not hidden.
 func (w *Window) overflowMenu(m *ui.Menu) {
-	m.Item(w.statusLabel()).Disabled(true)
-	m.Separator()
-	if m.Item("Refresh").Shortcut(ui.Cmd, ui.KeyR).Disabled(w.app.Busy).Chosen() {
+	blocked := w.app.refreshBlocked(time.Now())
+	if m.Item("Refresh").Shortcut(ui.Cmd, ui.KeyR).Disabled(w.app.Busy || blocked).Chosen() {
 		w.runRefresh(true)
 	}
 	if m.Item("Settings…").Shortcut(ui.Cmd, ui.KeyComma).Chosen() {
@@ -222,22 +216,6 @@ func (w *Window) exportFavorites(c *ui.Context) {
 	} else {
 		w.toast(c, "Favorites exported", false)
 	}
-}
-
-// statusLabel is the refresh status the overflow menu opens with: what the
-// header subtitle used to say, in the board's words.
-func (w *Window) statusLabel() string {
-	if w.app.Busy {
-		return "Refreshing…"
-	}
-	settings := w.app.settingsSnapshot()
-	if len(settings.RecentFailures) > 0 {
-		return "Refresh issue"
-	}
-	if label := refreshedLabel(settings.LastRefresh); label != "" {
-		return label
-	}
-	return "Not refreshed yet"
 }
 
 // contentStrip is the 44 pt list filter: the channel drop-down, the search
@@ -378,27 +356,6 @@ func fitFilterStrip(inner, checkbox, checkboxIcon, count float32) (channel, sear
 	return channel, search, gap, collapsed
 }
 
-func refreshedLabel(stamp string) string {
-	if stamp == "" {
-		return ""
-	}
-	t, err := time.Parse(time.RFC3339, stamp)
-	if err != nil {
-		return "Last refresh " + stamp
-	}
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return "Last refresh just now"
-	case d < time.Hour:
-		return fmt.Sprintf("Last refresh %d min ago", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("Last refresh %d hr ago", int(d.Hours()))
-	default:
-		return "Last refresh on " + t.Local().Format("Jan 2, 2006 at 15:04")
-	}
-}
-
 func (w *Window) title() string {
 	if w.app.SettingsOpen {
 		return "Settings"
@@ -499,28 +456,11 @@ func (w *Window) sidebarMenuLabel() string {
 	return "Hide Sidebar"
 }
 
-// openSettings shows the settings page from the App menu or the overflow
-// menu, where the toolbar no longer carries a settings control. The command
-// is not a toggle: choosing it while the page is open leaves it open, and the
-// page's Done button is what closes and saves it.
-func (w *Window) openSettings() {
-	apply := func() {
-		w.app.SettingsOpen = true
-		if w.window != nil {
-			w.window.Focus()
-		}
-	}
-	if w.window != nil {
-		w.window.Update(apply)
-		return
-	}
-	apply()
-}
-
-// setMenuBusy dims the menu's Refresh command while a refresh is running, as
-// the toolbar control is disabled.
-func (w *Window) setMenuBusy(busy bool) {
+// syncRefreshMenu dims the View menu's Refresh command while a refresh is
+// running or while a quota pause or a missing key makes one impossible, as the
+// toolbar control is dimmed.
+func (w *Window) syncRefreshMenu() {
 	if w.menuRefresh != nil {
-		w.menuRefresh.SetEnabled(!busy)
+		w.menuRefresh.SetEnabled(!w.app.Busy && !w.app.refreshBlocked(time.Now()))
 	}
 }

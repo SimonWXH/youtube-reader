@@ -157,6 +157,41 @@ func TestConsumeHandoffQuotaFailurePausesRefresh(t *testing.T) {
 	}
 }
 
+// TestConsumeHandoffDoesNotRearmPauseFromHistory proves a quota pause is
+// armed only by the failure the refresh itself produced: a handoff whose
+// current failure is an ordinary error keeps the earlier quota failure as
+// history without arming a pause the refresh did not earn.
+func TestConsumeHandoffDoesNotRearmPauseFromHistory(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+	failures := []core.RefreshFailure{
+		{At: "2026-03-02T12:00:00Z", Message: "Get \"https://www.googleapis.com/youtube/v3/channels\": dial tcp: no route to host"},
+		{At: "2026-03-01T12:00:00Z", Message: "quota paused until 2026-03-02T12:00:00Z"},
+	}
+	handoff := map[string]any{
+		"id":          "handoff-stale-quota",
+		"createdAt":   "2026-03-02T12:00:00Z",
+		"description": failures[0].Message,
+		"failures":    failures,
+	}
+	data, _ := json.Marshal(handoff)
+	if err := os.WriteFile(filepath.Join(dir, "inbox.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ConsumeHandoff(); err != nil {
+		t.Fatal(err)
+	}
+	if a.Settings.QuotaPausedUntil != "" {
+		t.Fatalf("carried quota history re-armed a pause: %+v", a.Settings.QuotaPausedUntil)
+	}
+	if len(a.Settings.RecentFailures) != 2 ||
+		a.Settings.RecentFailures[0].Message != failures[0].Message ||
+		a.Settings.RecentFailures[1].Message != failures[1].Message {
+		t.Fatalf("failures: %+v", a.Settings.RecentFailures)
+	}
+}
+
 func TestRefreshNoopDoesNotAdvanceLastRefresh(t *testing.T) {
 	dir := t.TempDir()
 	a := newTestApp(t, dir)
@@ -171,6 +206,46 @@ func TestRefreshNoopDoesNotAdvanceLastRefresh(t *testing.T) {
 	}
 	if a.Settings.LastRefresh != last {
 		t.Fatalf("last refresh advanced on noop: %+v", a.Settings)
+	}
+}
+
+// TestRefreshBlockedKeepsRecordedFailures proves a refresh the reader refuses
+// for a quota pause or a missing key leaves the failure it reports in place,
+// rather than clearing the very state the user is reading.
+func TestRefreshBlockedKeepsRecordedFailures(t *testing.T) {
+	cases := []struct {
+		name  string
+		block func(*core.Settings)
+	}{
+		{"quota pause", func(s *core.Settings) {
+			s.QuotaPausedUntil = time.Now().Add(24 * time.Hour).Format(time.RFC3339)
+		}},
+		{"missing key", func(s *core.Settings) { s.APIKey = "" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			a := newTestApp(t, dir)
+			defer a.Close()
+			a.Settings.APIKey = "key"
+			failure := core.RefreshFailure{
+				At:      time.Now().UTC().Format(time.RFC3339),
+				Message: "quota paused until 2026-03-02T12:00:00Z",
+			}
+			a.Settings.RecentFailures = []core.RefreshFailure{failure}
+			tc.block(&a.Settings)
+			outcome := a.Refresh(true)
+			if outcome.Changed {
+				t.Fatalf("blocked refresh reported a change: %+v", outcome)
+			}
+			if len(a.Settings.RecentFailures) != 1 || a.Settings.RecentFailures[0].Message != failure.Message {
+				t.Fatalf("blocked refresh cleared the failure: %+v", a.Settings.RecentFailures)
+			}
+			persisted := loadTestSettings(t, filepath.Join(dir, "settings.json"))
+			if len(persisted.RecentFailures) != 1 || persisted.RecentFailures[0].Message != failure.Message {
+				t.Fatalf("blocked refresh cleared the persisted failure: %+v", persisted.RecentFailures)
+			}
+		})
 	}
 }
 

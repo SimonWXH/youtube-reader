@@ -63,7 +63,6 @@ type Settings struct {
 	ShowShorts       bool             `json:"showShorts"`
 	NotificationIDs  []string         `json:"notificationChannelIDs"`
 	LastRefresh      string           `json:"lastRefresh,omitempty"`
-	NextRefresh      string           `json:"nextRefresh,omitempty"`
 	RecentFailures   []RefreshFailure `json:"recentFailures"`
 	QuotaPausedUntil string           `json:"quotaPausedUntil,omitempty"`
 	LastHandoffID    string           `json:"lastHandoffID,omitempty"`

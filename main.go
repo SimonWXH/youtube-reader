@@ -56,6 +56,9 @@ func realMain() {
 		// The menu bar carries Settings… at Command-Comma and mirrors every
 		// toolbar command, so the toolbar is never the only way to act.
 		window.installMenu()
+		// The status surface lives in the menu bar: one item over the window
+		// and one popover rather than status copy inside the window.
+		window.status = newStatusBar(window)
 	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
@@ -66,9 +69,10 @@ type Window struct {
 	app    *App
 	window *mygo.Window
 	frame  *ui.Context // the last frame's context, for menu commands
+	status *statusBar
 
-	// pendingToasts are messages raised between frames, as a refresh outcome
-	// is; the next frame shows them, since AddToast only works while building.
+	// pendingToasts are messages raised while no frame is building; the next
+	// frame shows them, since AddToast only works while building.
 	pendingToasts []ui.Toast
 
 	// sidebarHidden folds the sidebar pane away from the toolbar's leading
@@ -109,36 +113,49 @@ func (w *Window) toast(c *ui.Context, msg string, isError bool) {
 	}
 }
 
+// runRefresh starts one refresh off the main thread. Refresh feedback belongs
+// to the menu bar status item, so a refresh neither toasts nor writes status
+// text into the window; the item and an open popover follow the refresh as it
+// starts and returns.
 func (w *Window) runRefresh(force bool) {
-	if w.app.Busy {
+	if w.app.Busy || w.app.refreshBlocked(time.Now()) {
 		return
 	}
 	w.app.Busy = true
-	w.setMenuBusy(true)
+	w.syncRefreshMenu()
 	if w.window != nil {
 		w.window.Invalidate()
 	}
+	if w.status != nil {
+		w.status.started = time.Now()
+		w.status.refresh()
+		w.status.invalidate()
+	}
 	go func() {
 		outcome := w.app.Refresh(force)
-		if w.window != nil {
-			w.window.Update(func() { w.refreshFinished(outcome) })
-		} else {
-			w.refreshFinished(outcome)
+		if w.window == nil {
+			w.app.Busy = false
+			w.syncRefreshMenu()
+			if w.status != nil {
+				w.status.refresh()
+			}
+			return
 		}
+		w.window.Update(func() {
+			w.app.Busy = false
+			w.syncRefreshMenu()
+			if w.status != nil {
+				w.status.started = time.Time{}
+				w.status.refresh()
+				w.status.invalidate()
+			}
+			if outcome.Changed {
+				for _, n := range outcome.Notified {
+					postNotification(n)
+				}
+			}
+		})
 	}()
-}
-
-func (w *Window) refreshFinished(outcome RefreshOutcome) {
-	w.app.Busy = false
-	w.setMenuBusy(false)
-	if outcome.Description != "" {
-		w.toast(nil, outcome.Description, len(outcome.Failures) > 0)
-	}
-	if outcome.Changed {
-		for _, n := range outcome.Notified {
-			postNotification(n)
-		}
-	}
 }
 
 func postNotification(plan NotificationPlan) {
@@ -201,24 +218,24 @@ func (w *Window) content(c *ui.Context, t mui.Tokens) {
 			return
 		}
 		if w.app.settingsSnapshot().APIKey == "" {
-			w.emptyState(c, t, "Set up YouTube Reader", "Add a YouTube Data API key in Settings to start following channels.", "setup-settings", "Open Settings", func(*ui.Context) { w.app.SettingsOpen = true })
+			w.emptyState(c, t, "Set up YouTube Reader", "Add a YouTube Data API key in Settings to start following channels.", "setup-settings", "Open Settings", mui.Default, func(*ui.Context) { w.app.SettingsOpen = true })
 			return
 		}
 		if len(w.app.Sync.Channels) == 0 {
-			w.emptyState(c, t, "Import your channels", "Choose an OPML file from your Mac to import channel groups.", "setup-import", "Import OPML", w.importOPML)
+			w.emptyState(c, t, "Import your channels", "Choose an OPML file from your Mac to import channel groups.", "setup-import", "Import OPML", mui.Default, w.importOPML)
 			return
 		}
 		w.gridArea(c, t)
 	})
 }
 
-func (w *Window) emptyState(c *ui.Context, t mui.Tokens, title, body, key, label string, action func(*ui.Context)) {
+func (w *Window) emptyState(c *ui.Context, t mui.Tokens, title, body, key, label string, state mui.State, action func(*ui.Context)) {
 	ui.Column(c).Grow(1).AlignItems(ui.Center).Center().Gap(20).Padding(32).Children(func() {
 		ui.Column(c).Width(480).AlignItems(ui.Center).Gap(12).Children(func() {
 			ui.Text(c, title).Bold().FontSize(32).FixedLineHeight(38).TextColor(t.Text).TextAlign(ui.Center)
 			ui.Text(c, body).FontSize(15).FixedLineHeight(22).TextColor(t.Muted).TextAlign(ui.Center)
 		})
-		mui.StatefulButton(c, t, key, label, nil, true, mui.Default, func() {
+		mui.StatefulButton(c, t, key, label, nil, true, state, func() {
 			action(c)
 		})
 	})
