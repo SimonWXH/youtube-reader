@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -38,11 +39,16 @@ var osascriptForHelper = func(script string) error {
 	return nil
 }
 
-// appRunningForHelper reports whether the main app is already running. A
-// check failure is treated as "not running" so the helper never targets the
-// bundle and risks launching the window it is meant to stay clear of.
+var pgrepForHelper = func(args ...string) error {
+	return exec.Command("pgrep", args...).Run()
+}
+
+// appRunningForHelper reports whether the current user's main app is already
+// running. A check failure is treated as "not running" so the helper never
+// targets the bundle and risks launching the window it is meant to stay clear
+// of.
 var appRunningForHelper = func() bool {
-	return exec.Command("pgrep", "-x", "YouTube Reader").Run() == nil
+	return pgrepForHelper("-u", strconv.Itoa(os.Getuid()), "-x", "YouTube Reader") == nil
 }
 
 // HelperHandoff is the atomic JSON message the helper leaves for the app.

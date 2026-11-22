@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -98,6 +99,24 @@ func TestPostHelperNotificationDoesNotLaunchTheApp(t *testing.T) {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script %q does not contain %q", script, want)
 		}
+	}
+}
+
+func TestAppRunningForHelperScopesToCurrentUser(t *testing.T) {
+	var gotArgs []string
+	previous := pgrepForHelper
+	pgrepForHelper = func(args ...string) error {
+		gotArgs = args
+		return nil
+	}
+	defer func() { pgrepForHelper = previous }()
+
+	if !appRunningForHelper() {
+		t.Fatal("appRunningForHelper returned false when pgrep succeeded")
+	}
+	wantUID := strconv.Itoa(os.Getuid())
+	if len(gotArgs) != 4 || gotArgs[0] != "-u" || gotArgs[1] != wantUID || gotArgs[2] != "-x" || gotArgs[3] != "YouTube Reader" {
+		t.Fatalf("pgrep args = %q, want [-u %s -x YouTube Reader]", gotArgs, wantUID)
 	}
 }
 
