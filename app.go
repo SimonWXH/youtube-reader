@@ -81,6 +81,9 @@ func cloneSettings(s core.Settings) core.Settings {
 			cloned.ExpandedGroups[id] = expanded
 		}
 	}
+	if s.GroupOrder != nil {
+		cloned.GroupOrder = append([]string(nil), s.GroupOrder...)
+	}
 	return cloned
 }
 
@@ -216,15 +219,59 @@ func (a *App) reload() error {
 	if err != nil {
 		return err
 	}
-	a.Groups = make([]core.ChannelGroup, 0, len(a.Sync.Groups))
-	for _, g := range a.Sync.Groups {
-		a.Groups = append(a.Groups, g)
-	}
-	sort.Slice(a.Groups, func(i, j int) bool { return a.Groups[i].Name < a.Groups[j].Name })
+	a.Groups = orderGroups(a.Sync.Groups, a.settingsSnapshot().GroupOrder)
 	if rev := a.Store.Meta(ctx, "revision"); rev != "" {
 		fmt.Sscan(rev, &a.Revision)
 	}
 	return nil
+}
+
+// orderGroups arranges the synced groups the way the sidebar shows them: the
+// order the user left them in, then every group that order does not name in
+// name order. Stored IDs with no group are ignored, so a group removed
+// elsewhere leaves no gap, and a group the stored order has never seen, as
+// one another device imported, joins the end alphabetically.
+func orderGroups(groups map[string]core.ChannelGroup, stored []string) []core.ChannelGroup {
+	ordered := make([]core.ChannelGroup, 0, len(groups))
+	placed := make(map[string]bool, len(groups))
+	for _, id := range stored {
+		if g, ok := groups[id]; ok && !placed[id] {
+			placed[id] = true
+			ordered = append(ordered, g)
+		}
+	}
+	rest := make([]core.ChannelGroup, 0, len(groups)-len(ordered))
+	for id, g := range groups {
+		if !placed[id] {
+			rest = append(rest, g)
+		}
+	}
+	sort.Slice(rest, func(i, j int) bool {
+		if rest[i].Name != rest[j].Name {
+			return rest[i].Name < rest[j].Name
+		}
+		return rest[i].ID < rest[j].ID
+	})
+	return append(ordered, rest...)
+}
+
+// groupIDs names the groups in the order given.
+func groupIDs(groups []core.ChannelGroup) []string {
+	ids := make([]string, 0, len(groups))
+	for _, g := range groups {
+		ids = append(ids, g.ID)
+	}
+	return ids
+}
+
+// SetGroupOrder stores the sidebar's group order in local settings. The order
+// belongs to this screen, so it stays in settings.json and is never synced.
+func (a *App) SetGroupOrder(ids []string) error {
+	_, err := a.updateSettings(func(s *core.Settings) bool {
+		s.GroupOrder = append([]string(nil), ids...)
+		return true
+	})
+	return err
 }
 
 func (a *App) Close() {
@@ -337,11 +384,34 @@ func (a *App) ImportOPMLPaths(paths []string) error {
 		mergedGroups = append(mergedGroups, groups...)
 		mergedChannels = append(mergedChannels, channels...)
 	}
+	known := make(map[string]bool, len(a.Sync.Groups))
+	for id := range a.Sync.Groups {
+		known[id] = true
+	}
 	now := time.Now().UnixMilli()
 	a.Sync.MergeImported(mergedGroups, mergedChannels, now)
 	if err := a.SaveSync(); err != nil {
 		return err
 	}
+	// Remember the order the groups now show in: the ones already here keep
+	// the order the user left them in, and a group this import adds for the
+	// first time joins the end in the order its OPML file lists it.
+	_, _ = a.updateSettings(func(s *core.Settings) bool {
+		existing := make(map[string]core.ChannelGroup, len(known))
+		for id := range known {
+			existing[id] = a.Sync.Groups[id]
+		}
+		order := groupIDs(orderGroups(existing, s.GroupOrder))
+		for _, g := range mergedGroups {
+			if known[g.ID] {
+				continue
+			}
+			known[g.ID] = true
+			order = append(order, g.ID)
+		}
+		s.GroupOrder = order
+		return true
+	})
 	return a.reload()
 }
 
@@ -359,6 +429,12 @@ func (a *App) ImportOPML(path string) error {
 	if err := a.SaveSync(); err != nil {
 		return err
 	}
+	// A replace starts the groups over, so the OPML document order is their
+	// first-seen order and the sidebar shows it until the user reorders.
+	_, _ = a.updateSettings(func(s *core.Settings) bool {
+		s.GroupOrder = groupIDs(groups)
+		return true
+	})
 	return a.reload()
 }
 

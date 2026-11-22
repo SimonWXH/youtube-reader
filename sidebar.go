@@ -12,6 +12,7 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 	nav := &sidebarNav{w: w, focus: w.sidebarFocus, actions: map[string]func(){}}
 	w.sidebarFocus = ""
 	counts := w.sidebarCounts()
+	var drag groupDragFrame
 
 	sidebar := ui.Column(c).Fill().Shrink(0).Background(t.Sidebar)
 	sidebar.Children(func() {
@@ -27,8 +28,8 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 				Selected: w.app.Selected == "favorites",
 				OnClick:  func() { w.app.Selected = "favorites" },
 			})
-			for _, g := range w.app.Groups {
-				w.groupSection(c, t, g, nav, counts)
+			for i, g := range w.app.Groups {
+				w.groupSection(c, t, g, i, nav, counts, &drag)
 			}
 			sectionHeader(c, t, "Channels")
 			if len(w.app.Channels) == 0 {
@@ -45,6 +46,7 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 			}
 		})
 	})
+	w.settleGroupDrag(c, &drag)
 	if nav.focused != "" && nav.focused != w.sidebarKeyboard {
 		w.sidebarKeyboard = ""
 	}
@@ -68,10 +70,11 @@ type sidebarNav struct {
 	focused string            // row that actually has the focus this frame
 }
 
-// row builds a row and adds it to the keyboard order. A row with an action
-// opens the same selection whether it is clicked, opened with Return, or
-// reached with Up or Down. The fold rows toggle, so the arrows skip them.
-func (n *sidebarNav) row(c *ui.Context, t mui.Tokens, r mui.SidebarRow) {
+// row builds a row and adds it to the keyboard order, returning the element so
+// a caller can make it a drag source. A row with an action opens the same
+// selection whether it is clicked, opened with Return, or reached with Up or
+// Down. The fold rows toggle, so the arrows skip them.
+func (n *sidebarNav) row(c *ui.Context, t mui.Tokens, r mui.SidebarRow) ui.Element {
 	key := r.Key
 	if r.OnClick != nil {
 		action := r.OnClick
@@ -104,6 +107,7 @@ func (n *sidebarNav) row(c *ui.Context, t mui.Tokens, r mui.SidebarRow) {
 		})
 	}
 	n.observe(el, key)
+	return el
 }
 
 // observe records a built row and notes which row has the focus this frame.
@@ -141,27 +145,151 @@ func (n *sidebarNav) move(delta int) func() {
 	}
 }
 
-func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, nav *sidebarNav, counts sidebarCounts) {
+// groupSection lays one group out as a block: its fold row, which is the drag
+// handle that reorders the groups, over the channels it holds. The block is
+// keyed by the group, so a drag moves it with its rows' state, and it is the
+// destination a dragged group drops on, so a folded-out group answers anywhere
+// over its channels rather than only over its row.
+func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, index int, nav *sidebarNav, counts sidebarCounts, drag *groupDragFrame) {
 	collapsed := w.app.GroupCollapsed(g.ID)
-	key := "group-collapse:" + g.ID
-	nav.row(c, t, mui.SidebarRow{
-		Key: key, Label: g.Name, Count: fmt.Sprintf("%d", counts.group(g.ChannelIDs)),
-		Fold: true, Expanded: !collapsed,
-		OnClick: func() { _ = w.app.SetGroupCollapsed(g.ID, !collapsed) },
+	section := ui.Column(c.Key("group-block:" + g.ID))
+	section.Children(func() {
+		row := nav.row(c, t, mui.SidebarRow{
+			Key: "group-collapse:" + g.ID, Label: g.Name, Count: fmt.Sprintf("%d", counts.group(g.ChannelIDs)),
+			Fold: true, Expanded: !collapsed,
+			OnClick: func() { _ = w.app.SetGroupCollapsed(g.ID, !collapsed) },
+		})
+		// The row drags its group. MyGo keeps a press that moved a few DIPs
+		// from clicking, so the fold switch still works and a drag never
+		// toggles it; the row stays as the place the group would land.
+		row.Drag(groupDrag{ID: g.ID})
+		if row.Dragging() {
+			drag.alive = true
+			row.Opacity(0.4)
+		}
+		if _, missed := row.DragMissed(); missed {
+			drag.missed = true
+		}
+		if collapsed {
+			return
+		}
+		for _, id := range g.ChannelIDs {
+			id := id
+			ch := w.channelByID(id)
+			nav.row(c, t, mui.SidebarRow{
+				Key: fmt.Sprintf("group:%s:channel:%s", g.Name, id), Label: ch.Title, Channel: true, Avatar: ch.AvatarURL,
+				Count:    fmt.Sprintf("%d", counts.perChannel[id]),
+				Selected: w.app.Selected == "channel:"+id,
+				OnClick:  func() { w.app.Selected = "channel:" + id },
+			})
+		}
 	})
-	if collapsed {
+	w.groupSectionDrop(c, section, index, drag)
+}
+
+// groupDrag is the value a group header row drags. Only a group row reorders
+// the groups, so a channel row or a fold click never starts one.
+type groupDrag struct{ ID string }
+
+// groupDragFrame is what one frame of a group drag showed the sidebar: the
+// dragged row is still held, a block took the drop, or the pointer let the row
+// go over no block. The sidebar settles the order with them once every block is
+// built.
+type groupDragFrame struct {
+	alive   bool
+	dropped bool
+	missed  bool
+}
+
+// groupSectionDrop takes a dragged group row over a block and moves the dragged
+// group to the edge the pointer shows: above the block while it is in the top
+// half, after the block below the middle. The list takes the move at once, so
+// the order a drop would make shows before the pointer lets go.
+func (w *Window) groupSectionDrop(c *ui.Context, section ui.Element, index int, drag *groupDragFrame) {
+	dragged, over := ui.DragOver[groupDrag](section)
+	_, dropped := ui.Drop[groupDrag](section)
+	if dropped {
+		drag.dropped = true
+	}
+	if !over && !dropped {
 		return
 	}
-	for _, id := range g.ChannelIDs {
-		id := id
-		ch := w.channelByID(id)
-		nav.row(c, t, mui.SidebarRow{
-			Key: fmt.Sprintf("group:%s:channel:%s", g.Name, id), Label: ch.Title, Channel: true, Avatar: ch.AvatarURL,
-			Count:    fmt.Sprintf("%d", counts.perChannel[id]),
-			Selected: w.app.Selected == "channel:"+id,
-			OnClick:  func() { w.app.Selected = "channel:" + id },
-		})
+	to := index
+	if _, y, inside := section.PointerPosition(); inside && y >= section.LayoutBounds().H/2 {
+		to = index + 1
 	}
+	if w.liveMoveGroup(dragged.ID, to) {
+		// The blocks built this frame show the order before the move: ask for
+		// the frame that lays them out in it.
+		c.Invalidate()
+	}
+}
+
+// liveMoveGroup moves the dragged group to the boundary the pointer showed,
+// keeping the order the drag began with the first time it moves one.
+func (w *Window) liveMoveGroup(id string, to int) bool {
+	if w.groupDragOrder == nil {
+		w.groupDragOrder = groupIDs(w.app.Groups)
+	}
+	return w.moveGroup(id, to)
+}
+
+// settleGroupDrag ends a group drag the frame showed end. A drop, or the
+// pointer letting the row go over no group block, keeps the order the drag
+// moved the list to and saves it; giving the drag up, with Escape or the
+// system taking the press, puts the groups back as they were.
+func (w *Window) settleGroupDrag(c *ui.Context, drag *groupDragFrame) {
+	if w.groupDragOrder == nil {
+		return
+	}
+	switch {
+	case drag.dropped || drag.missed:
+		_ = w.app.SetGroupOrder(groupIDs(w.app.Groups))
+		w.groupDragOrder = nil
+	case !drag.alive:
+		byID := make(map[string]core.ChannelGroup, len(w.app.Groups))
+		for _, g := range w.app.Groups {
+			byID[g.ID] = g
+		}
+		w.app.Groups = orderGroups(byID, w.groupDragOrder)
+		w.groupDragOrder = nil
+		// The blocks built this frame show the order the drag moved them to:
+		// ask for the frame that lays them out as they were.
+		c.Invalidate()
+	}
+}
+
+// moveGroup puts the group with id where boundary to says, an index into the
+// order before the move, and reports whether it moved. A move back where the
+// group already was changes nothing.
+func (w *Window) moveGroup(id string, to int) bool {
+	from := -1
+	for i, g := range w.app.Groups {
+		if g.ID == id {
+			from = i
+			break
+		}
+	}
+	if from < 0 || to == from || to == from+1 {
+		return false
+	}
+	picked := w.app.Groups[from]
+	rest := make([]core.ChannelGroup, 0, len(w.app.Groups)-1)
+	for i, g := range w.app.Groups {
+		if i != from {
+			rest = append(rest, g)
+		}
+	}
+	if to > from {
+		to--
+	}
+	to = clampInt(to, 0, len(rest))
+	ordered := make([]core.ChannelGroup, 0, len(w.app.Groups))
+	ordered = append(ordered, rest[:to]...)
+	ordered = append(ordered, picked)
+	ordered = append(ordered, rest[to:]...)
+	w.app.Groups = ordered
+	return true
 }
 
 // sectionHeader titles a section of the sidebar. Its 13 pt Semibold Muted
