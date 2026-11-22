@@ -635,9 +635,11 @@ func TestGridFocusFollowsMovedSelection(t *testing.T) {
 }
 
 // TestScrollSurfacesReserveBottomInset checks F-05 through the rendered
-// window: at the minimum height the three scrolling surfaces must lay their
-// last item out short of the window's bottom edge by at least the shared
-// inset, so nothing is clipped there.
+// window, toolbar included: at the minimum height the three scrolling
+// surfaces must lay their last item out short of the window's bottom edge by
+// at least the shared inset, so nothing is clipped there. Rendering the whole
+// shell, not just the pane row, is what proves the panes end at the window's
+// edge rather than 52 pt past it under the toolbar.
 func TestScrollSurfacesReserveBottomInset(t *testing.T) {
 	const h float32 = 640
 	videos := make([]core.Video, 24)
@@ -656,7 +658,7 @@ func TestScrollSurfacesReserveBottomInset(t *testing.T) {
 	a.Videos = videos
 	a.SelectedVideoID = videos[0].ID
 	w := &Window{app: a, selectedIndex: new(int)}
-	tt := ui.NewTester(w.view, 960, int(h))
+	tt := ui.NewTester(w.shell, 960, int(h))
 	tt.Frame()
 	tt.Advance(300 * time.Millisecond)
 
@@ -725,7 +727,7 @@ func TestMinimumHeightLayoutKeepsControlsVisible(t *testing.T) {
 	a.Videos = videos
 	a.SelectedVideoID = videos[0].ID
 	w := &Window{app: a, selectedIndex: new(int)}
-	tt := ui.NewTester(w.view, 960, 640)
+	tt := ui.NewTester(w.shell, 960, 640)
 	tt.Frame()
 	tt.Advance(300 * time.Millisecond) // finish the detail pane's width transition
 

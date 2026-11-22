@@ -40,7 +40,10 @@ var (
 // shell is the window root: the toolbar spans the window, as the title bar it
 // replaces does, so the traffic lights sit inside it; the panes sit below.
 // Keeping the toolbar here leaves the split layout in detail.go as it is,
-// apart from the sidebar-hidden flag it reads.
+// apart from the sidebar-hidden flag it reads. The view grows into the height
+// left under the toolbar: the pane row fills its parent, so handing it the
+// whole window would lay the panes 52 pt past the window's bottom edge and
+// clip the bottom margin every scrolling pane reserves.
 func (w *Window) shell(c *ui.Context) {
 	t := c.Theme()
 	tokens := mui.NewTokens(t, t.Dark)
@@ -51,7 +54,7 @@ func (w *Window) shell(c *ui.Context) {
 	w.pendingToasts = nil
 	ui.Column(c).Fill().Background(tokens.App).Children(func() {
 		w.toolbar(c, tokens)
-		w.view(c)
+		ui.Column(c).Grow(1).MinHeight(0).Children(func() { w.view(c) })
 	})
 }
 

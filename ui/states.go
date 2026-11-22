@@ -494,7 +494,7 @@ func PaneAction(c *ui.Context, tokens Tokens, key, label string, primary, disabl
 
 // SidebarEmpty fills the sidebar's channel section when no channel is
 // imported: a 13 pt Semibold title, one 12 pt secondary sentence, and a 28 pt
-// quiet "Add channel..." action, so the sidebar is never a blank column.
+// quiet "Add channel…" action, so the sidebar is never a blank column.
 func SidebarEmpty(c *ui.Context, tokens Tokens, onAdd func()) ui.Element {
 	el := ui.Column(c).Padding(Space(2)).Gap(Space(1))
 	el.Children(func() {

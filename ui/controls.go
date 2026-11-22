@@ -26,7 +26,7 @@ const ScrollBottomInset float32 = 20
 // is 28 pt tall; a channel row is 34 pt. Both have an 8 pt horizontal inset,
 // a 6 pt radius, and a 2 pt gap to the next row.
 //
-// A row shows one of three leads: a 16 pt accent glyph (Glyph), a 24 pt
+// A row shows one of three leads: a 16 pt accent glyph (Symbol), a 24 pt
 // channel avatar with a monogram fallback (Channel), or a 12 pt disclosure
 // chevron that folds the rows below it (Fold). The label is 13 pt Regular,
 // or 11 pt Semibold for a fold row, and Count is 11 pt Medium tabular
