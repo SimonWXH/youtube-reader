@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,6 +61,37 @@ func TestQueueNotificationClicksPreservesEarlierPosts(t *testing.T) {
 	}
 	if len(queue.Clicks) != 2 || queue.Clicks[0].ChannelID != "ch-1" || queue.Clicks[1].ChannelID != "ch-2" {
 		t.Fatalf("queue = %+v", queue.Clicks)
+	}
+}
+
+func TestPostHelperNotificationDoesNotLaunchTheApp(t *testing.T) {
+	var scripts []string
+	previous := osascriptForHelper
+	osascriptForHelper = func(script string) error {
+		scripts = append(scripts, script)
+		return nil
+	}
+	defer func() { osascriptForHelper = previous }()
+
+	plan := core.NotificationPlan{ChannelName: "A \"quoted\" channel", Count: 2, NewestTitle: "Newest video"}
+	if err := postHelperNotification(plan); err != nil {
+		t.Fatal(err)
+	}
+	if len(scripts) != 1 {
+		t.Fatalf("osascript calls = %d, want 1", len(scripts))
+	}
+	script := scripts[0]
+	if strings.Contains(script, "tell application") {
+		t.Fatalf("script targets an application, which can launch the main app: %q", script)
+	}
+	for _, want := range []string{
+		`display notification "2 new videos\nNewest video"`,
+		`with title "A \"quoted\" channel"`,
+		`subtitle "New videos" sound name "default"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("script %q does not contain %q", script, want)
+		}
 	}
 }
 

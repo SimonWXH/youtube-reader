@@ -6,6 +6,21 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
+// Architecture decision (MyGo v0.10.0): there is no public dynamic semantic
+// colour API. ui.Color holds sRGB bytes; MyGo snapshots
+// NSColor.controlAccentColor into ui.Preferences.Accent and Increase Contrast
+// into Preferences.HighContrast, which its own default theme follows, but it
+// exposes no NSColor object, dynamic-colour constructor, or resolved values
+// for labelColor, secondaryLabelColor, separatorColor,
+// selectedContentBackgroundColor, windowBackgroundColor or
+// keyboardFocusIndicatorColor. The internal AppKit calls are not importable.
+// This hex ramp is the design board's own palette for chrome and content, so
+// these Tokens carry no system accent and no native increased-contrast
+// response: taking the available accent/contrast snapshots into the board's
+// fixed colours would change the agreed appearance and its documentation,
+// outside this file. Connecting the missing semantic colours would need a
+// native module or a framework change.
+
 // Motion durations. Every animation in the app uses Ease, the one shared
 // cubic-bezier(.22, 1, .36, 1) curve. Under Reduce Motion MyGo skips movement
 // and width transitions but keeps colour transitions smooth.

@@ -19,14 +19,22 @@ import (
 	"github.com/simon/youtube-reader/core"
 )
 
-const notificationBundleID = "com.simon.youtubereader"
-
 // Injected for tests so HelperRun's notification side effect can be verified
 // without network or a real refresh.
 type refreshFunc func(context.Context, core.YouTube, core.Settings, core.SyncState, *core.Store, []core.Video, int64, bool, time.Time) core.RefreshResult
 
 var refreshForHelper refreshFunc = core.RefreshYoutube
 var networkAvailableForHelper = core.NetworkAvailable
+
+// Notification scripts run through this seam so tests can assert what the
+// helper would ask osascript to do without launching a real process.
+var osascriptForHelper = func(script string) error {
+	cmd := exec.Command("osascript", "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("osascript: %w: %s", err, out)
+	}
+	return nil
+}
 
 // HelperHandoff is the atomic JSON message the helper leaves for the app.
 type HelperHandoff struct {
@@ -303,16 +311,12 @@ func postHelperNotification(plan core.NotificationPlan) error {
 	if runtime.GOOS != "darwin" {
 		return nil
 	}
-	// A standalone helper is not an app bundle, so UNUserNotificationCenter
-	// attributes notifications to the process. Ask the app bundle to display
-	// them so they appear under the app's notification settings and keep the
-	// same per-channel identity used while the app is running.
+	// A plain display notification is sent by this process. Naming the app
+	// bundle with "tell application id" makes macOS launch the main app to
+	// post the notification, which can pop its window open during a background
+	// refresh; the helper's own attribution is the price of not doing that.
 	script := fmt.Sprintf("display notification \"%s\" with title \"%s\" subtitle \"New videos\" sound name \"default\"", escapeAppleScript(body), escapeAppleScript(plan.ChannelName))
-	cmd := exec.Command("osascript", "-e", fmt.Sprintf("tell application id \"%s\" to %s", notificationBundleID, script))
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("osascript: %w: %s", err, out)
-	}
-	return nil
+	return osascriptForHelper(script)
 }
 
 func escapeAppleScript(s string) string {

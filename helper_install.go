@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 )
@@ -195,6 +196,5 @@ func renderLaunchAgent(p helperPaths, refreshMinutes int) (string, error) {
 }
 
 func uid() string {
-	out, _ := exec.Command("id", "-u").Output()
-	return string(out[:len(out)-1])
+	return strconv.Itoa(os.Getuid())
 }
