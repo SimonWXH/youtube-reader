@@ -16,8 +16,8 @@ import (
 //     secondary sentence, and one 28 pt primary action. No illustration and no
 //     sample cards.
 //   - A sidebar with no channels says "No channels yet" and offers "Add
-//     channel..."; it is never blank.
-//   - The detail pane's empty sentence is one 13 pt secondary line.
+//     channel..."; it is never blank. The detail pane is absent until a video
+//     is selected, so it never shows a blank or fallback column.
 //   - The content pane's first load is a skeleton of 12 neutral cards. The
 //     toolbar's refresh control holds the pane's only spinner, so a load never
 //     moves its progress indicator and never shows two.
@@ -228,8 +228,8 @@ func CopyForEmpty(v EmptyVariant) EmptyStateCopy {
 	}
 }
 
-// The sidebar's and detail pane's empty copy, and the strings the loading and
-// offline states share.
+// The sidebar's empty copy and the strings the loading and offline states
+// share.
 const (
 	// EmptySidebarTitle heads the sidebar when no channel is imported.
 	EmptySidebarTitle = "No channels yet"
