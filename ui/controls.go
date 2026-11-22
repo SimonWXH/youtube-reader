@@ -5,8 +5,8 @@ import (
 )
 
 // SidebarRowHeight is the height of every sidebar row: navigation rows,
-// channel rows, group fold rows, and the pinned status row. The 2 pt gap
-// between rows comes from each row's 1 pt vertical margin.
+// channel rows, and group fold rows. The 2 pt gap between rows comes from
+// each row's 1 pt vertical margin.
 const SidebarRowHeight float32 = 28
 
 // SidebarRow is one row of the navigation sidebar. A row is 28 pt tall with
