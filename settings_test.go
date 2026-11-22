@@ -858,14 +858,23 @@ func TestHelperScheduleReconcilesWithSettings(t *testing.T) {
 }
 
 // TestLaunchReconcileSkipsWithoutAHelperBinary keeps launch from replacing a
-// working login item with a schedule whose program is missing, as a dev run
-// outside the app bundle would write: the launch-time reconcile touches
-// nothing, while the Settings pane's explicit install keeps its behavior.
+// working login item with a schedule whose program is missing: even from a
+// bundled app, a launch reconcile whose helper path is absent touches nothing.
 func TestLaunchReconcileSkipsWithoutAHelperBinary(t *testing.T) {
 	previousHomeDir := helperHomeDir
 	home := t.TempDir()
 	helperHomeDir = func() (string, error) { return home, nil }
 	t.Cleanup(func() { helperHomeDir = previousHomeDir })
+	// Run as if from a bundled app, so the reconcile reaches the helper-path
+	// check; a dev build's missing bundle would skip every launch reconcile.
+	previousBundle := runningFromAppBundle
+	runningFromAppBundle = func() bool { return true }
+	t.Cleanup(func() { runningFromAppBundle = previousBundle })
+	previousPathsFor := helperPathsFor
+	helperPathsFor = func() helperPaths {
+		return helperPaths{Helper: filepath.Join(t.TempDir(), "missing-helper"), DataDir: t.TempDir()}
+	}
+	t.Cleanup(func() { helperPathsFor = previousPathsFor })
 	var calls []string
 	previousLaunchctl := helperLaunchctl
 	helperLaunchctl = func(args ...string) error {
@@ -887,9 +896,8 @@ func TestLaunchReconcileSkipsWithoutAHelperBinary(t *testing.T) {
 		t.Fatalf("write the installed login item: %v", err)
 	}
 
-	// The test binary runs outside a .app bundle, the case every dev build
-	// shares, so the reconcile launch runs must skip however the helper
-	// binary resolves.
+	// The helper binary the bundle would name is absent, so launch reconcile
+	// must skip however the interval resolves, leaving the login item alone.
 	if err := reconcileHelperInterval(15); err != nil {
 		t.Fatalf("reconcile at launch: %v", err)
 	}

@@ -21,7 +21,7 @@ type helperPaths struct {
 	DataDir string
 }
 
-func helperPathsFor() helperPaths {
+var helperPathsFor = func() helperPaths {
 	home, _ := helperHomeDir()
 	exe, err := os.Executable()
 	if err != nil {
@@ -126,7 +126,7 @@ func reconcileHelperInterval(refreshMinutes int) error {
 
 // runningFromAppBundle reports whether this process executes from inside a
 // .app bundle, the only packaging that carries the helper binary beside it.
-func runningFromAppBundle() bool {
+var runningFromAppBundle = func() bool {
 	exe, err := os.Executable()
 	if err != nil {
 		return false

@@ -166,6 +166,7 @@ func (w *Window) refreshFinished(outcome RefreshOutcome, snapshot refreshSnapsho
 			w.postNotification(n)
 		}
 		_ = w.app.reload()
+		w.refreshSettingsWindow()
 	}
 }
 

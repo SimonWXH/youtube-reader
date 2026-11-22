@@ -586,7 +586,7 @@ func (w *Window) backupsPane(c *ui.Context, t mui.Tokens, settings core.Settings
 	w.settingsRow(c, t, "Backup file", func() {
 		ui.Row(c).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
 			w.settingsPathField(c, t, "settings-backup-path", "Backup file", &backupPath)
-			w.settingsButton(c, t, "settings-choose-backup", "Choose…", nil, settingsButtonSecondary, true, "", func() {
+			w.settingsButton(c, t, "settings-choose-backup", "Choose…", nil, settingsButtonSecondary, true, "Choose backup file", func() {
 				path, ok := w.chooseSavePath("Favorites backup", backupPath, "Favorites backup", "json")
 				if !ok {
 					return
@@ -622,7 +622,7 @@ func (w *Window) backupsPane(c *ui.Context, t mui.Tokens, settings core.Settings
 	w.settingsRow(c, t, "Sync file", func() {
 		ui.Row(c).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
 			w.settingsPathField(c, t, "settings-sync-path", "Sync file", &syncPath)
-			w.settingsButton(c, t, "settings-choose-sync", "Choose…", nil, settingsButtonSecondary, true, "", func() {
+			w.settingsButton(c, t, "settings-choose-sync", "Choose…", nil, settingsButtonSecondary, true, "Choose sync file", func() {
 				path, ok := w.chooseSavePath("Sync file", syncPath, "Sync file", "json")
 				if !ok {
 					return
