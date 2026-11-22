@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/color"
@@ -616,17 +617,19 @@ func TestStatusPausedPrimaryIsDisabled(t *testing.T) {
 }
 
 // countingTransport observes whether a refresh reached the network. It signals
-// the first call and blocks until released, so the test sees the attempt and its
-// feedback before the goroutine finishes, and no real API is reached.
+// the first call with the request's context and blocks until released, so the
+// test sees the attempt and its feedback before the goroutine finishes, and no
+// real API is reached. Teardown waits for that context to be cancelled, which
+// runRefresh does only after RefreshContext has returned and the store is idle.
 type countingTransport struct {
 	calls   int64
-	called  chan struct{}
+	called  chan context.Context
 	release chan struct{}
 }
 
-func (t *countingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+func (t *countingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if atomic.AddInt64(&t.calls, 1) == 1 {
-		close(t.called)
+		t.called <- req.Context()
 	}
 	<-t.release
 	return nil, fmt.Errorf("offline retry test: network unavailable")
@@ -646,11 +649,15 @@ func TestOfflinePopoverRetryStartsRefresh(t *testing.T) {
 	a.Store = store
 	a.Videos = nil
 
-	transport := &countingTransport{called: make(chan struct{}), release: make(chan struct{})}
+	transport := &countingTransport{called: make(chan context.Context, 1), release: make(chan struct{})}
 	previous := http.DefaultTransport
 	http.DefaultTransport = transport
+	var refreshCtx context.Context
 	defer func() {
 		close(transport.release)
+		if refreshCtx != nil {
+			<-refreshCtx.Done()
+		}
 		http.DefaultTransport = previous
 	}()
 
@@ -674,7 +681,7 @@ func TestOfflinePopoverRetryStartsRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	select {
-	case <-transport.called:
+	case refreshCtx = <-transport.called:
 	case <-time.After(2 * time.Second):
 		t.Fatal("clicking the offline popover Retry made no refresh attempt")
 	}

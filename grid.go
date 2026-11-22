@@ -84,13 +84,6 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 	gap := c.Theme().Space(2)
 	padding := mui.Space(4)
 	ui.Column(c).Grow(1).Padding(padding - gridDecorInset).Children(func() {
-		if len(videos) == 0 {
-			// The content pane routes an empty destination to its own state;
-			// this keeps a frame that lost its last card in the same shape
-			// instead of drawing an empty grid.
-			w.emptyPane(c, t, w.contentPaneInput())
-			return
-		}
 		target := -1
 		if w.app.SelectedVideoID != "" {
 			for i := range videos {
