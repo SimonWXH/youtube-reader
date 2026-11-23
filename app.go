@@ -960,38 +960,6 @@ func (a *App) SelectChannel(channelID string) bool {
 	if channelID == "" {
 		return false
 	}
-	found := false
-	for _, ch := range a.Channels {
-		if ch.ID == channelID {
-			found = true
-			break
-		}
-	}
-	if !found {
-		if _, ok := a.Sync.Channels[channelID]; ok {
-			found = true
-		}
-	}
-	if !found {
-		for _, g := range a.Groups {
-			if slices.Contains(g.ChannelIDs, channelID) {
-				found = true
-				break
-			}
-		}
-	}
-	if !found {
-		for _, v := range a.Videos {
-			if v.ChannelID == channelID {
-				found = true
-				break
-			}
-		}
-	}
-	if !found {
-		return false
-	}
-
 	a.SelectDestination("channel:" + channelID)
 	a.ChannelFilter = ""
 	a.Search = ""
@@ -1009,14 +977,6 @@ func (a *App) expandGroupForChannel(channelID string) {
 			}
 		}
 	}
-	for _, g := range a.Sync.Groups {
-		if slices.Contains(g.ChannelIDs, channelID) {
-			if a.GroupCollapsed(g.ID) {
-				_ = a.SetGroupCollapsed(g.ID, false)
-			}
-		}
-	}
-}
 }
 
 func (a *App) VisibleVideos() []core.Video {

@@ -453,6 +453,18 @@ func TestCardChannelNameHandlesEmptyChannelID(t *testing.T) {
 			t.Fatalf("opened invalid channel URL: %q", url)
 		}
 	}
+	if a.Selected != "all" {
+		t.Fatalf("Selected changed for empty channel ID: %q", a.Selected)
+	}
+	if a.SelectChannel("") {
+		t.Fatal("SelectChannel with empty string should return false")
+	}
+	if !a.SelectChannel("ch-synced-only") {
+		t.Fatal("SelectChannel with non-empty string should return true")
+	}
+	if a.Selected != "channel:ch-synced-only" {
+		t.Fatalf("Selected = %q, want channel:ch-synced-only", a.Selected)
+	}
 }
 
 // countText counts the sidebar rows assistive technology names want: the
