@@ -142,7 +142,10 @@ func channelRefFromURL(text string) (ChannelRef, bool) {
 		}
 		return ChannelRef{}, false
 	case "c":
-		return ChannelRef{Kind: ChannelRefCustom, Value: segments[1]}, true
+		if len(segments) > 1 {
+			return ChannelRef{Kind: ChannelRefCustom, Value: segments[1]}, true
+		}
+		return ChannelRef{}, false
 	case "watch":
 		if id := u.Query().Get("v"); videoIDPattern.MatchString(id) {
 			return ChannelRef{Kind: ChannelRefVideo, Value: id}, true

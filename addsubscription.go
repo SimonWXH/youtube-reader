@@ -456,6 +456,8 @@ type addDialogPlan struct {
 // before the reader presses the button. inLibrary is the library before this
 // add, so a channel held in no group is still a move.
 func addDialogPlanFor(channelID string, groups []core.ChannelGroup, targetID string, inLibrary bool) addDialogPlan {
+	var fromID, fromName string
+	found := false
 	for _, group := range groups {
 		for _, id := range group.ChannelIDs {
 			if id != channelID {
@@ -464,13 +466,43 @@ func addDialogPlanFor(channelID string, groups []core.ChannelGroup, targetID str
 			if group.ID == targetID {
 				return addDialogPlan{action: addDialogAlreadyThere, fromID: group.ID, from: group.Name}
 			}
-			return addDialogPlan{action: addDialogMove, fromID: group.ID, from: group.Name}
+			if !found {
+				found = true
+				fromID = group.ID
+				fromName = group.Name
+			}
+			break
 		}
 	}
+	if found {
+		return addDialogPlan{action: addDialogMove, fromID: fromID, from: fromName}
+	}
 	if inLibrary {
+		if targetID == "" {
+			return addDialogPlan{action: addDialogAlreadyThere}
+		}
 		return addDialogPlan{action: addDialogMoveUngrouped}
 	}
 	return addDialogPlan{action: addDialogAdd}
+}
+
+func (w *Window) addDialogTargetID() string {
+	if w.addDialog.newGroupMode {
+		return addDialogGroupNewSentinel
+	}
+	return w.addDialog.groupID
+}
+
+func (w *Window) addDialogTargetName(words addDialogCopy) string {
+	a := &w.addDialog
+	if a.newGroupMode {
+		name := strings.TrimSpace(a.newGroupName)
+		if name == "" {
+			return words.newGroupValue
+		}
+		return name
+	}
+	return addDialogGroupName(w.app.Groups, a.groupID, words.ungrouped)
 }
 
 // addDialogIsMove reports whether the plan changes an existing subscription's
@@ -613,17 +645,17 @@ func (w *Window) submitAddDialog(c *ui.Context) {
 		locale = c.Locale()
 	}
 	words := addDialogCopyIn(locale)
-	plan := addDialogPlanFor(a.channel.ID, w.app.Groups, a.groupID, w.channelInLibrary(a.channel.ID))
+	targetID := w.addDialogTargetID()
+	plan := addDialogPlanFor(a.channel.ID, w.app.Groups, targetID, w.channelInLibrary(a.channel.ID))
 	if plan.action == addDialogAlreadyThere {
 		return
 	}
 	channel, channelName := a.channel, a.channel.Title
-	targetID := a.groupID
 	createdID := ""
 	if a.newGroupMode {
 		name := strings.TrimSpace(a.newGroupName)
 		if name == "" {
-			name = defaultNewGroupName(locale)
+			name = words.newGroupValue
 		}
 		group, err := w.app.CreateGroup(name)
 		if err != nil {
@@ -761,7 +793,7 @@ func (w *Window) addDialogRows() (addDialogPlan, bool) {
 	a := &w.addDialog
 	plan := addDialogPlan{action: addDialogAdd}
 	if a.state == addDialogResolved && a.channel.ID != "" {
-		plan = addDialogPlanFor(a.channel.ID, w.app.Groups, a.groupID, w.channelInLibrary(a.channel.ID))
+		plan = addDialogPlanFor(a.channel.ID, w.app.Groups, w.addDialogTargetID(), w.channelInLibrary(a.channel.ID))
 	}
 	return plan, a.state == addDialogResolved && plan.action != addDialogAdd
 }
@@ -1071,7 +1103,7 @@ func (w *Window) addDialogNewGroupField(c *ui.Context, t mui.Tokens, words addDi
 // button: where the channel moves from and to, or that it is already there.
 func (w *Window) addDialogDuplicateLine(c *ui.Context, t mui.Tokens, words addDialogCopy, plan addDialogPlan) ui.Element {
 	a := &w.addDialog
-	target := addDialogGroupName(w.app.Groups, a.groupID, words.ungrouped)
+	target := w.addDialogTargetName(words)
 	text := ""
 	switch plan.action {
 	case addDialogAlreadyThere:

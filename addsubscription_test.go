@@ -253,8 +253,8 @@ func TestAddDialogLateAnswerIsDiscarded(t *testing.T) {
 
 func TestAddDialogDuplicateOutcomes(t *testing.T) {
 	groups := []core.ChannelGroup{
-		{ID: "group-fun", Name: "Fun", ChannelIDs: []string{"ch-fun"}},
-		{ID: "group-dev", Name: "GameDev"},
+		{ID: "group-fun", Name: "Fun", ChannelIDs: []string{"ch-fun", "ch-multi"}},
+		{ID: "group-dev", Name: "GameDev", ChannelIDs: []string{"ch-multi"}},
 	}
 	tests := []struct {
 		name      string
@@ -266,8 +266,13 @@ func TestAddDialogDuplicateOutcomes(t *testing.T) {
 	}{
 		{"in another group", "ch-fun", "group-dev", true, addDialogMove, "Fun"},
 		{"already in the chosen group", "ch-fun", "group-fun", true, addDialogAlreadyThere, "Fun"},
+		{"already in ungrouped", "ch-loose", "", true, addDialogAlreadyThere, ""},
 		{"in the library, in no group", "ch-loose", "group-dev", true, addDialogMoveUngrouped, ""},
 		{"not in the library", "ch-new", "group-dev", false, addDialogAdd, ""},
+		{"multi-group matches target", "ch-multi", "group-dev", true, addDialogAlreadyThere, "GameDev"},
+		{"multi-group moves to third group", "ch-multi", "group-other", true, addDialogMove, "Fun"},
+		{"target new group moves existing", "ch-fun", addDialogGroupNewSentinel, true, addDialogMove, "Fun"},
+		{"target new group moves ungrouped", "ch-loose", addDialogGroupNewSentinel, true, addDialogMoveUngrouped, ""},
 	}
 	for _, tt := range tests {
 		plan := addDialogPlanFor(tt.id, groups, tt.target, tt.inLibrary)
@@ -282,6 +287,8 @@ func TestAddDialogDuplicateCopyAndPrimaryLabel(t *testing.T) {
 		name        string
 		channelID   string
 		target      string
+		newGroup    bool
+		newName     string
 		wantText    string
 		wantPrimary string
 		disabled    bool
@@ -297,8 +304,25 @@ func TestAddDialogDuplicateCopyAndPrimaryLabel(t *testing.T) {
 			wantPrimary: "Add", disabled: true,
 		},
 		{
+			name: "already in ungrouped", channelID: "ch-loose", target: "",
+			wantText:    "Loose channel is already in Ungrouped.",
+			wantPrimary: "Add", disabled: true,
+		},
+		{
 			name: "moves out of ungrouped", channelID: "ch-loose", target: "group-fun",
 			wantText:    "This moves Loose channel from Ungrouped to Fun.",
+			wantPrimary: "Move",
+		},
+		{
+			name: "moves into new group with custom name", channelID: "ch-fun", target: "group-fun",
+			newGroup: true, newName: "Chess",
+			wantText:    "This moves Anna Cramling from Fun to Chess.",
+			wantPrimary: "Move",
+		},
+		{
+			name: "moves into new group with default name", channelID: "ch-fun", target: "group-fun",
+			newGroup: true,
+			wantText:    "This moves Anna Cramling from Fun to New Group.",
 			wantPrimary: "Move",
 		},
 	}
@@ -308,6 +332,8 @@ func TestAddDialogDuplicateCopyAndPrimaryLabel(t *testing.T) {
 		w.addDialog.state = addDialogResolved
 		w.addDialog.channel = core.Channel{ID: tt.channelID, Title: channelTitleOf(w, tt.channelID)}
 		w.addDialog.groupID = tt.target
+		w.addDialog.newGroupMode = tt.newGroup
+		w.addDialog.newGroupName = tt.newName
 		frame.Frame()
 		if !frame.HasText(tt.wantText) {
 			t.Fatalf("%s: %q is not on screen", tt.name, tt.wantText)
@@ -322,6 +348,40 @@ func TestAddDialogDuplicateCopyAndPrimaryLabel(t *testing.T) {
 		if !frame.HasText("Already in your library") {
 			t.Fatalf("%s: the card does not say the channel is already in the library", tt.name)
 		}
+	}
+}
+
+func TestAddDialogNewGroupMoveSubmission(t *testing.T) {
+	a, w := addDialogTestApp(t)
+	tt := addDialogTester(t, w, 1280, 808)
+	w.addDialog.state = addDialogResolved
+	w.addDialog.channel = core.Channel{ID: "ch-fun", Title: "Anna Cramling"}
+	w.addDialog.groupID = "group-fun"
+	w.addDialog.newGroupMode = true
+	w.addDialog.newGroupName = "Chess"
+	tt.Frame()
+	if err := tt.Click("Move"); err != nil {
+		t.Fatalf("click Move: %v", err)
+	}
+	tt.Frame()
+	if w.addDialog.open {
+		t.Fatal("the dialog stayed open after moving into a new group")
+	}
+	var newGroupID string
+	for id, group := range a.Sync.Groups {
+		if group.Name == "Chess" {
+			newGroupID = id
+			break
+		}
+	}
+	if newGroupID == "" {
+		t.Fatal("the new group Chess was not created")
+	}
+	if containsString(a.Sync.Groups["group-fun"].ChannelIDs, "ch-fun") {
+		t.Fatal("ch-fun was not removed from group-fun")
+	}
+	if !containsString(a.Sync.Groups[newGroupID].ChannelIDs, "ch-fun") {
+		t.Fatal("ch-fun was not added to the new group")
 	}
 }
 
