@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -315,6 +316,45 @@ func (a *App) SetGroupOrder(ids []string) error {
 		return true
 	})
 	return err
+}
+
+// RenameGroup updates a group's name across sync and local state, and persists
+// it to the sync file.
+func (a *App) RenameGroup(id, newName string) error {
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		return errors.New("group name cannot be empty")
+	}
+	now := time.Now().UnixMilli()
+	if a.Sync.Groups == nil {
+		a.Sync.Groups = map[string]core.ChannelGroup{}
+	}
+	if !a.Sync.RenameGroup(id, newName, now) {
+		found := false
+		for _, cg := range a.Groups {
+			if cg.ID == id {
+				cg.Name = newName
+				cg.UpdatedAt = now
+				a.Sync.Groups[id] = cg
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("group %q not found", id)
+		}
+		if a.Sync.UpdatedAt < now {
+			a.Sync.UpdatedAt = now
+		}
+	}
+	for i := range a.Groups {
+		if a.Groups[i].ID == id {
+			a.Groups[i].Name = newName
+			a.Groups[i].UpdatedAt = now
+			break
+		}
+	}
+	return a.SaveSync()
 }
 
 func (a *App) Close() {
@@ -886,10 +926,21 @@ func (a *App) VisibleVideos() []core.Video {
 			allowed[id] = true
 		}
 	} else if strings.HasPrefix(selected, "group:") {
-		if g, ok := a.Sync.Groups[strings.TrimPrefix(selected, "group:")]; ok {
+		gid := strings.TrimPrefix(selected, "group:")
+		if g, ok := a.Sync.Groups[gid]; ok {
 			allowed = map[string]bool{}
 			for _, id := range g.ChannelIDs {
 				allowed[id] = true
+			}
+		} else {
+			for _, g := range a.Groups {
+				if g.ID == gid {
+					allowed = map[string]bool{}
+					for _, id := range g.ChannelIDs {
+						allowed[id] = true
+					}
+					break
+				}
 			}
 		}
 	} else if strings.HasPrefix(selected, "channel:") {

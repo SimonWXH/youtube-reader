@@ -123,6 +123,29 @@ func TestSyncMerge(t *testing.T) {
 	}
 }
 
+func TestSyncRenameGroup(t *testing.T) {
+	s := newSyncState("A")
+	s.Groups["g"] = ChannelGroup{ID: "g", Name: "Tech", ChannelIDs: []string{"UC_1"}, UpdatedAt: 10}
+	if !s.RenameGroup("g", "Technology", 50) {
+		t.Fatal("rename existing group should return true")
+	}
+	if s.Groups["g"].Name != "Technology" || s.Groups["g"].UpdatedAt != 50 {
+		t.Fatalf("renamed group state: %+v", s.Groups["g"])
+	}
+	if s.UpdatedAt != 50 {
+		t.Fatalf("sync UpdatedAt = %d, want 50", s.UpdatedAt)
+	}
+	if s.RenameGroup("nonexistent", "Tech", 60) {
+		t.Fatal("rename nonexistent group should return false")
+	}
+	if s.RenameGroup("g", "   ", 60) {
+		t.Fatal("rename group to blank should return false")
+	}
+	if s.Groups["g"].Name != "Technology" {
+		t.Fatalf("blank rename modified group name: %+v", s.Groups["g"])
+	}
+}
+
 func TestSyncAtomicAndConflictMerge(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sync.json")

@@ -22,12 +22,22 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 			nav.row(c, t, mui.SidebarRow{
 				Key: "all", Label: "All videos", Symbol: "play.rectangle", Count: fmt.Sprintf("%d", counts.total),
 				Selected: w.app.Selected == "all",
-				OnClick:  func() { w.app.Selected = "all" },
+				OnClick: func() {
+					if w.renamingGroupID != "" {
+						w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
+					}
+					w.app.Selected = "all"
+				},
 			})
 			nav.row(c, t, mui.SidebarRow{
 				Key: "favorites", Label: "Favorites", Symbol: "star", Count: fmt.Sprintf("%d", counts.favorites),
 				Selected: w.app.Selected == "favorites",
-				OnClick:  func() { w.app.Selected = "favorites" },
+				OnClick: func() {
+					if w.renamingGroupID != "" {
+						w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
+					}
+					w.app.Selected = "favorites"
+				},
 			})
 			for i, g := range w.app.Groups {
 				w.groupSection(c, t, g, i, nav, counts, &drag)
@@ -50,7 +60,12 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 					Key: "all-channels:" + ch.ID, Label: ch.Title, Channel: true, Avatar: ch.AvatarURL,
 					Count:    fmt.Sprintf("%d", counts.perChannel[ch.ID]),
 					Selected: w.app.Selected == "channel:"+ch.ID,
-					OnClick:  func() { w.app.Selected = "channel:" + ch.ID },
+					OnClick: func() {
+						if w.renamingGroupID != "" {
+							w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
+						}
+						w.app.Selected = "channel:" + ch.ID
+					},
 				})
 			}
 		})
@@ -88,6 +103,14 @@ func ungroupedHeader(locale string) string {
 	return "Ungrouped"
 }
 
+// renameMenuLabel returns the context menu item label for renaming groups.
+func renameMenuLabel(locale string) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return "重命名"
+	}
+	return "Rename"
+}
+
 // sidebarNav keeps the sidebar's keyboard order for one frame. Rows register
 // themselves as they build, so Up and Down can move the selection from the
 // focused row to the next row that navigates, skipping the fold rows in
@@ -104,7 +127,7 @@ type sidebarNav struct {
 // row builds a row and adds it to the keyboard order, returning the element so
 // a caller can make it a drag source. A row with an action opens the same
 // selection whether it is clicked, opened with Return, or reached with Up or
-// Down. The fold rows toggle, so the arrows skip them.
+// Down.
 func (n *sidebarNav) row(c *ui.Context, t mui.Tokens, r mui.SidebarRow) ui.Element {
 	key := r.Key
 	if r.OnClick != nil {
@@ -113,12 +136,12 @@ func (n *sidebarNav) row(c *ui.Context, t mui.Tokens, r mui.SidebarRow) ui.Eleme
 			n.clearKeyboardFocus()
 			action()
 		}
-		if !r.Fold {
+		if !r.Renaming {
 			n.actions[key] = action
 		}
 	}
 	el := r.Build(c, t)
-	if n.focus == key {
+	if n.focus == key && !r.Renaming {
 		el.Focus()
 		if el.Focused() {
 			n.w.sidebarKeyboard = key
@@ -185,11 +208,40 @@ func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, 
 	collapsed := w.app.GroupCollapsed(g.ID)
 	focused := false
 	section := ui.Column(c.Key("group-block:" + g.ID))
+	renaming := w.renamingGroupID == g.ID
 	section.Children(func() {
 		row := nav.row(c, t, mui.SidebarRow{
-			Key: "group-collapse:" + g.ID, Label: g.Name, Count: fmt.Sprintf("%d", counts.group(g.ChannelIDs)),
+			Key: "group:" + g.ID, Label: g.Name, Count: fmt.Sprintf("%d", counts.group(g.ChannelIDs)),
 			Fold: true, Expanded: !collapsed,
-			OnClick: func() { _ = w.app.SetGroupCollapsed(g.ID, !collapsed) },
+			Selected: w.app.Selected == "group:"+g.ID,
+			OnClick: func() {
+				if w.renamingGroupID != "" && w.renamingGroupID != g.ID {
+					w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
+				}
+				w.app.Selected = "group:" + g.ID
+			},
+			OnFoldClick: func() {
+				if w.renamingGroupID != "" {
+					w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
+				}
+				_ = w.app.SetGroupCollapsed(g.ID, !collapsed)
+			},
+			OnContextMenu: func(m *ui.Menu) {
+				renameText := renameMenuLabel(c.Locale())
+				if m.Item(renameText).Chosen() {
+					w.startRenameGroup(g.ID, g.Name)
+				}
+			},
+			Renaming:    renaming,
+			RenameValue: &w.renamingGroupName,
+			OnRename: func(newName string) {
+				w.commitRenameGroup(g.ID, newName)
+				c.Invalidate()
+			},
+			OnRenameCancel: func() {
+				w.cancelRenameGroup()
+				c.Invalidate()
+			},
 		})
 		focused = focused || row.Focused()
 		// The row drags its group. MyGo keeps a press that moved a few DIPs
@@ -210,10 +262,15 @@ func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, 
 			id := id
 			ch := w.channelByID(id)
 			row := nav.row(c, t, mui.SidebarRow{
-				Key: fmt.Sprintf("group:%s:channel:%s", g.Name, id), Label: ch.Title, Channel: true, Avatar: ch.AvatarURL,
+				Key: fmt.Sprintf("group:%s:channel:%s", g.ID, id), Label: ch.Title, Channel: true, Avatar: ch.AvatarURL,
 				Count:    fmt.Sprintf("%d", counts.perChannel[id]),
 				Selected: w.app.Selected == "channel:"+id,
-				OnClick:  func() { w.app.Selected = "channel:" + id },
+				OnClick: func() {
+					if w.renamingGroupID != "" {
+						w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
+					}
+					w.app.Selected = "channel:" + id
+				},
 			})
 			focused = focused || row.Focused()
 		}

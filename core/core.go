@@ -279,6 +279,26 @@ func (s *SyncState) ReplaceGroups(groups []ChannelGroup, channels []Channel, now
 	s.UpdatedAt = now
 }
 
+func (s *SyncState) RenameGroup(id, newName string, now int64) bool {
+	normalizeSync(s)
+	if s.Groups == nil {
+		return false
+	}
+	g, ok := s.Groups[id]
+	if !ok {
+		return false
+	}
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		return false
+	}
+	g.Name = newName
+	g.UpdatedAt = now
+	s.Groups[id] = g
+	s.UpdatedAt = now
+	return true
+}
+
 func (s *SyncState) FavoritesSorted() []Video {
 	var out []Video
 	for _, f := range s.Favorites {

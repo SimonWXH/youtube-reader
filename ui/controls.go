@@ -37,16 +37,22 @@ const ScrollBottomInset float32 = 20
 // supplies pointer, Return and Space activation, and every row takes the
 // keyboard focus with the shared 2 pt ring at the token's 3 pt offset.
 type SidebarRow struct {
-	Key      string
-	Label    string
-	Count    string
-	Symbol   string // SF Symbol name for the leading navigation glyph
-	Channel  bool   // show a channel avatar instead of a glyph
-	Avatar   string // the channel's avatar URL; empty draws a monogram
-	Fold     bool   // this row folds the rows below it
-	Expanded bool   // the fold is open, so the chevron points down
-	Selected bool
-	OnClick  func()
+	Key            string
+	Label          string
+	Count          string
+	Symbol         string // SF Symbol name for the leading navigation glyph
+	Channel        bool   // show a channel avatar instead of a glyph
+	Avatar         string // the channel's avatar URL; empty draws a monogram
+	Fold           bool   // this row folds the rows below it
+	Expanded       bool   // the fold is open, so the chevron points down
+	Selected       bool
+	Renaming       bool   // row is currently being renamed inline
+	RenameValue    *string // value buffer for the rename text input
+	OnRename       func(newName string) // callback on rename submit
+	OnRenameCancel func() // callback on rename cancel
+	OnClick        func()
+	OnFoldClick    func()
+	OnContextMenu  func(m *ui.Menu)
 }
 
 // Build creates the row's element in this frame.
@@ -60,35 +66,129 @@ func (r SidebarRow) Build(c *ui.Context, tokens Tokens) ui.Element {
 	if r.Channel {
 		rowHeight = SidebarChannelRowHeight
 	}
+	countColor := tokens.Muted
+	if r.Selected {
+		countColor = face.Text
+	}
+
+	if r.Fold {
+		container := ui.Row(c).Key(r.Key + ":container").
+			Height(rowHeight).FillWidth().Gap(0).Padding(0, Space(2)).
+			Radius(RadiusControl).Background(face.Background).TextColor(face.Text).
+			Transition(Fade).MarginY(1)
+
+		glyph := "chevron.right"
+		if r.Expanded {
+			glyph = "chevron.down"
+		}
+		chevronColor := tokens.Muted
+		if r.Selected {
+			chevronColor = face.Text
+		}
+
+		var chevron ui.Element
+		var body ui.Element
+
+		container.Children(func() {
+			chevron = ui.ButtonBase(c).Key(r.Key + ":fold").
+				Width(16).Height(rowHeight).
+				Radius(RadiusControl).
+				Cursor(ui.CursorPointer).
+				Label("Toggle " + r.Label).
+				Role(ui.RoleDisclosure).Expanded(r.Expanded)
+			chevron.Children(func() {
+				sfsymbols.Symbol(c, glyph).Size(12).Color(chevronColor).Element.Role(ui.RoleNone)
+			})
+			if r.OnFoldClick != nil && chevron.Clicked() {
+				r.OnFoldClick()
+			}
+
+			if r.Renaming {
+				input := ui.TextInput(c.Key(r.Key+":rename-input"), r.RenameValue).
+					Height(20).Grow(1).
+					PaddingX(Space(1)).Radius(RadiusControl).
+					Background(tokens.Surface).Border(Hairline, tokens.Border).
+					TextColor(tokens.Text).Label("Rename " + r.Label).
+					FocusRingColor(tokens.Focus).FocusRingOffset(FocusRingGap)
+				Control.Apply(input).FontSize(13)
+				input.Focus()
+				input.OnShortcut(0, ui.KeyEnter, func() {
+					if r.OnRename != nil && r.RenameValue != nil {
+						r.OnRename(*r.RenameValue)
+					}
+				})
+				input.OnShortcut(0, ui.KeyEscape, func() {
+					if r.OnRenameCancel != nil {
+						r.OnRenameCancel()
+					}
+				})
+				input.OnSubmit(func() {
+					if r.OnRename != nil && r.RenameValue != nil {
+						r.OnRename(*r.RenameValue)
+					}
+				})
+				body = input
+			} else {
+				btn := ui.ButtonBase(c).Key(r.Key).
+					Height(rowHeight).Grow(1).Gap(Space(2)).Padding(0, Space(1)).
+					Radius(RadiusControl).TextColor(face.Text).
+					Cursor(ui.CursorPointer).Transition(Fade).
+					FocusRingColor(tokens.Focus).FocusRingOffset(FocusRingGap).
+					Label(r.Label)
+
+				if btn.Focused() || btn.FocusVisible() {
+					btn.ZIndex(1)
+					container.ZIndex(1)
+				}
+				if r.OnContextMenu != nil {
+					btn.ContextMenu(r.OnContextMenu)
+				}
+				btn.Children(func() {
+					textColor := tokens.Muted
+					if r.Selected {
+						textColor = face.Text
+					}
+					SidebarGroupLabel.Apply(ui.Text(c, r.Label)).TextColor(textColor).SingleLine().Grow(1)
+					if r.Count != "" {
+						Metadata.Apply(ui.Text(c, r.Count)).TextColor(countColor).SingleLine()
+					}
+				})
+				if r.OnClick != nil && btn.Clicked() {
+					r.OnClick()
+				}
+				body = btn
+			}
+		})
+
+		container.Draw(func(p *ui.Painter, box ui.Rect) {
+			if r.Renaming {
+				return
+			}
+			switch {
+			case (body.Pressed() || chevron.Pressed()) && !r.Selected:
+				p.Fill(box, tokens.Face(Active, false, true).Background, RadiusControl)
+			case (container.Hovered() || body.Hovered() || chevron.Hovered()) && !r.Selected:
+				p.Fill(box, tokens.Face(Hover, false, true).Background, RadiusControl)
+			}
+		})
+
+		return body
+	}
+
 	el := ui.ButtonBase(c).Key(r.Key).
 		Height(rowHeight).FillWidth().Gap(Space(2)).Padding(0, Space(2)).
 		Radius(RadiusControl).Background(face.Background).TextColor(face.Text).
 		Cursor(ui.CursorPointer).Transition(Fade).MarginY(1).
 		FocusRingColor(tokens.Focus).FocusRingOffset(FocusRingGap).
-		// Name the row by its label alone: without it the avatar's monogram
-		// letter and the trailing count would join the accessible name.
 		Label(r.Label)
-	if r.Fold {
-		el = el.Role(ui.RoleDisclosure).Expanded(r.Expanded)
-	}
 	if el.FocusVisible() {
-		// A row paints above its neighbours, so the 3 pt offset of its ring is
-		// never clipped by the next row's background.
 		el.ZIndex(1)
 	}
-	countColor := tokens.Muted
-	if r.Selected {
-		countColor = face.Text
+	if r.OnContextMenu != nil {
+		el.ContextMenu(r.OnContextMenu)
 	}
 	el.Children(func() {
 		switch {
-		case r.Fold:
-			glyph := "chevron.right"
-			if r.Expanded {
-				glyph = "chevron.down"
-			}
-			sfsymbols.Symbol(c, glyph).Size(12).Color(tokens.Muted).Element.Role(ui.RoleNone)
-			SidebarGroupLabel.Apply(ui.Text(c, r.Label)).TextColor(tokens.Muted).SingleLine().Grow(1)
 		case r.Channel:
 			ChannelAvatar(c, tokens, r.Avatar, r.Label, SidebarChannelAvatar)
 			Control.Apply(ui.Text(c, r.Label)).FontSize(13).SingleLine().Grow(1)
@@ -110,7 +210,7 @@ func (r SidebarRow) Build(c *ui.Context, tokens Tokens) ui.Element {
 			p.Fill(box, tokens.Face(Hover, false, true).Background, RadiusControl)
 		}
 	})
-	if r.OnClick != nil && el.Clicked() {
+	if r.OnClick != nil && el.Clicked() && !r.Renaming {
 		r.OnClick()
 	}
 	return el
