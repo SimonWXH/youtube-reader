@@ -1077,26 +1077,31 @@ func (a *App) eraseFavorites() error {
 
 // postNotification shows one local notification and records a refusal, so the
 // Notifications pane can offer System Settings instead of retrying forever.
+// It reports whether the recorded permission state changed. The background
+// helper's notifications arrive here too, through the local socket, so a
+// refusal is remembered whichever process asked for the refresh.
+func (a *App) postNotification(plan NotificationPlan) bool {
+	err := showNotification(plan)
+	changed, _ := a.updateSettings(func(s *core.Settings) bool {
+		denied := errors.Is(err, mygo.ErrNotificationsDenied)
+		if s.NotificationPermissionDenied == denied {
+			return false
+		}
+		s.NotificationPermissionDenied = denied
+		return true
+	})
+	return changed
+}
+
+// postNotification shows one notification and rebuilds the surfaces that report
+// a refused permission.
 func (w *Window) postNotification(plan NotificationPlan) {
-	err := postNotification(plan)
-	switch {
-	case err == nil:
-		w.saveSettings(func(s *core.Settings) bool {
-			if !s.NotificationPermissionDenied {
-				return false
-			}
-			s.NotificationPermissionDenied = false
-			return true
-		})
-	case errors.Is(err, mygo.ErrNotificationsDenied):
-		w.saveSettings(func(s *core.Settings) bool {
-			if s.NotificationPermissionDenied {
-				return false
-			}
-			s.NotificationPermissionDenied = true
-			return true
-		})
+	if !w.app.postNotification(plan) {
+		return
 	}
+	w.settingsChanged()
+	w.invalidateMainWindow()
+	w.refreshSettingsWindow()
 }
 
 func toggleID(ids []string, id string, add bool) []string {

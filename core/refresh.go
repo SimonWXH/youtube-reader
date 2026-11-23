@@ -20,6 +20,19 @@ type NotificationPlan struct {
 	NewestTitle string `json:"newestTitle"`
 }
 
+// VideoNotification records that a video's arrival was announced. It lives
+// beside the refresh rather than among the retained videos, so retention's
+// window and video cap cannot make an announced video look new again.
+type VideoNotification struct {
+	VideoID    string `json:"videoID"`
+	NotifiedAt int64  `json:"notifiedAt"`
+}
+
+// notifiedVideoRetention is how long an announced video stays known. It is far
+// longer than the 30-day uploads window every refresh reads, so a video that a
+// later refresh can still fetch is always still known as announced.
+const notifiedVideoRetention = 45 * 24 * time.Hour
+
 // RefreshResult carries everything a refresh caller needs: data is committed
 // to the local Store by RefreshYoutube; callers own settings and notifications.
 type RefreshResult struct {
@@ -66,6 +79,13 @@ func RefreshYoutube(ctx context.Context, client YouTube, settings Settings, stat
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	notifiedIDs := map[string]bool{}
+	if store != nil {
+		var err error
+		if notifiedIDs, err = store.NotifiedVideoIDs(ctx); err != nil {
+			return failed(err)
+		}
+	}
 	infos, err := client.ChannelInfo(ctx, ids)
 	if err != nil {
 		return failed(err)
@@ -94,6 +114,7 @@ func RefreshYoutube(ctx context.Context, client YouTube, settings Settings, stat
 	all := []Video{}
 	failures := []RefreshFailure{}
 	notifications := []NotificationPlan{}
+	announced := []VideoNotification{}
 	for _, id := range ids {
 		ch := state.Channels[id]
 		uploads := ch.UploadedAt
@@ -120,13 +141,18 @@ func RefreshYoutube(ctx context.Context, client YouTube, settings Settings, stat
 		}
 		newCount := 0
 		newest := ""
+		newIDs := []string{}
 		for _, v := range videos {
 			v.ChannelID = id
 			v.ChannelTitle = ch.Title
 			v.AvatarURL = ch.AvatarURL
 			v.IsShort = IsShort(v.Duration, v.Width, v.Height)
-			if !existingIDs[v.ID] {
+			// A video counts as new only while it has never been stored,
+			// never been announced and never been read: retention may drop
+			// its row from the store, and that must not re-announce it.
+			if !existingIDs[v.ID] && !notifiedIDs[v.ID] && !state.IsRead(v.ID) {
 				newCount++
+				newIDs = append(newIDs, v.ID)
 				if newest == "" {
 					newest = v.Title
 				}
@@ -135,6 +161,9 @@ func RefreshYoutube(ctx context.Context, client YouTube, settings Settings, stat
 		}
 		if newCount > 0 && notificationEnabled(settings, id) {
 			notifications = append(notifications, NotificationPlan{ChannelID: id, ChannelName: ch.Title, Count: newCount, NewestTitle: newest})
+			for _, videoID := range newIDs {
+				announced = append(announced, VideoNotification{VideoID: videoID, NotifiedAt: now.UnixMilli()})
+			}
 		}
 	}
 	all = DedupeVideos(all)
@@ -178,7 +207,7 @@ func RefreshYoutube(ctx context.Context, client YouTube, settings Settings, stat
 		Revision: revision + 1,
 	}
 	if store != nil {
-		if err := store.CommitRefresh(ctx, RefreshCommit{Channels: channels, Videos: all, Revision: revision + 1}); err != nil {
+		if err := store.CommitRefresh(ctx, RefreshCommit{Channels: channels, Videos: all, Revision: revision + 1, Notified: announced}); err != nil {
 			return failed(err)
 		}
 	}

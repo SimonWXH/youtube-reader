@@ -818,13 +818,12 @@ func (a *App) ConsumeHandoff() error {
 		return nil
 	}
 	var handoff struct {
-		ID          string                   `json:"id"`
-		CreatedAt   string                   `json:"createdAt"`
-		Description string                   `json:"description"`
-		Result      *core.RefreshResult      `json:"result"`
-		Notified    []core.NotificationPlan  `json:"notified"`
-		Failures    []core.RefreshFailure    `json:"failures"`
-		Clicks      []core.NotificationClick `json:"clicks"`
+		ID          string                  `json:"id"`
+		CreatedAt   string                  `json:"createdAt"`
+		Description string                  `json:"description"`
+		Result      *core.RefreshResult     `json:"result"`
+		Notified    []core.NotificationPlan `json:"notified"`
+		Failures    []core.RefreshFailure   `json:"failures"`
 	}
 	if err := json.Unmarshal(data, &handoff); err != nil {
 		return nil
@@ -839,11 +838,6 @@ func (a *App) ConsumeHandoff() error {
 	}
 	if len(handoff.Notified) > 0 {
 		a.LastNotified = handoff.Notified
-	}
-	if len(handoff.Clicks) > 0 {
-		if err := a.RecordNotificationClicks(handoff.Clicks); err != nil {
-			log.Printf("notification click handoff: %v", err)
-		}
 	}
 	_, _ = a.updateSettings(func(s *core.Settings) bool {
 		if fresh && len(handoff.Failures) > 0 {
@@ -862,91 +856,6 @@ func (a *App) ConsumeHandoff() error {
 	})
 	_ = os.Remove(path)
 	return a.reload()
-}
-
-// notificationClicksPath is the local, atomic queue of helper-posted
-// notifications that may produce a click callback. It is never synced.
-func (a *App) notificationClicksPath() string {
-	return filepath.Join(a.Dir, "notification-clicks.json")
-}
-
-func readNotificationClicks(path string) (core.NotificationClicks, error) {
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return core.NotificationClicks{}, nil
-	}
-	if err != nil {
-		return core.NotificationClicks{}, err
-	}
-	var queue core.NotificationClicks
-	if err := json.Unmarshal(data, &queue); err != nil {
-		return core.NotificationClicks{}, fmt.Errorf("parse notification click queue: %w", err)
-	}
-	if err := queue.Validate(); err != nil {
-		return core.NotificationClicks{}, err
-	}
-	return queue, nil
-}
-
-func writeNotificationClicks(path string, queue core.NotificationClicks) error {
-	data, err := json.MarshalIndent(queue, "", "  ")
-	if err != nil {
-		return err
-	}
-	return atomicWrite(path, data)
-}
-
-// RecordNotificationClicks appends helper-posted notification records after
-// dropping duplicates. Older records are kept: consuming a newer click must
-// not suppress a still-pending notification.
-func (a *App) RecordNotificationClicks(clicks []core.NotificationClick) error {
-	path := a.notificationClicksPath()
-	queue, err := readNotificationClicks(path)
-	if err != nil {
-		return err
-	}
-	known := make(map[string]bool, len(queue.Clicks)+len(clicks))
-	for _, click := range queue.Clicks {
-		known[core.NotificationClickKey(click)] = true
-	}
-	for _, click := range clicks {
-		if err := core.ValidateNotificationClick(click); err != nil {
-			return err
-		}
-		key := core.NotificationClickKey(click)
-		if known[key] {
-			continue
-		}
-		queue.Clicks = append(queue.Clicks, click)
-		known[key] = true
-	}
-	return writeNotificationClicks(path, queue)
-}
-
-// ConsumeNotificationClick selects the newest pending helper-posted record and
-// leaves older records for later click callbacks. It must only be called from
-// an actual notification-click handler, never during an ordinary launch.
-// Corrupt state is rejected and left untouched rather than failing open.
-func (a *App) ConsumeNotificationClick() (string, bool) {
-	path := a.notificationClicksPath()
-	queue, err := readNotificationClicks(path)
-	if err != nil {
-		log.Printf("notification click queue: %v", err)
-		return "", false
-	}
-	if len(queue.Clicks) == 0 {
-		return "", false
-	}
-	latest, tail, err := core.LatestNotificationClick(queue)
-	if err != nil {
-		log.Printf("notification click queue: %v", err)
-		return "", false
-	}
-	if err := writeNotificationClicks(path, tail); err != nil {
-		log.Printf("notification click queue: %v", err)
-		return "", false
-	}
-	return latest.ChannelID, true
 }
 
 // SelectChannel routes the UI to a channel's filtered view and clears the
