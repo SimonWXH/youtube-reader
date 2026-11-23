@@ -655,6 +655,327 @@ func TestSettingsNotificationsOfferSystemSettings(t *testing.T) {
 	}
 }
 
+func notificationGroupTestApp(t *testing.T) *App {
+	t.Helper()
+	dir := t.TempDir()
+	home := t.TempDir()
+	previousHomeDir := helperHomeDir
+	helperHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { helperHomeDir = previousHomeDir })
+	a := &App{
+		Dir:      dir,
+		Selected: "all",
+		Settings: core.Settings{
+			APIKey:         "A" + "I" + "z" + "a" + "SyA" + strings.Repeat("1", 32),
+			RefreshMinutes: defaultRefreshMinutes,
+			SyncPath:       filepath.Join(dir, "sync.json"),
+			BackupPath:     filepath.Join(dir, "favorites-backup.json"),
+			MaxGridColumns: defaultMaxGridColumns,
+		},
+		Sync: core.SyncState{
+			SchemaVersion: 1,
+			DeviceID:      "device-test",
+			Channels: map[string]core.Channel{
+				"ch-1": {ID: "ch-1", Title: "Go Channel"},
+				"ch-2": {ID: "ch-2", Title: "Rust Channel"},
+				"ch-3": {ID: "ch-3", Title: "Python Channel"},
+			},
+			ReadStates: map[string]map[string]core.ReadRecord{},
+			Favorites:  map[string]core.FavoriteRecord{},
+			Groups: map[string]core.ChannelGroup{
+				"grp-tech": {ID: "grp-tech", Name: "Tech", ChannelIDs: []string{"ch-1", "ch-2"}},
+			},
+		},
+		Channels: []core.Channel{
+			{ID: "ch-1", Title: "Go Channel"},
+			{ID: "ch-2", Title: "Rust Channel"},
+			{ID: "ch-3", Title: "Python Channel"},
+		},
+		Groups: []core.ChannelGroup{
+			{ID: "grp-tech", Name: "Tech", ChannelIDs: []string{"ch-1", "ch-2"}},
+		},
+	}
+	return a
+}
+
+// TestNotificationGroupDerivedStates covers all-off, mixed, and all-on states
+// for a group's master switch and summary text.
+func TestNotificationGroupDerivedStates(t *testing.T) {
+	// Case 1: All off
+	a := notificationGroupTestApp(t)
+	a.Settings.NotificationIDs = nil
+	_, tt := settingsTester(t, a, settingsNotifications)
+	techSwitch, ok := tt.AccessByRole(ui.RoleSwitch, "Tech")
+	if !ok {
+		t.Fatal("Tech group master switch missing")
+	}
+	if techSwitch.Checked {
+		t.Fatal("expected Tech group switch to be off when no channels are enabled")
+	}
+	if !tt.HasText("0/2 enabled") {
+		t.Fatalf("expected '0/2 enabled' text, got: %v", tt.Texts())
+	}
+
+	// Case 2: Mixed (1 of 2 on)
+	a.Settings.NotificationIDs = []string{"ch-1"}
+	_, tt = settingsTester(t, a, settingsNotifications)
+	techSwitch, ok = tt.AccessByRole(ui.RoleSwitch, "Tech")
+	if !ok {
+		t.Fatal("Tech group master switch missing")
+	}
+	if techSwitch.Checked {
+		t.Fatal("expected Tech group switch to be off in mixed state")
+	}
+	if !tt.HasText("1/2 enabled") {
+		t.Fatalf("expected '1/2 enabled' text, got: %v", tt.Texts())
+	}
+
+	// Case 3: All on (2 of 2 on)
+	a.Settings.NotificationIDs = []string{"ch-1", "ch-2"}
+	_, tt = settingsTester(t, a, settingsNotifications)
+	techSwitch, ok = tt.AccessByRole(ui.RoleSwitch, "Tech")
+	if !ok {
+		t.Fatal("Tech group master switch missing")
+	}
+	if !techSwitch.Checked {
+		t.Fatal("expected Tech group switch to be on when all channels are enabled")
+	}
+	if !tt.HasText("2/2 enabled") {
+		t.Fatalf("expected '2/2 enabled' text, got: %v", tt.Texts())
+	}
+}
+
+// TestNotificationGroupMasterToggleBulkAddAndRemove verifies that flipping the
+// group master switch in mixed/all-off state bulk-adds all channels in that group,
+// and flipping in all-on state bulk-removes all channels in that group.
+func TestNotificationGroupMasterToggleBulkAddAndRemove(t *testing.T) {
+	a := notificationGroupTestApp(t)
+	// Start with mixed state: only ch-1 is enabled
+	a.Settings.NotificationIDs = []string{"ch-1"}
+	_, tt := settingsTester(t, a, settingsNotifications)
+
+	techSwitch, ok := tt.AccessByRole(ui.RoleSwitch, "Tech")
+	if !ok {
+		t.Fatal("Tech group switch not found")
+	}
+	if techSwitch.Checked {
+		t.Fatal("expected Tech switch to start unchecked in mixed state")
+	}
+
+	// Flip from mixed -> should bulk-add all channels in Tech group
+	tt.ClickAt(techSwitch.Bounds.X+techSwitch.Bounds.W/2, techSwitch.Bounds.Y+techSwitch.Bounds.H/2)
+	tt.Frame()
+
+	settings := loadSettingsFile(t, a.Dir)
+	if !containsID(settings.NotificationIDs, "ch-1") || !containsID(settings.NotificationIDs, "ch-2") {
+		t.Fatalf("expected both ch-1 and ch-2 in settings.NotificationIDs after bulk enable, got: %v", settings.NotificationIDs)
+	}
+
+	// Verify UI reflects all on
+	techSwitch, ok = tt.AccessByRole(ui.RoleSwitch, "Tech")
+	if !ok || !techSwitch.Checked {
+		t.Fatal("expected Tech group switch to be checked after bulk enable")
+	}
+	if !tt.HasText("2/2 enabled") {
+		t.Fatalf("expected '2/2 enabled', got: %v", tt.Texts())
+	}
+
+	// Flip from all on -> should bulk-remove all channels in Tech group
+	tt.ClickAt(techSwitch.Bounds.X+techSwitch.Bounds.W/2, techSwitch.Bounds.Y+techSwitch.Bounds.H/2)
+	tt.Frame()
+
+	settings = loadSettingsFile(t, a.Dir)
+	if containsID(settings.NotificationIDs, "ch-1") || containsID(settings.NotificationIDs, "ch-2") {
+		t.Fatalf("expected neither ch-1 nor ch-2 in settings.NotificationIDs after bulk disable, got: %v", settings.NotificationIDs)
+	}
+
+	// Verify UI reflects all off
+	techSwitch, ok = tt.AccessByRole(ui.RoleSwitch, "Tech")
+	if !ok || techSwitch.Checked {
+		t.Fatal("expected Tech group switch to be unchecked after bulk disable")
+	}
+	if !tt.HasText("0/2 enabled") {
+		t.Fatalf("expected '0/2 enabled', got: %v", tt.Texts())
+	}
+}
+
+// TestNotificationGroupDefaultOffForNewlyGroupedChannel checks that when a new
+// channel is added to an existing group whose channels were all enabled, the new
+// channel starts off by default and the group switch falls back to the mixed off state.
+func TestNotificationGroupDefaultOffForNewlyGroupedChannel(t *testing.T) {
+	a := notificationGroupTestApp(t)
+	// Initially, Tech group only has ch-1 and it is enabled (1/1 enabled)
+	a.Sync.Groups["grp-tech"] = core.ChannelGroup{
+		ID:         "grp-tech",
+		Name:       "Tech",
+		ChannelIDs: []string{"ch-1"},
+	}
+	a.Groups = []core.ChannelGroup{
+		{ID: "grp-tech", Name: "Tech", ChannelIDs: []string{"ch-1"}},
+	}
+	a.Settings.NotificationIDs = []string{"ch-1"}
+
+	_, tt := settingsTester(t, a, settingsNotifications)
+	techSwitch, ok := tt.AccessByRole(ui.RoleSwitch, "Tech")
+	if !ok || !techSwitch.Checked {
+		t.Fatal("expected Tech group switch to be checked initially")
+	}
+	if !tt.HasText("1/1 enabled") {
+		t.Fatalf("expected '1/1 enabled', got: %v", tt.Texts())
+	}
+
+	// Now add ch-2 to the Tech group without adding it to NotificationIDs
+	a.Sync.Groups["grp-tech"] = core.ChannelGroup{
+		ID:         "grp-tech",
+		Name:       "Tech",
+		ChannelIDs: []string{"ch-1", "ch-2"},
+	}
+	a.Groups = []core.ChannelGroup{
+		{ID: "grp-tech", Name: "Tech", ChannelIDs: []string{"ch-1", "ch-2"}},
+	}
+
+	// Re-render
+	_, tt = settingsTester(t, a, settingsNotifications)
+
+	// Newly grouped channel ch-2 ("Rust Channel") must be off by default
+	rustSwitch, ok := tt.AccessByRole(ui.RoleSwitch, "Rust Channel")
+	if !ok {
+		t.Fatal("missing Rust Channel switch")
+	}
+	if rustSwitch.Checked {
+		t.Fatal("newly grouped channel started checked, want off by default")
+	}
+
+	// Tech group switch must now be off (mixed state)
+	techSwitch, ok = tt.AccessByRole(ui.RoleSwitch, "Tech")
+	if !ok {
+		t.Fatal("Tech group switch missing")
+	}
+	if techSwitch.Checked {
+		t.Fatal("Tech group switch remained checked after newly grouped channel was added")
+	}
+	if !tt.HasText("1/2 enabled") {
+		t.Fatalf("expected '1/2 enabled', got: %v", tt.Texts())
+	}
+}
+
+// TestNotificationUngroupedAndBilingualLocalization verifies that ungrouped channels
+// render under an Ungrouped card, localized to 未分组 with matching X/Y 已启用 summary
+// in Chinese locale, and that the Ungrouped master switch functions properly.
+func TestNotificationUngroupedAndBilingualLocalization(t *testing.T) {
+	a := notificationGroupTestApp(t)
+	// ch-1 and ch-2 are in Tech group. ch-3 ("Python Channel") is ungrouped.
+	a.Settings.NotificationIDs = []string{"ch-3"}
+
+	// 1. English locale
+	_, tt := settingsTester(t, a, settingsNotifications)
+	if !tt.HasText("Ungrouped") {
+		t.Fatalf("expected Ungrouped section header in English, got: %v", tt.Texts())
+	}
+	if !tt.HasText("1/1 enabled") {
+		t.Fatalf("expected 1/1 enabled for ungrouped, got: %v", tt.Texts())
+	}
+
+	ungroupedSwitch, ok := tt.AccessByRole(ui.RoleSwitch, "Ungrouped")
+	if !ok {
+		t.Fatal("Ungrouped master switch missing")
+	}
+	if !ungroupedSwitch.Checked {
+		t.Fatal("Ungrouped master switch should be checked when all ungrouped channels are enabled")
+	}
+
+	// 2. Chinese locale
+	tt.SetLocale("zh-Hans")
+	tt.Frame()
+
+	if !tt.HasText("未分组") {
+		t.Fatalf("expected 未分组 in Chinese locale, got: %v", tt.Texts())
+	}
+	if tt.HasText("Ungrouped") {
+		t.Fatalf("unexpected Ungrouped in Chinese locale, got: %v", tt.Texts())
+	}
+	if !tt.HasText("1/1 已启用") {
+		t.Fatalf("expected 1/1 已启用 in Chinese locale, got: %v", tt.Texts())
+	}
+
+	ungroupedSwitchZh, ok := tt.AccessByRole(ui.RoleSwitch, "未分组")
+	if !ok {
+		t.Fatal("未分组 master switch missing in Chinese locale")
+	}
+	if !ungroupedSwitchZh.Checked {
+		t.Fatal("未分组 master switch should be checked")
+	}
+}
+
+func TestNotificationMultiGroupChannel(t *testing.T) {
+	a := notificationGroupTestApp(t)
+	a.Sync.Groups = map[string]core.ChannelGroup{
+		"grp-tech":    {ID: "grp-tech", Name: "Tech", ChannelIDs: []string{"ch-1", "ch-2"}},
+		"grp-science": {ID: "grp-science", Name: "Science", ChannelIDs: []string{"ch-1"}},
+	}
+	a.Groups = []core.ChannelGroup{
+		{ID: "grp-tech", Name: "Tech", ChannelIDs: []string{"ch-1", "ch-2"}},
+		{ID: "grp-science", Name: "Science", ChannelIDs: []string{"ch-1"}},
+	}
+	a.Settings.NotificationIDs = []string{"ch-1"}
+
+	_, tt := settingsTester(t, a, settingsNotifications)
+
+	techSwitch, ok := tt.AccessByRole(ui.RoleSwitch, "Tech")
+	if !ok {
+		t.Fatal("Tech group master switch missing")
+	}
+	scienceSwitch, ok := tt.AccessByRole(ui.RoleSwitch, "Science")
+	if !ok {
+		t.Fatal("Science group master switch missing")
+	}
+
+	if techSwitch.Checked {
+		t.Fatal("expected Tech group switch to be off in mixed state")
+	}
+	if !scienceSwitch.Checked {
+		t.Fatal("expected Science group switch to be on")
+	}
+
+	var goSwitches []ui.AccessInfo
+	for _, info := range tt.AccessAll() {
+		if info.Role == ui.RoleSwitch && info.Name == "Go Channel" {
+			goSwitches = append(goSwitches, info)
+		}
+	}
+	if len(goSwitches) != 2 {
+		t.Fatalf("expected 2 'Go Channel' switches across groups, got %d", len(goSwitches))
+	}
+	for i, sw := range goSwitches {
+		if !sw.Checked {
+			t.Fatalf("switch %d for 'Go Channel' should be checked", i)
+		}
+	}
+
+	tt.ClickAt(scienceSwitch.Bounds.X+scienceSwitch.Bounds.W/2, scienceSwitch.Bounds.Y+scienceSwitch.Bounds.H/2)
+	tt.Frame()
+
+	settings := loadSettingsFile(t, a.Dir)
+	if containsID(settings.NotificationIDs, "ch-1") {
+		t.Fatalf("expected ch-1 to be removed from NotificationIDs, got: %v", settings.NotificationIDs)
+	}
+
+	goSwitches = nil
+	for _, info := range tt.AccessAll() {
+		if info.Role == ui.RoleSwitch && info.Name == "Go Channel" {
+			goSwitches = append(goSwitches, info)
+		}
+	}
+	if len(goSwitches) != 2 {
+		t.Fatalf("expected 2 'Go Channel' switches after toggle, got %d", len(goSwitches))
+	}
+	for i, sw := range goSwitches {
+		if sw.Checked {
+			t.Fatalf("switch %d for 'Go Channel' should be unchecked after Science group toggled off", i)
+		}
+	}
+}
+
 // TestEraseFavoritesClearsAndSaves is the destructive action behind the alert.
 func TestEraseFavoritesClearsAndSaves(t *testing.T) {
 	a := settingsTestApp(t)
@@ -1031,15 +1352,6 @@ func plistValues(t *testing.T, data string) map[string]string {
 			key = ""
 		}
 	}
-}
-
-func containsID(ids []string, id string) bool {
-	for _, candidate := range ids {
-		if candidate == id {
-			return true
-		}
-	}
-	return false
 }
 
 // plistStrings collects every string value in a property list, including the
