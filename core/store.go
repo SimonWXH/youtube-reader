@@ -27,13 +27,28 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db, path: path}
+	// A store written before announced videos were remembered has videos but no
+	// notified records. The first process to open it seeds the table from the
+	// videos that build already stored, so they are not announced again.
+	newNotified, err := s.missingTable(ctx, "notified")
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
 	for _, ddl := range []string{
 		`CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY, title TEXT, group_ids TEXT, avatar_url TEXT, uploads TEXT, updated_at INTEGER)`,
 		`CREATE TABLE IF NOT EXISTS videos (id TEXT PRIMARY KEY, channel_id TEXT, channel_title TEXT, title TEXT, description TEXT, thumbnail_url TEXT, avatar_url TEXT, published_at TEXT, duration TEXT, width INTEGER, height INTEGER, is_short INTEGER)`,
 		`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`,
 		`CREATE TABLE IF NOT EXISTS queue (id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT)`,
+		`CREATE TABLE IF NOT EXISTS notified (video_id TEXT PRIMARY KEY, notified_at INTEGER NOT NULL)`,
 	} {
 		if _, err := db.Execute(ctx, ddl); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
+	if newNotified {
+		if _, err := db.Execute(ctx, `INSERT OR IGNORE INTO notified(video_id, notified_at) SELECT id, ? FROM videos`, time.Now().UnixMilli()); err != nil {
 			db.Close()
 			return nil, err
 		}
@@ -43,6 +58,16 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// missingTable reports whether the store does not have the named table yet, so
+// a caller can tell a fresh store from one an older build wrote.
+func (s *Store) missingTable(ctx context.Context, name string) (bool, error) {
+	rows, err := s.db.Query(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name=?`, name)
+	if err != nil {
+		return false, err
+	}
+	return len(rows.Values) == 0, nil
 }
 
 func (s *Store) Close() error   { return s.db.Close() }
@@ -129,11 +154,32 @@ func intFromAny(v any) (int, bool) {
 }
 func intFromAnyBool(v any) bool { n, _ := intFromAny(v); return n != 0 }
 
+// NotifiedVideoIDs returns the videos whose arrival was already announced.
+// They are kept apart from the retained videos so neither retention's window
+// nor its video cap can make an announced video look new again.
+func (s *Store) NotifiedVideoIDs(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.Query(ctx, `SELECT video_id FROM notified`)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(rows.Values))
+	for _, r := range rows.Values {
+		if id, ok := r[0].(string); ok && id != "" {
+			out[id] = true
+		}
+	}
+	return out, nil
+}
+
 type RefreshCommit struct {
 	Channels  []Channel
 	Videos    []Video
 	DeleteIDs []string
 	Revision  int64
+	// Notified are the videos whose arrival this refresh announced. They are
+	// written in the same transaction as the refresh, so an announced video
+	// is known even when retention drops its row from Videos at once.
+	Notified []VideoNotification
 }
 
 func (s *Store) CommitRefresh(ctx context.Context, c RefreshCommit) error {
@@ -147,6 +193,16 @@ func (s *Store) CommitRefresh(ctx context.Context, c RefreshCommit) error {
 	}
 	for _, id := range c.DeleteIDs {
 		stmts = append(stmts, sqlite.Statement{SQL: `DELETE FROM videos WHERE id = ?`, Args: []any{id}})
+	}
+	if len(c.Notified) > 0 {
+		newest := int64(0)
+		for _, n := range c.Notified {
+			stmts = append(stmts, sqlite.Statement{SQL: `INSERT INTO notified(video_id,notified_at) VALUES(?,?) ON CONFLICT(video_id) DO UPDATE SET notified_at=excluded.notified_at`, Args: []any{n.VideoID, n.NotifiedAt}})
+			newest = max(newest, n.NotifiedAt)
+		}
+		// Announced videos older than the retention window cannot appear in
+		// any later refresh, which reads the last 30 days of uploads.
+		stmts = append(stmts, sqlite.Statement{SQL: `DELETE FROM notified WHERE notified_at < ?`, Args: []any{newest - int64(notifiedVideoRetention/time.Millisecond)}})
 	}
 	stmts = append(stmts, sqlite.Statement{SQL: `INSERT INTO meta(key,value) VALUES('revision',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, Args: []any{strconv.FormatInt(c.Revision, 10)}})
 	_, err := s.db.Transaction(ctx, stmts)

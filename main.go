@@ -38,14 +38,15 @@ func realMain() {
 		log.Printf("handoff: %v", err)
 	}
 	// Register before Run so MyGo can deliver a click from an earlier run.
-	// AppleScript helper notifications carry no ID; the handler uses the
-	// local queue only after an actual click callback, never on launch.
 	registerNotificationClick(app)
+	selectedIndex := -1
+	window := &Window{app: app, selectedIndex: &selectedIndex}
+	// The socket is up before the first frame so a helper run that starts
+	// while the app is launching still hands its notifications over.
+	go serveNotificationDeliveries(app, window)
 	if err := app.DrainQueuedSyncWrites(); err != nil {
 		log.Printf("sync queue: %v", err)
 	}
-	selectedIndex := -1
-	window := &Window{app: app, selectedIndex: &selectedIndex}
 	mygo.App.WhenReady(func() {
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title: "YouTube Reader",
@@ -213,9 +214,14 @@ func (w *Window) cancelRefreshRun() {
 	}
 }
 
-// postNotification shows one local notification and reports what the system
+// showNotificationForApp displays one notification through the app's native
+// notification center. It is a seam so the permission bookkeeping can be
+// tested without a packaged app to notify from.
+var showNotificationForApp = showNotification
+
+// showNotification displays one local notification and reports what the system
 // said, so a refusal can be recorded for the Notifications pane.
-func postNotification(plan NotificationPlan) error {
+func showNotification(plan NotificationPlan) error {
 	body := fmt.Sprintf("%d new video%s", plan.Count, plural(plan.Count))
 	if plan.NewestTitle != "" {
 		body += "\n" + plan.NewestTitle
@@ -239,19 +245,54 @@ func registerNotificationClick(app *App) (off func()) {
 
 func notificationClickHandler(app *App) func(string) {
 	return func(id string) {
+		// Every notification YouTube Reader shows carries its channel's ID, so
+		// a click is complete on its own, also when it launched the app.
 		if channelID, ok := core.ChannelFromNotificationID(id); ok {
-			selectNotificationChannel(app, channelID)
-			return
-		}
-		if id != "" {
-			return
-		}
-		// A helper's AppleScript notification has no ID. Only a real click
-		// callback reaches here, so consuming one queued post is safe.
-		if channelID, ok := app.ConsumeNotificationClick(); ok {
 			selectNotificationChannel(app, channelID)
 		}
 	}
+}
+
+// serveNotificationDeliveries shows the notifications the background helper
+// hands the running app instead of posting them through Script Editor, whose
+// window a click would open. The listener lives as long as the process.
+func serveNotificationDeliveries(app *App, w *Window) {
+	show := func(plans []core.NotificationPlan) {
+		for _, plan := range plans {
+			// A refused permission is recorded in settings by the poster
+			// itself, so the Notifications pane can offer System Settings.
+			app.postNotification(plan)
+		}
+		w.helperRefreshed()
+	}
+	if err := core.ServeNotifications(context.Background(), app.Dir, show); err != nil {
+		log.Printf("notification socket: %v", err)
+	}
+}
+
+// helperRefreshed reads the refresh the helper committed to the shared store
+// while this app was running, so a click on its notification opens a channel
+// view that already holds the videos it announced. MyGo runs it on the main
+// thread once the app is ready, so a hand-off that lands while the app is still
+// launching is read rather than dropped, and the window the socket goroutine
+// reads is the one the main thread installed.
+func (w *Window) helperRefreshed() {
+	mygo.App.WhenReady(func() {
+		w.reloadHelperRefresh()
+		if w.window != nil {
+			w.window.Invalidate()
+		}
+	})
+}
+
+// reloadHelperRefresh is helperRefreshed's main-thread half: it reads the
+// store the helper committed to and repaints everything that reads it.
+func (w *Window) reloadHelperRefresh() {
+	if err := w.app.reload(); err != nil {
+		log.Printf("helper refresh: %v", err)
+		return
+	}
+	w.refreshSettingsWindow()
 }
 
 func selectNotificationChannel(app *App, channelID string) {

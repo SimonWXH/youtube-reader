@@ -12,15 +12,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/simon/youtube-reader/core"
 )
-
-const notificationBundleID = "com.simon.youtubereader"
 
 // Injected for tests so HelperRun's notification side effect can be verified
 // without network or a real refresh.
@@ -39,69 +36,21 @@ var osascriptForHelper = func(script string) error {
 	return nil
 }
 
-var pgrepForHelper = func(args ...string) error {
-	return exec.Command("pgrep", args...).Run()
-}
-
-// appRunningForHelper reports whether the current user's main app is already
-// running. A check failure is treated as "not running" so the helper never
-// targets the bundle and risks launching the window it is meant to stay clear
-// of.
-var appRunningForHelper = func() bool {
-	return pgrepForHelper("-u", strconv.Itoa(os.Getuid()), "-x", "YouTube Reader") == nil
+// deliverNotificationsForHelper is the socket the running app listens on. It
+// is a seam so tests can stand in for a listening app without one.
+var deliverNotificationsForHelper = func(dir string, plans []core.NotificationPlan) error {
+	return core.DeliverNotifications(dir, plans)
 }
 
 // HelperHandoff is the atomic JSON message the helper leaves for the app.
 type HelperHandoff struct {
-	ID          string                   `json:"id"`
-	CreatedAt   string                   `json:"createdAt"`
-	Description string                   `json:"description"`
-	Result      *core.RefreshResult      `json:"result,omitempty"`
-	Notified    []core.NotificationPlan  `json:"notified,omitempty"`
-	Failures    []core.RefreshFailure    `json:"failures,omitempty"`
-	Channels    []core.Channel           `json:"channels,omitempty"`
-	Clicks      []core.NotificationClick `json:"clicks,omitempty"`
-}
-
-// notificationClicksPath is local app state: AppleScript notifications have
-// no click ID, so the helper records their channel and post time here for the
-// click callback to consume. It is never synced or sent to any service.
-func notificationClicksPath(dir string) string {
-	return filepath.Join(dir, "notification-clicks.json")
-}
-
-// queueNotificationClicks appends one entry per notification the helper
-// actually posted and keeps the file atomic and private. A repeated post at
-// the same second is a duplicate and does not create a second record.
-func queueNotificationClicks(dir string, plans []core.NotificationPlan, at time.Time) error {
-	path := notificationClicksPath(dir)
-	queue := core.NotificationClicks{}
-	if data, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(data, &queue); err != nil {
-			return fmt.Errorf("parse notification click queue: %w", err)
-		}
-		if err := queue.Validate(); err != nil {
-			return err
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	known := make(map[string]bool, len(queue.Clicks))
-	for _, click := range queue.Clicks {
-		known[core.NotificationClickKey(click)] = true
-	}
-	for _, click := range core.NewNotificationClicks(plans, at) {
-		key := core.NotificationClickKey(click)
-		if !known[key] {
-			queue.Clicks = append(queue.Clicks, click)
-			known[key] = true
-		}
-	}
-	data, err := json.MarshalIndent(queue, "", "  ")
-	if err != nil {
-		return err
-	}
-	return atomicWriteHelper(path, data)
+	ID          string                  `json:"id"`
+	CreatedAt   string                  `json:"createdAt"`
+	Description string                  `json:"description"`
+	Result      *core.RefreshResult     `json:"result,omitempty"`
+	Notified    []core.NotificationPlan `json:"notified,omitempty"`
+	Failures    []core.RefreshFailure   `json:"failures,omitempty"`
+	Channels    []core.Channel          `json:"channels,omitempty"`
 }
 
 func loadHelperSettings(dir string) core.Settings {
@@ -118,29 +67,20 @@ func loadHelperSettings(dir string) core.Settings {
 	return settings
 }
 
-// notificationPostFunc posts one notification and reports whether a click on
-// it can still reach the app. A plain helper notification has no click
-// callback, so it must not enter the click queue.
-type notificationPostFunc func(core.NotificationPlan) (clickRoutable bool, err error)
+// notifyFunc hands the new-video plans a refresh produced to the notification
+// path. It runs only after the refresh committed, and it must never pull the
+// main window up.
+type notifyFunc func(dir string, plans []core.NotificationPlan)
 
 // HelperRun is the injectable core of one helper invocation. It reads local
 // settings and shared state, checks the network, performs the same refresh as
 // the app, commits SQLite in one transaction, queues shared JSON writes while
 // the app holds the flock, posts notifications and writes an atomic handoff.
-func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post notificationPostFunc) (HelperHandoff, error) {
+func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, notify notifyFunc) (HelperHandoff, error) {
 	handoff := HelperHandoff{ID: fmt.Sprintf("helper-%d", now.UnixNano()), CreatedAt: core.FormatRFC3339(now)}
 	settings := loadHelperSettings(dir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return handoff, err
-	}
-	recordPostedClicks := func(posted []core.NotificationPlan) {
-		if len(posted) == 0 {
-			return
-		}
-		handoff.Clicks = core.NewNotificationClicks(posted, now)
-		if err := queueNotificationClicks(dir, posted, now); err != nil {
-			log.Printf("notification click queue: %v", err)
-		}
 	}
 	writeHandoff := func() error {
 		data, err := json.MarshalIndent(handoff, "", "  ")
@@ -203,22 +143,8 @@ func HelperRun(ctx context.Context, dir string, dryRun bool, now time.Time, post
 		}
 	}
 
-	if result.Changed {
-		posted := make([]core.NotificationPlan, 0, len(result.Notified))
-		for _, plan := range result.Notified {
-			if post == nil {
-				continue
-			}
-			routable, err := post(plan)
-			if err != nil {
-				log.Printf("notification: %v", err)
-				continue
-			}
-			if routable {
-				posted = append(posted, plan)
-			}
-		}
-		recordPostedClicks(posted)
+	if result.Changed && len(result.Notified) > 0 && notify != nil {
+		notify(dir, result.Notified)
 	}
 	return handoff, writeHandoff()
 }
@@ -326,24 +252,38 @@ func isWouldBlock(err error) bool {
 	return errors.Is(err, syscall.EWOULDBLOCK)
 }
 
-func postHelperNotification(plan core.NotificationPlan) (clickRoutable bool, err error) {
+// postHelperNotifications shows the plans a background refresh produced
+// without pulling the main window up. A running app owns the notification:
+// it shows it as YouTube Reader, and a click opens the channel there. With the
+// app closed the plans go out as plain AppleScript notifications, which have
+// no click callback and never target the app bundle (PR #24), so a refresh
+// never launches the app it is meant to stay clear of.
+func postHelperNotifications(dir string, plans []core.NotificationPlan) {
+	if len(plans) == 0 {
+		return
+	}
+	if err := deliverNotificationsForHelper(dir, plans); err != nil {
+		for _, plan := range plans {
+			if err := postPlainNotification(plan); err != nil {
+				log.Printf("notification: %v", err)
+			}
+		}
+	}
+}
+
+// postPlainNotification posts one notification for an app that is not running.
+// macOS attributes it to Script Editor, so it carries no notification ID and
+// no click routing; naming the app bundle here would launch its window.
+func postPlainNotification(plan core.NotificationPlan) error {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
 	body := fmt.Sprintf("%d new video%s", plan.Count, plural(plan.Count))
 	if plan.NewestTitle != "" {
 		body += "\n" + plan.NewestTitle
 	}
-	if runtime.GOOS != "darwin" {
-		return false, nil
-	}
 	script := fmt.Sprintf("display notification \"%s\" with title \"%s\" subtitle \"New videos\" sound name \"default\"", escapeAppleScript(body), escapeAppleScript(plan.ChannelName))
-	// The app owns click routing, so target it only when it is already
-	// running. Targeting a closed app makes macOS launch it and pop its
-	// window open; a plain script has no click callback, but it never opens
-	// the main window during a background refresh.
-	routable := appRunningForHelper()
-	if routable {
-		script = fmt.Sprintf("tell application id \"%s\" to %s", notificationBundleID, script)
-	}
-	return routable, osascriptForHelper(script)
+	return osascriptForHelper(script)
 }
 
 func escapeAppleScript(s string) string {
@@ -369,7 +309,7 @@ func main() {
 		home, _ := os.UserHomeDir()
 		dir = filepath.Join(home, "Library", "Application Support", "YouTubeReader")
 	}
-	if _, err := HelperRun(context.Background(), dir, *dryRun, time.Now(), postHelperNotification); err != nil {
+	if _, err := HelperRun(context.Background(), dir, *dryRun, time.Now(), postHelperNotifications); err != nil {
 		log.Fatal(err)
 	}
 }
