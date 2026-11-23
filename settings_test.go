@@ -907,24 +907,6 @@ func TestNotificationUngroupedAndBilingualLocalization(t *testing.T) {
 	}
 }
 
-// TestNotificationDisableAll verifies that clicking the global Disable All button
-// clears all channel consent from settings.NotificationIDs.
-func TestNotificationDisableAll(t *testing.T) {
-	a := notificationGroupTestApp(t)
-	a.Settings.NotificationIDs = []string{"ch-1", "ch-2", "ch-3"}
-	_, tt := settingsTester(t, a, settingsNotifications)
-
-	if err := tt.Click("Disable All"); err != nil {
-		t.Fatalf("click Disable All: %v", err)
-	}
-	tt.Frame()
-
-	settings := loadSettingsFile(t, a.Dir)
-	if len(settings.NotificationIDs) != 0 {
-		t.Fatalf("expected NotificationIDs to be empty after Disable All, got: %v", settings.NotificationIDs)
-	}
-}
-
 func TestNotificationMultiGroupChannel(t *testing.T) {
 	a := notificationGroupTestApp(t)
 	a.Sync.Groups = map[string]core.ChannelGroup{

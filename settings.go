@@ -682,26 +682,14 @@ func (w *Window) notificationsPane(c *ui.Context, t mui.Tokens, settings core.Se
 	}
 
 	channels := w.app.channelSnapshot()
-	buttonChannelsCount := len(channels)
-	if buttonChannelsCount == 0 {
-		buttonChannelsCount = totalChannels
-	}
 
 	w.settingsRow(c, t, "", func() {
 		ui.Row(c).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
-			w.settingsButton(c, t, "settings-enable-all", enableAllLabel(c.Locale()), nil, settingsButtonSecondary, buttonChannelsCount > 0, "", func() {
+			w.settingsButton(c, t, "settings-enable-all", enableAllLabel(c.Locale()), nil, settingsButtonSecondary, len(channels) > 0, "", func() {
 				if !w.app.EnableAllNotifications() {
 					return
 				}
 				w.toast(c, notificationsToastEnabled(c.Locale()), false)
-				w.invalidateMainWindow()
-				w.refreshSettingsWindow()
-			})
-			w.settingsButton(c, t, "settings-disable-all", disableAllLabel(c.Locale()), nil, settingsButtonSecondary, len(settings.NotificationIDs) > 0, "", func() {
-				if !w.app.DisableAllNotifications() {
-					return
-				}
-				w.toast(c, notificationsToastDisabled(c.Locale()), false)
 				w.invalidateMainWindow()
 				w.refreshSettingsWindow()
 			})
@@ -928,13 +916,6 @@ func enableAllLabel(locale string) string {
 	return "Enable All"
 }
 
-func disableAllLabel(locale string) string {
-	if strings.HasPrefix(strings.ToLower(locale), "zh") {
-		return "全部关闭"
-	}
-	return "Disable All"
-}
-
 func notificationsHelperText(locale string) string {
 	if strings.HasPrefix(strings.ToLower(locale), "zh") {
 		return "为你关注的每个频道设置。"
@@ -961,13 +942,6 @@ func notificationsToastEnabled(locale string) string {
 		return "已开启通知"
 	}
 	return "Notifications enabled"
-}
-
-func notificationsToastDisabled(locale string) string {
-	if strings.HasPrefix(strings.ToLower(locale), "zh") {
-		return "已关闭通知"
-	}
-	return "Notifications disabled"
 }
 
 // containsID reports whether id appears in ids.
