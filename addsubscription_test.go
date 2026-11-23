@@ -321,7 +321,7 @@ func TestAddDialogDuplicateCopyAndPrimaryLabel(t *testing.T) {
 		},
 		{
 			name: "moves into new group with default name", channelID: "ch-fun", target: "group-fun",
-			newGroup: true,
+			newGroup:    true,
 			wantText:    "This moves Anna Cramling from Fun to New Group.",
 			wantPrimary: "Move",
 		},
