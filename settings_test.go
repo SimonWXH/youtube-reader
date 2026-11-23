@@ -925,6 +925,75 @@ func TestNotificationDisableAll(t *testing.T) {
 	}
 }
 
+func TestNotificationMultiGroupChannel(t *testing.T) {
+	a := notificationGroupTestApp(t)
+	a.Sync.Groups = map[string]core.ChannelGroup{
+		"grp-tech":    {ID: "grp-tech", Name: "Tech", ChannelIDs: []string{"ch-1", "ch-2"}},
+		"grp-science": {ID: "grp-science", Name: "Science", ChannelIDs: []string{"ch-1"}},
+	}
+	a.Groups = []core.ChannelGroup{
+		{ID: "grp-tech", Name: "Tech", ChannelIDs: []string{"ch-1", "ch-2"}},
+		{ID: "grp-science", Name: "Science", ChannelIDs: []string{"ch-1"}},
+	}
+	a.Settings.NotificationIDs = []string{"ch-1"}
+
+	_, tt := settingsTester(t, a, settingsNotifications)
+
+	techSwitch, ok := tt.AccessByRole(ui.RoleSwitch, "Tech")
+	if !ok {
+		t.Fatal("Tech group master switch missing")
+	}
+	scienceSwitch, ok := tt.AccessByRole(ui.RoleSwitch, "Science")
+	if !ok {
+		t.Fatal("Science group master switch missing")
+	}
+
+	if techSwitch.Checked {
+		t.Fatal("expected Tech group switch to be off in mixed state")
+	}
+	if !scienceSwitch.Checked {
+		t.Fatal("expected Science group switch to be on")
+	}
+
+	var goSwitches []ui.AccessInfo
+	for _, info := range tt.AccessAll() {
+		if info.Role == ui.RoleSwitch && info.Name == "Go Channel" {
+			goSwitches = append(goSwitches, info)
+		}
+	}
+	if len(goSwitches) != 2 {
+		t.Fatalf("expected 2 'Go Channel' switches across groups, got %d", len(goSwitches))
+	}
+	for i, sw := range goSwitches {
+		if !sw.Checked {
+			t.Fatalf("switch %d for 'Go Channel' should be checked", i)
+		}
+	}
+
+	tt.ClickAt(scienceSwitch.Bounds.X+scienceSwitch.Bounds.W/2, scienceSwitch.Bounds.Y+scienceSwitch.Bounds.H/2)
+	tt.Frame()
+
+	settings := loadSettingsFile(t, a.Dir)
+	if containsID(settings.NotificationIDs, "ch-1") {
+		t.Fatalf("expected ch-1 to be removed from NotificationIDs, got: %v", settings.NotificationIDs)
+	}
+
+	goSwitches = nil
+	for _, info := range tt.AccessAll() {
+		if info.Role == ui.RoleSwitch && info.Name == "Go Channel" {
+			goSwitches = append(goSwitches, info)
+		}
+	}
+	if len(goSwitches) != 2 {
+		t.Fatalf("expected 2 'Go Channel' switches after toggle, got %d", len(goSwitches))
+	}
+	for i, sw := range goSwitches {
+		if sw.Checked {
+			t.Fatalf("switch %d for 'Go Channel' should be unchecked after Science group toggled off", i)
+		}
+	}
+}
+
 // TestEraseFavoritesClearsAndSaves is the destructive action behind the alert.
 func TestEraseFavoritesClearsAndSaves(t *testing.T) {
 	a := settingsTestApp(t)

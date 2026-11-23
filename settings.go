@@ -896,7 +896,7 @@ func (w *Window) notificationGroupCard(c *ui.Context, t mui.Tokens, settings cor
 				title = channel.ID
 			}
 			enabled := containsID(settings.NotificationIDs, channel.ID)
-			channelSwitchKey := "settings-notify-" + channel.ID
+			channelSwitchKey := fmt.Sprintf("settings-notify-%s-%s", grp.ID, channel.ID)
 
 			ui.Row(c).Height(mui.SidebarChannelRowHeight).FillWidth().AlignItems(ui.Center).Gap(mui.Space(2)).
 				Padding(0, mui.Space(3)).Children(func() {
