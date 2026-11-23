@@ -13,10 +13,10 @@ import (
 )
 
 // notificationSocketName is the local socket a running app listens on for the
-// notifications the background helper must display itself. A notification only
-// macOS attribute means, and only lets a click route back to, the process that
-// posted it, so the helper hands its plans to the app instead of posting them
-// through osascript, which Notification Center attributes to Script Editor.
+// notifications the background helper must display itself. macOS attributes a
+// notification to, and only lets a click route back to, the process that posted
+// it, so the helper hands its plans to the app instead of posting them through
+// osascript, which Notification Center attributes to Script Editor.
 const notificationSocketName = "notifications.sock"
 
 // notificationDeliveryTimeout bounds the local socket handshake. Both ends run
