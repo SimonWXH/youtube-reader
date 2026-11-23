@@ -100,6 +100,7 @@ type Window struct {
 	sidebarWidth       float32
 	sidebarDragging    bool
 	sidebarOvershoot   float32
+	channelDraggingID  string
 	contentWidth       float32
 	gridAvailableWidth float32
 	detail             detailState
@@ -144,6 +145,30 @@ func (w *Window) commitRenameGroup(id, newName string) {
 func (w *Window) cancelRenameGroup() {
 	w.renamingGroupID = ""
 	w.renamingGroupName = ""
+}
+
+func (w *Window) channelOnlyInGroup(channelID, groupID string) bool {
+	return w.app.channelOnlyInGroup(channelID, groupID)
+}
+
+func (w *Window) channelIsUngrouped(channelID string) bool {
+	return w.app.channelIsUngrouped(channelID)
+}
+
+func (w *Window) moveChannelToGroup(c *ui.Context, channelID, targetGroupID string) {
+	moved, err := w.app.MoveChannelToGroup(channelID, targetGroupID)
+	if err != nil {
+		log.Printf("move channel to group: %v", err)
+		return
+	}
+	if moved {
+		if targetGroupID != "" {
+			_ = w.app.SetGroupCollapsed(targetGroupID, false)
+		}
+		if c != nil {
+			c.Invalidate()
+		}
+	}
 }
 
 func (w *Window) toast(c *ui.Context, msg string, isError bool) {

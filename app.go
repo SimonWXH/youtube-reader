@@ -41,6 +41,7 @@ type App struct {
 	LastRefreshMessage string
 	LastNotified       []core.NotificationPlan
 	LastSyncWrite      time.Time
+	SaveSyncCalls      int
 }
 
 // GroupCollapsed reports whether a subscription group's channel list is
@@ -412,6 +413,196 @@ func (a *App) RenameGroup(id, newName string) error {
 	return a.SaveSync()
 }
 
+// channelGroupIDs returns the IDs of the groups the channel currently belongs to.
+func (a *App) channelGroupIDs(channelID string) []string {
+	if a.Sync.Channels != nil {
+		if ch, ok := a.Sync.Channels[channelID]; ok && len(ch.GroupIDs) > 0 {
+			return append([]string(nil), ch.GroupIDs...)
+		}
+	}
+	for _, ch := range a.Channels {
+		if ch.ID == channelID && len(ch.GroupIDs) > 0 {
+			return append([]string(nil), ch.GroupIDs...)
+		}
+	}
+	var ids []string
+	for _, g := range a.Groups {
+		for _, cid := range g.ChannelIDs {
+			if cid == channelID {
+				ids = append(ids, g.ID)
+				break
+			}
+		}
+	}
+	return ids
+}
+
+// channelOnlyInGroup reports whether channelID belongs solely to groupID.
+func (a *App) channelOnlyInGroup(channelID, groupID string) bool {
+	gids := a.channelGroupIDs(channelID)
+	return len(gids) == 1 && gids[0] == groupID
+}
+
+// channelIsUngrouped reports whether channelID belongs to no group.
+func (a *App) channelIsUngrouped(channelID string) bool {
+	return len(a.channelGroupIDs(channelID)) == 0
+}
+
+// MoveChannelToGroup moves a channel to the given target group (or to ungrouped
+// if targetGroupID is empty), enforcing single membership. It updates both
+// directions of the relationship, bumps UpdatedAt timestamps on modified
+// groups, the channel, and sync state, updates the local store, and persists
+// the sync file.
+// If the channel already belongs solely to targetGroupID (or is already ungrouped
+// when targetGroupID is empty), it is a no-op that performs no writes.
+func (a *App) MoveChannelToGroup(channelID string, targetGroupID string) (bool, error) {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return false, errors.New("channel ID cannot be empty")
+	}
+
+	targetGroupID = strings.TrimSpace(targetGroupID)
+	if targetGroupID != "" {
+		found := false
+		if a.Sync.Groups != nil {
+			_, found = a.Sync.Groups[targetGroupID]
+		}
+		if !found {
+			for _, g := range a.Groups {
+				if g.ID == targetGroupID {
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			return false, fmt.Errorf("target group %q not found", targetGroupID)
+		}
+	}
+
+	// No-op check:
+	if targetGroupID != "" && a.channelOnlyInGroup(channelID, targetGroupID) {
+		return false, nil
+	}
+	if targetGroupID == "" && a.channelIsUngrouped(channelID) {
+		return false, nil
+	}
+
+	now := time.Now().UnixMilli()
+
+	if a.Sync.Groups == nil {
+		a.Sync.Groups = make(map[string]core.ChannelGroup)
+	}
+	if a.Sync.Channels == nil {
+		a.Sync.Channels = make(map[string]core.Channel)
+	}
+
+	// Ensure all in-memory groups are in a.Sync.Groups
+	for _, g := range a.Groups {
+		if _, ok := a.Sync.Groups[g.ID]; !ok {
+			a.Sync.Groups[g.ID] = g
+		}
+	}
+
+	// 1. Remove channelID from every group other than targetGroupID.
+	for gid, g := range a.Sync.Groups {
+		if gid != targetGroupID {
+			var newIDs []string
+			removed := false
+			for _, cid := range g.ChannelIDs {
+				if cid == channelID {
+					removed = true
+				} else {
+					newIDs = append(newIDs, cid)
+				}
+			}
+			if removed {
+				g.ChannelIDs = newIDs
+				g.UpdatedAt = now
+				a.Sync.Groups[gid] = g
+			}
+		}
+	}
+
+	// Ensure targetGroupID has channelID
+	if targetGroupID != "" {
+		tg := a.Sync.Groups[targetGroupID]
+		hasChan := false
+		for _, cid := range tg.ChannelIDs {
+			if cid == channelID {
+				hasChan = true
+				break
+			}
+		}
+		if !hasChan {
+			tg.ChannelIDs = append(tg.ChannelIDs, channelID)
+		}
+		tg.UpdatedAt = now
+		a.Sync.Groups[targetGroupID] = tg
+	}
+
+	// Synchronize in-memory a.Groups slice
+	for i := range a.Groups {
+		gid := a.Groups[i].ID
+		if g, ok := a.Sync.Groups[gid]; ok {
+			a.Groups[i] = g
+		}
+	}
+
+	// 2. Update channel record in Sync.Channels and a.Channels
+	ch, ok := a.Sync.Channels[channelID]
+	if !ok {
+		for _, c := range a.Channels {
+			if c.ID == channelID {
+				ch = c
+				ok = true
+				break
+			}
+		}
+	}
+	if !ok {
+		ch = core.Channel{ID: channelID, Title: channelID}
+	}
+
+	if targetGroupID != "" {
+		ch.GroupIDs = []string{targetGroupID}
+	} else {
+		ch.GroupIDs = nil
+	}
+	ch.UpdatedAt = now
+	a.Sync.Channels[channelID] = ch
+
+	// Synchronize in-memory a.Channels slice
+	foundInSlice := false
+	for i := range a.Channels {
+		if a.Channels[i].ID == channelID {
+			a.Channels[i].GroupIDs = ch.GroupIDs
+			a.Channels[i].UpdatedAt = now
+			foundInSlice = true
+			break
+		}
+	}
+	if !foundInSlice {
+		a.Channels = append(a.Channels, ch)
+	}
+
+	// 3. Update Sync.UpdatedAt
+	a.Sync.UpdatedAt = now
+
+	// 4. Update local SQLite store if present
+	if a.Store != nil {
+		ctx := context.Background()
+		_ = a.Store.SetChannelGroupIDs(ctx, channelID, ch.GroupIDs, now)
+	}
+
+	// 5. Persist sync state
+	if err := a.SaveSync(); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
 func (a *App) Close() {
 	if a.Store != nil {
 		a.Store.Close()
@@ -471,6 +662,7 @@ func (a *App) SaveSync() error {
 	if err := core.SaveSyncAtomic(syncPath, a.Sync); err != nil {
 		return err
 	}
+	a.SaveSyncCalls++
 	a.LastSyncWrite = time.Now()
 	return nil
 }

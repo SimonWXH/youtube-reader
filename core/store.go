@@ -209,6 +209,20 @@ func (s *Store) CommitRefresh(ctx context.Context, c RefreshCommit) error {
 	return err
 }
 
+// SetChannelGroupIDs updates a channel's group memberships and timestamp in the local store.
+func (s *Store) SetChannelGroupIDs(ctx context.Context, channelID string, groupIDs []string, updatedAt int64) error {
+	var raw string
+	if groupIDs != nil {
+		data, err := json.Marshal(groupIDs)
+		if err != nil {
+			return err
+		}
+		raw = string(data)
+	}
+	_, err := s.db.Execute(ctx, `INSERT INTO channels(id, group_ids, updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET group_ids=excluded.group_ids, updated_at=excluded.updated_at`, channelID, raw, updatedAt)
+	return err
+}
+
 func boolInt(b bool) int {
 	if b {
 		return 1
