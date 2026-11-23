@@ -9,9 +9,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/simon/youtube-reader/core"
+	mui "github.com/simon/youtube-reader/ui"
 )
 
 func TestGroupCollapseDefaultsCollapsedAndPersists(t *testing.T) {
@@ -645,6 +647,79 @@ func TestGroupContextMenuRenameChineseLocaleAndCancel(t *testing.T) {
 	// Should keep original name
 	if a.Sync.Groups["group-zh"].Name != "科技" {
 		t.Fatalf("after Escape, name changed to %q, want 科技", a.Sync.Groups["group-zh"].Name)
+	}
+}
+
+// TestGroupRenameFieldSitsCentredOnItsRow checks the rename row in the real
+// sidebar: the field keeps the 26 pt height, its 13 pt line box stays inside
+// the field's border, it sits on the row's centre, and the row stops painting
+// the selected tint while it is being renamed.
+func TestGroupRenameFieldSitsCentredOnItsRow(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+
+	g1 := core.ChannelGroup{ID: "group-1", Name: "Science", ChannelIDs: []string{"ch-1"}, UpdatedAt: 100}
+	g2 := core.ChannelGroup{ID: "group-2", Name: "Tech", ChannelIDs: []string{"ch-2"}, UpdatedAt: 100}
+	a.Sync.Groups = map[string]core.ChannelGroup{"group-1": g1, "group-2": g2}
+	a.Groups = []core.ChannelGroup{g1, g2}
+	a.Channels = []core.Channel{{ID: "ch-1", Title: "Science Channel"}, {ID: "ch-2", Title: "Tech Channel"}}
+	a.Settings.SidebarWidth = defaultSidebarWidth
+	a.Selected = "group:group-1"
+
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 840)
+	tt.Frame()
+
+	// An unselected group row is the sidebar's own surface behind a fold row.
+	tech, ok := tt.AccessByRole(ui.RoleDisclosure, "Toggle Tech")
+	if !ok {
+		t.Fatal("Tech fold chevron not found")
+	}
+	idlePixel := tt.Image().RGBAAt(int(tech.Bounds.X-4), int(tech.Bounds.Y+4))
+
+	if err := tt.RightClick("Science"); err != nil {
+		t.Fatalf("right click group row: %v", err)
+	}
+	if err := tt.ChooseMenuItem("Rename"); err != nil {
+		t.Fatalf("choose Rename: %v", err)
+	}
+	tt.Frame()
+	// The row's Fade colour transition settles a frame or two after the state
+	// flips, as it does on screen.
+	tt.Advance(mui.MotionInteraction + 20*time.Millisecond)
+	tt.Frame()
+
+	field, ok := tt.AccessByRole(ui.RoleTextField, "Rename Science")
+	if !ok {
+		t.Fatal("rename text field not found")
+	}
+	row, ok := tt.AccessByRole(ui.RoleDisclosure, "Toggle Science")
+	if !ok {
+		t.Fatal("Science fold chevron not found")
+	}
+
+	if field.Bounds.H != mui.SidebarRenameFieldHeight {
+		t.Fatalf("rename field height = %v, want %v", field.Bounds.H, mui.SidebarRenameFieldHeight)
+	}
+	if fieldMid, rowMid := field.Bounds.Y+field.Bounds.H/2, row.Bounds.Y+row.Bounds.H/2; fieldMid != rowMid {
+		t.Fatalf("field centre %v, row centre %v: the field must sit on the row's centre", fieldMid, rowMid)
+	}
+
+	caret, ok := tt.TextCaret()
+	if !ok {
+		t.Fatal("rename field has no caret, so it is not focused")
+	}
+	top, bottom := field.Bounds.Y+mui.Hairline, field.Bounds.Y+field.Bounds.H-mui.Hairline
+	if caret.Y < top || caret.Y+caret.H > bottom {
+		t.Fatalf("13 pt line box %v..%v escapes the field's border %v..%v: descenders are clipped",
+			caret.Y, caret.Y+caret.H, top, bottom)
+	}
+
+	// The selected row the field replaced no longer paints its tint.
+	renamePixel := tt.Image().RGBAAt(int(row.Bounds.X-4), int(row.Bounds.Y+4))
+	if renamePixel != idlePixel {
+		t.Fatalf("renaming row paints %v, want the sidebar surface %v of an unselected row", renamePixel, idlePixel)
 	}
 }
 
