@@ -112,6 +112,20 @@ type Window struct {
 	// renamingGroupID is the ID of the group currently being inline-renamed in the sidebar.
 	renamingGroupID   string
 	renamingGroupName string
+	// renamingGroupNew is the ID of the group the plus menu just created, so
+	// giving the inline rename up removes the group again instead of leaving an
+	// empty one behind.
+	renamingGroupNew string
+
+	// sidebarMenuOpen is the plus menu's open flag. The button owns it so its
+	// pressed face stays painted while the menu shows, and a test can read it.
+	sidebarMenuOpen bool
+	// addDialog is the in-window add-subscription panel.
+	addDialog addDialog
+	// onAddedChannel, when set, takes the fetch of the one channel an add
+	// starts. The app leaves it nil and fetches in the background; a test
+	// records the request instead of starting a lookup that outlives it.
+	onAddedChannel func(channel core.Channel)
 
 	// settingsWindow is the standalone Settings window and its view state.
 	settingsWindow settingsWindow
@@ -131,10 +145,19 @@ func (w *Window) startRenameGroup(id, name string) {
 }
 
 func (w *Window) commitRenameGroup(id, newName string) {
+	created := w.renamingGroupNew == id
 	w.renamingGroupID = ""
 	w.renamingGroupName = ""
+	w.renamingGroupNew = ""
 	newName = strings.TrimSpace(newName)
 	if newName == "" {
+		if created {
+			// A group the menu created and the reader left unnamed is no
+			// group at all: remove it rather than keeping a placeholder.
+			if err := w.app.DeleteGroup(id); err != nil {
+				log.Printf("delete group: %v", err)
+			}
+		}
 		return
 	}
 	if err := w.app.RenameGroup(id, newName); err != nil {
@@ -143,8 +166,14 @@ func (w *Window) commitRenameGroup(id, newName string) {
 }
 
 func (w *Window) cancelRenameGroup() {
+	if id := w.renamingGroupNew; id != "" {
+		if err := w.app.DeleteGroup(id); err != nil {
+			log.Printf("delete group: %v", err)
+		}
+	}
 	w.renamingGroupID = ""
 	w.renamingGroupName = ""
+	w.renamingGroupNew = ""
 }
 
 func (w *Window) channelOnlyInGroup(channelID, groupID string) bool {

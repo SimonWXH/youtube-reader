@@ -167,36 +167,12 @@ func RefreshYoutube(ctx context.Context, client YouTube, settings Settings, stat
 		}
 	}
 	all = DedupeVideos(all)
-	missing := []Video{}
-	for _, v := range all {
-		if v.Duration == "" {
-			missing = append(missing, v)
+	all, err = hydrateDurations(ctx, client, all)
+	if err != nil {
+		if errors.Is(err, ErrQuota) {
+			return failed(err)
 		}
-	}
-	if len(missing) > 0 {
-		hydrated, err := client.Hydrate(ctx, missing)
-		if err != nil {
-			if errors.Is(err, ErrQuota) {
-				return failed(err)
-			}
-			failures = append(failures, RefreshFailure{At: FormatRFC3339(now), Message: RedactKey("hydrate: " + err.Error())})
-		} else {
-			byID := map[string]Video{}
-			for _, v := range hydrated {
-				byID[v.ID] = v
-			}
-			for i, v := range all {
-				if hv, ok := byID[v.ID]; ok {
-					hv.ChannelID = v.ChannelID
-					hv.ChannelTitle = v.ChannelTitle
-					hv.AvatarURL = v.AvatarURL
-					if hv.ThumbnailURL == "" {
-						hv.ThumbnailURL = v.ThumbnailURL
-					}
-					all[i] = hv
-				}
-			}
-		}
+		failures = append(failures, RefreshFailure{At: FormatRFC3339(now), Message: RedactKey("hydrate: " + err.Error())})
 	}
 	protected := func(v Video) bool { return !state.IsRead(v.ID) || state.IsFavorite(v.ID) }
 	all = ApplyRetention(all, protected, now, DefaultRetention())
@@ -212,6 +188,105 @@ func RefreshYoutube(ctx context.Context, client YouTube, settings Settings, stat
 		}
 	}
 	return result
+}
+
+// hydrateDurations asks videos.list for the videos a playlist listing left
+// without a duration, and fills in what it brings: the duration decides whether
+// a video is a Short, and the higher-resolution thumbnail that arrives with it
+// replaces the playlist's own. A failed hydration leaves the videos as they
+// came, so its caller reports the failure without losing the listing.
+func hydrateDurations(ctx context.Context, client YouTube, videos []Video) ([]Video, error) {
+	missing := []Video{}
+	for _, v := range videos {
+		if v.Duration == "" {
+			missing = append(missing, v)
+		}
+	}
+	if len(missing) == 0 {
+		return videos, nil
+	}
+	hydrated, err := client.Hydrate(ctx, missing)
+	if err != nil {
+		return videos, err
+	}
+	byID := map[string]Video{}
+	for _, v := range hydrated {
+		byID[v.ID] = v
+	}
+	out := append([]Video(nil), videos...)
+	for i, v := range out {
+		if hv, ok := byID[v.ID]; ok {
+			hv.ChannelID = v.ChannelID
+			hv.ChannelTitle = v.ChannelTitle
+			hv.AvatarURL = v.AvatarURL
+			if hv.ThumbnailURL == "" {
+				hv.ThumbnailURL = v.ThumbnailURL
+			}
+			out[i] = hv
+		}
+	}
+	return out, nil
+}
+
+// FetchChannel reads one channel and its recent uploads, for the fetch the
+// add-subscription dialog runs right after it adds a channel. It commits
+// nothing and applies no retention: the subscription itself is already saved,
+// so the caller can drop a failed fetch without touching the rest of the
+// library. YouTube's quota is the failure that happens at a bad moment, and a
+// channel that is added but not yet fetched is still a working subscription.
+func FetchChannel(ctx context.Context, client YouTube, channel Channel) (Channel, []Video, error) {
+	infos, err := client.ChannelInfo(ctx, []string{channel.ID})
+	if err != nil {
+		return channel, nil, err
+	}
+	updated := channel
+	found := false
+	for _, info := range infos {
+		if info.ID != channel.ID {
+			continue
+		}
+		found = true
+		if info.Title != "" {
+			updated.Title = info.Title
+		}
+		if info.AvatarURL != "" {
+			updated.AvatarURL = info.AvatarURL
+		}
+		updated.UploadedAt = info.UploadedAt
+		if info.UpdatedAt > updated.UpdatedAt {
+			updated.UpdatedAt = info.UpdatedAt
+		}
+	}
+	if !found {
+		return channel, nil, ErrChannelNotFound
+	}
+	if strings.TrimSpace(updated.Title) == "" {
+		return channel, nil, ErrChannelNotFound
+	}
+	if updated.UploadedAt == "" {
+		// A channel with no uploads playlist has nothing to fetch; its
+		// metadata is still an improvement the caller can commit.
+		return updated, nil, nil
+	}
+	videos, err := client.PlaylistVideos(ctx, updated.UploadedAt, 3)
+	if err != nil {
+		return updated, nil, err
+	}
+	for i := range videos {
+		videos[i].ChannelID = updated.ID
+		videos[i].ChannelTitle = updated.Title
+		videos[i].AvatarURL = updated.AvatarURL
+		videos[i].IsShort = IsShort(videos[i].Duration, videos[i].Width, videos[i].Height)
+	}
+	videos = DedupeVideos(videos)
+	videos, err = hydrateDurations(ctx, client, videos)
+	if err != nil {
+		return updated, videos, err
+	}
+	for i := range videos {
+		videos[i].IsShort = IsShort(videos[i].Duration, videos[i].Width, videos[i].Height)
+	}
+	return updated, videos, nil
 }
 
 // FailedOnQuota reports whether a refresh's own failure is the quota failure.

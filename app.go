@@ -603,6 +603,220 @@ func (a *App) MoveChannelToGroup(channelID string, targetGroupID string) (bool, 
 	return true, nil
 }
 
+// CreateGroup adds an empty group the reader made in the app, at the end of the
+// sidebar's order. The ID is fresh rather than derived from the name, so two
+// groups of one name never share an ID and overwrite each other.
+func (a *App) CreateGroup(name string) (core.ChannelGroup, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return core.ChannelGroup{}, errors.New("group name cannot be empty")
+	}
+	now := time.Now().UnixMilli()
+	group := core.ChannelGroup{ID: a.freshGroupID(), Name: name, UpdatedAt: now}
+	if a.Sync.Groups == nil {
+		a.Sync.Groups = map[string]core.ChannelGroup{}
+	}
+	a.Sync.Groups[group.ID] = group
+	if a.Sync.UpdatedAt < now {
+		a.Sync.UpdatedAt = now
+	}
+	if err := a.SaveSync(); err != nil {
+		delete(a.Sync.Groups, group.ID)
+		return core.ChannelGroup{}, err
+	}
+	// The new group joins the order at its end, so it appears where the reader
+	// just looked for it and the stored order keeps naming every group.
+	_, _ = a.updateSettings(func(s *core.Settings) bool {
+		s.GroupOrder = append(groupIDs(a.Groups), group.ID)
+		return true
+	})
+	if err := a.reload(); err != nil {
+		return group, err
+	}
+	return group, nil
+}
+
+// freshGroupID returns a group ID no group in the sync state uses.
+func (a *App) freshGroupID() string {
+	for i := 0; i < 8; i++ {
+		id := core.NewGroupID()
+		if _, exists := a.Sync.Groups[id]; !exists {
+			return id
+		}
+	}
+	return core.NewGroupID()
+}
+
+// DeleteGroup removes a group the reader gave up on while naming it. It only
+// removes an empty group: the naming path's undo is not a destructive command,
+// so a group that holds channels is left as it is.
+func (a *App) DeleteGroup(id string) error {
+	group, ok := a.Sync.Groups[id]
+	if !ok || len(group.ChannelIDs) > 0 {
+		return nil
+	}
+	delete(a.Sync.Groups, id)
+	for channelID, channel := range a.Sync.Channels {
+		if !slices.Contains(channel.GroupIDs, id) {
+			continue
+		}
+		kept := make([]string, 0, len(channel.GroupIDs))
+		for _, groupID := range channel.GroupIDs {
+			if groupID != id {
+				kept = append(kept, groupID)
+			}
+		}
+		channel.GroupIDs = kept
+		a.Sync.Channels[channelID] = channel
+	}
+	a.Sync.UpdatedAt = time.Now().UnixMilli()
+	if err := a.SaveSync(); err != nil {
+		return err
+	}
+	_, _ = a.updateSettings(func(s *core.Settings) bool {
+		order := make([]string, 0, len(s.GroupOrder))
+		for _, groupID := range s.GroupOrder {
+			if groupID != id {
+				order = append(order, groupID)
+			}
+		}
+		s.GroupOrder = order
+		return true
+	})
+	return a.reload()
+}
+
+// AddSubscription writes a channel the reader added into the library and into
+// the group they put it in, and commits its row so the sidebar shows it before
+// any video arrives. A channel without a title is refused: the library never
+// holds a subscription it cannot name.
+func (a *App) AddSubscription(channel core.Channel, groupID string) error {
+	channel.ID = strings.TrimSpace(channel.ID)
+	channel.Title = strings.TrimSpace(channel.Title)
+	if channel.ID == "" || channel.Title == "" {
+		return errors.New("channel has no title")
+	}
+	if _, exists := a.Sync.Channels[channel.ID]; exists {
+		return fmt.Errorf("channel %q is already subscribed", channel.ID)
+	}
+	if groupID != "" {
+		if _, ok := a.Sync.Groups[groupID]; !ok {
+			return fmt.Errorf("group %q not found", groupID)
+		}
+	}
+	now := time.Now().UnixMilli()
+	channel.UpdatedAt = now
+	channel.GroupIDs = nil
+	if groupID != "" {
+		channel.GroupIDs = []string{groupID}
+	}
+	if a.Sync.Channels == nil {
+		a.Sync.Channels = map[string]core.Channel{}
+	}
+	a.Sync.Channels[channel.ID] = channel
+	if groupID != "" {
+		group := a.Sync.Groups[groupID]
+		if !slices.Contains(group.ChannelIDs, channel.ID) {
+			group.ChannelIDs = append(group.ChannelIDs, channel.ID)
+		}
+		group.UpdatedAt = now
+		a.Sync.Groups[groupID] = group
+	}
+	if a.Sync.UpdatedAt < now {
+		a.Sync.UpdatedAt = now
+	}
+	if err := a.SaveSync(); err != nil {
+		delete(a.Sync.Channels, channel.ID)
+		if groupID != "" {
+			group := a.Sync.Groups[groupID]
+			kept := make([]string, 0, len(group.ChannelIDs))
+			for _, id := range group.ChannelIDs {
+				if id != channel.ID {
+					kept = append(kept, id)
+				}
+			}
+			group.ChannelIDs = kept
+			a.Sync.Groups[groupID] = group
+		}
+		return err
+	}
+	if err := a.commitChannelRows(channel); err != nil {
+		return err
+	}
+	return a.reload()
+}
+
+// commitChannelRows writes the channel rows the library now holds into the
+// local store, so a channel added or moved shows with the title and avatar the
+// lookup found before any video refreshes it. The refresh revision is left as
+// it is: adding a subscription is not a refresh.
+func (a *App) commitChannelRows(channels ...core.Channel) error {
+	if a.Store == nil {
+		return nil
+	}
+	return a.Store.CommitRefresh(context.Background(), core.RefreshCommit{Channels: channels, Revision: a.Revision})
+}
+
+// QuotaRetryAt reports when the pause a quota failure started ends. It is the
+// one time every surface names, so the dialog's retry sentence and the status
+// item never disagree.
+func (a *App) QuotaRetryAt(now time.Time) (time.Time, bool) {
+	settings := a.settingsSnapshot()
+	until, err := time.Parse(time.RFC3339, settings.QuotaPausedUntil)
+	if err != nil || !now.Before(until) {
+		return time.Time{}, false
+	}
+	return until, true
+}
+
+// NoteQuotaPause arms the pause a quota failure starts, 24 hours long as the
+// refresh arms it, so the add-subscription dialog's retry sentence names the
+// same time the rest of the app waits for.
+func (a *App) NoteQuotaPause(now time.Time) {
+	until := now.Add(24 * time.Hour)
+	_, _ = a.updateSettings(func(s *core.Settings) bool {
+		if existing, err := time.Parse(time.RFC3339, s.QuotaPausedUntil); err == nil && !existing.Before(until) {
+			return false
+		}
+		s.QuotaPausedUntil = core.FormatRFC3339(until)
+		return true
+	})
+}
+
+// appYouTubeClient builds the YouTube client the app reads through: the
+// dialog's lookup and the fetch that follows an add. The tests replace it to
+// count and answer requests without a network.
+var appYouTubeClient = func(apiKey string) core.YouTube {
+	return core.YouTube{Key: apiKey}
+}
+
+// ApplyChannelFetch commits what the fetch of one just-added channel found: its
+// refreshed metadata, and the videos it has now. The window calls it on the main
+// thread, as a refresh applies its channels, so the maps a frame reads are never
+// written from a goroutine. It reports whether it committed anything.
+func (a *App) ApplyChannelFetch(channel core.Channel, videos []core.Video) bool {
+	stored, ok := a.Sync.Channels[channel.ID]
+	if !ok || strings.TrimSpace(channel.Title) == "" {
+		return false
+	}
+	// The group the reader chose is the add's, not the fetch's: the lookup only
+	// brings metadata and videos.
+	channel.GroupIDs = stored.GroupIDs
+	channel.UpdatedAt = time.Now().UnixMilli()
+	a.Sync.Channels[channel.ID] = channel
+	if err := a.SaveSync(); err != nil {
+		return false
+	}
+	if a.Store != nil {
+		_ = a.Store.CommitRefresh(context.Background(), core.RefreshCommit{
+			Channels: []core.Channel{channel},
+			Videos:   videos,
+			Revision: a.Revision + 1,
+		})
+	}
+	return a.reload() == nil
+}
+
 func (a *App) Close() {
 	if a.Store != nil {
 		a.Store.Close()
