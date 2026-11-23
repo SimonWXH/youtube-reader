@@ -48,14 +48,13 @@ func realMain() {
 		log.Printf("sync queue: %v", err)
 	}
 	mygo.App.WhenReady(func() {
-		win := mygo.NewWindow(mygo.WindowOptions{
-			Title: "YouTube Reader",
-			Width: 1280, Height: 808, MinWidth: 960, MinHeight: 640,
-			// The view draws the 52 pt toolbar itself, under the traffic lights.
-			TitleBarStyle: mygo.TitleBarHiddenInset,
-			Content:       ui.View(window.shell),
-		})
+		// The saved frame comes from local settings, and the displays it is
+		// checked against exist only once the app is ready.
+		options := mainWindowOptions(window.app.settingsSnapshot(), mainWindowDisplays())
+		options.Content = ui.View(window.shell)
+		win := mygo.NewWindow(options)
 		window.window = win
+		window.watchMainWindowFrame()
 		// The menu bar carries Settings… at Command-Comma and mirrors every
 		// toolbar command, so the toolbar is never the only way to act.
 		window.installMenu()
@@ -115,6 +114,11 @@ type Window struct {
 
 	// settingsWindow is the standalone Settings window and its view state.
 	settingsWindow settingsWindow
+
+	// frameMemory keeps the main window's size and position in local settings,
+	// so the next launch opens where this one was left. Nil until the window
+	// exists.
+	frameMemory *mainWindowFrameMemory
 }
 
 func (w *Window) startRenameGroup(id, name string) {
