@@ -334,6 +334,23 @@ func selectNotificationChannel(app *App, channelID string) {
 	}
 }
 
+// navigateToChannel routes the main window to a channel's view, expanding its
+// owning group if collapsed, clearing search text, and closing the detail pane.
+func (w *Window) navigateToChannel(channelID string) {
+	if channelID == "" {
+		return
+	}
+	if w.renamingGroupID != "" {
+		w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
+	}
+	if w.detail.errID != "" {
+		w.detail.errDismissed = true
+	}
+	if w.app != nil {
+		w.app.SelectChannel(channelID)
+	}
+}
+
 func plural(n int) string {
 	if n == 1 {
 		return ""

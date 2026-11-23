@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -233,12 +234,21 @@ func (w *Window) channelLink(c *ui.Context, t mui.Tokens, v core.Video) {
 	if v.ChannelID == "" {
 		return
 	}
-	open := func() { c.OpenURL(channelURL(v.ChannelID)) }
-	link.Cursor(ui.CursorPointer).Tooltip("Open "+v.ChannelTitle+" on YouTube").Role(ui.RoleLink).Focusable().OnClick(open).OnShortcut(0, ui.KeyEnter, open)
+	open := func() { w.navigateToChannel(v.ChannelID) }
+	link.Cursor(ui.CursorPointer).Tooltip(channelLinkTooltip(v.ChannelTitle, c.Locale())).Role(ui.RoleLink).Focusable().OnClick(open).OnShortcut(0, ui.KeyEnter, open)
 }
 
-func channelURL(channelID string) string {
-	return "https://www.youtube.com/channel/" + channelID
+func channelLinkTooltip(title, locale string) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		if title == "" {
+			return "查看频道"
+		}
+		return "查看频道 " + title
+	}
+	if title == "" {
+		return "View channel"
+	}
+	return "View " + title
 }
 
 // cardTitleColor is the card title's colour: the accent marks the chosen card
