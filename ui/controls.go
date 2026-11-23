@@ -17,6 +17,12 @@ const SidebarChannelRowHeight float32 = 34
 // SidebarChannelAvatar is the channel avatar's diameter in a sidebar row.
 const SidebarChannelAvatar float32 = 24
 
+// SidebarRenameFieldHeight is the height of the inline rename field in a fold
+// row. A 13 pt face lays out an 18 pt line, descenders included, so the field
+// keeps a 24 pt content box inside its 1 pt border: the whole glyph box shows,
+// vertically centred, with room above and below in the 28 pt fold row.
+const SidebarRenameFieldHeight float32 = 26
+
 // ScrollBottomInset is the clear room after the last item of a scrolling
 // pane, so the bottom row clears the window's bottom edge at the minimum
 // height. The sidebar, grid and detail panes share it.
@@ -37,6 +43,10 @@ const ScrollBottomInset float32 = 20
 // accent text; it never becomes a solid accent fill. MyGo's ButtonBase
 // supplies pointer, Return and Space activation, and every row takes the
 // keyboard focus with the shared 2 pt ring at the token's 3 pt offset.
+//
+// A fold row being renamed drops the tint and keeps the sidebar surface: the
+// rename field is a control of its own, SidebarRenameFieldHeight tall on the
+// row's centre, with the whole 13 pt line box visible inside its border.
 type SidebarRow struct {
 	Key            string
 	Label          string
@@ -54,6 +64,21 @@ type SidebarRow struct {
 	OnClick        func()
 	OnFoldClick    func()
 	OnContextMenu  func(m *ui.Menu)
+}
+
+// foldRowSurface is the fill behind a fold row's content. A row being renamed
+// hands the surface back to the sidebar: the inline field draws its own
+// bordered surface, so the selected tint behind it would read as a second,
+// overlapping control.
+func (r SidebarRow) foldRowSurface(tokens Tokens) ui.Color {
+	if r.Renaming {
+		return tokens.Sidebar
+	}
+	state := Default
+	if r.Selected {
+		state = Active
+	}
+	return tokens.Face(state, false, true).Background
 }
 
 // Build creates the row's element in this frame.
@@ -75,7 +100,8 @@ func (r SidebarRow) Build(c *ui.Context, tokens Tokens) ui.Element {
 	if r.Fold {
 		container := ui.Row(c).Key(r.Key+":container").
 			Height(rowHeight).FillWidth().Gap(0).Padding(0, Space(2)).
-			Radius(RadiusControl).Background(face.Background).TextColor(face.Text).
+			Radius(RadiusControl).AlignItems(ui.Center).
+			Background(r.foldRowSurface(tokens)).TextColor(face.Text).
 			Transition(Fade).MarginY(1)
 
 		glyph := "chevron.right"
@@ -105,13 +131,23 @@ func (r SidebarRow) Build(c *ui.Context, tokens Tokens) ui.Element {
 			}
 
 			if r.Renaming {
+				// The field owns its surface and stays at one height, so the
+				// 13 pt line keeps its descenders and centres in the row.
 				input := ui.TextInput(c.Key(r.Key+":rename-input"), r.RenameValue).
-					Height(20).Grow(1).
-					PaddingX(Space(1)).Radius(RadiusControl).
+					Height(SidebarRenameFieldHeight).Grow(1).
+					Padding(0, Space(2)).Radius(RadiusControl).
 					Background(tokens.Surface).Border(Hairline, tokens.Border).
 					TextColor(tokens.Text).Label("Rename " + r.Label).
 					FocusRingColor(tokens.Focus).FocusRingOffset(FocusRingGap)
 				Control.Apply(input).FontSize(13)
+				// MyGo paints a focused input's outline with its theme accent,
+				// which is not the app's accent: the field's outline is the focus
+				// token, the same colour as the ring around it.
+				input.DrawOver(func(p *ui.Painter, box ui.Rect) {
+					if input.Focused() {
+						p.Stroke(box, tokens.Focus, RadiusControl, Hairline)
+					}
+				})
 				input.Focus()
 				input.OnShortcut(0, ui.KeyEnter, func() {
 					if r.OnRename != nil && r.RenameValue != nil {
