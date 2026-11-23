@@ -57,6 +57,8 @@ type SidebarRow struct {
 	Fold           bool   // this row folds the rows below it
 	Expanded       bool   // the fold is open, so the chevron points down
 	Selected       bool
+	DropHover      bool                 // row is the hovered target of an active channel drag
+	DropHoverLabel string               // text inside the callout bubble, e.g. "移入此组" / "Move here"
 	Renaming       bool                 // row is currently being renamed inline
 	RenameValue    *string              // value buffer for the rename text input
 	OnRename       func(newName string) // callback on rename submit
@@ -71,6 +73,9 @@ type SidebarRow struct {
 // bordered surface, so the selected tint behind it would read as a second,
 // overlapping control.
 func (r SidebarRow) foldRowSurface(tokens Tokens) ui.Color {
+	if r.DropHover {
+		return tokens.AccentSoft
+	}
 	if r.Renaming {
 		return tokens.Sidebar
 	}
@@ -103,13 +108,18 @@ func (r SidebarRow) Build(c *ui.Context, tokens Tokens) ui.Element {
 			Radius(RadiusControl).AlignItems(ui.Center).
 			Background(r.foldRowSurface(tokens)).TextColor(face.Text).
 			Transition(Fade).MarginY(1)
+		if r.DropHover {
+			container.Border(1.5, tokens.Accent)
+		}
 
 		glyph := "chevron.right"
 		if r.Expanded {
 			glyph = "chevron.down"
 		}
 		chevronColor := tokens.Muted
-		if r.Selected {
+		if r.DropHover {
+			chevronColor = tokens.Accent
+		} else if r.Selected {
 			chevronColor = face.Text
 		}
 
@@ -182,11 +192,21 @@ func (r SidebarRow) Build(c *ui.Context, tokens Tokens) ui.Element {
 				}
 				btn.Children(func() {
 					textColor := tokens.Muted
-					if r.Selected {
+					if r.DropHover {
+						textColor = tokens.Accent
+					} else if r.Selected {
 						textColor = face.Text
 					}
 					SidebarGroupLabel.Apply(ui.Text(c, r.Label)).TextColor(textColor).SingleLine().Grow(1)
-					if r.Count != "" {
+					if r.DropHover && r.DropHoverLabel != "" {
+						bubble := ui.Row(c).Key(r.Key+":drop-bubble").
+							Padding(2, Space(1.5)).Radius(RadiusCheck).
+							Background(tokens.AccentSoft).Border(1, tokens.Accent).
+							AlignItems(ui.Center)
+						bubble.Children(func() {
+							Control.Apply(ui.Text(c, r.DropHoverLabel)).FontSize(11).TextColor(tokens.Accent).SingleLine()
+						})
+					} else if r.Count != "" {
 						Metadata.Apply(ui.Text(c, r.Count)).TextColor(countColor).SingleLine()
 					}
 				})
@@ -198,7 +218,7 @@ func (r SidebarRow) Build(c *ui.Context, tokens Tokens) ui.Element {
 		})
 
 		container.Draw(func(p *ui.Painter, box ui.Rect) {
-			if r.Renaming {
+			if r.Renaming || r.DropHover {
 				return
 			}
 			switch {

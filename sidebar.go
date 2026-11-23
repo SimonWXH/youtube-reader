@@ -14,6 +14,7 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 	w.sidebarFocus = ""
 	counts := w.sidebarCounts()
 	var drag groupDragFrame
+	var chDrag channelDragFrame
 
 	sidebar := ui.Column(c).Fill().Shrink(0).Background(t.Sidebar)
 	sidebar.Children(func() {
@@ -40,7 +41,7 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 				},
 			})
 			for i, g := range w.app.Groups {
-				w.groupSection(c, t, g, i, nav, counts, &drag)
+				w.groupSection(c, t, g, i, nav, counts, &drag, &chDrag)
 			}
 			grouped := groupedChannelIDs(w.app.Groups)
 			ungrouped := make([]core.Channel, 0, len(w.app.Channels))
@@ -49,28 +50,68 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 					ungrouped = append(ungrouped, ch)
 				}
 			}
+
+			channelDragActive := chDrag.alive || w.channelDraggingID != ""
+
 			if len(w.app.Channels) == 0 {
 				mui.SidebarEmpty(c, t, func() { w.importOPML(c) })
 			} else if len(ungrouped) > 0 {
-				sectionHeader(c, t, ungroupedHeader(c.Locale()))
-			}
-			for _, ch := range ungrouped {
-				ch := ch
-				nav.row(c, t, mui.SidebarRow{
-					Key: "all-channels:" + ch.ID, Label: ch.Title, Channel: true, Avatar: ch.AvatarURL,
-					Count:    fmt.Sprintf("%d", counts.perChannel[ch.ID]),
-					Selected: w.app.Selected == "channel:"+ch.ID,
-					OnClick: func() {
-						if w.renamingGroupID != "" {
-							w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
+				ungroupedBlock := ui.Column(c.Key("ungrouped-block")).FillWidth()
+				draggedChan, chanOver := ui.DragOver[channelDrag](ungroupedBlock)
+				droppedChan, chanDropped := ui.Drop[channelDrag](ungroupedBlock)
+				if chanDropped && !w.channelIsUngrouped(droppedChan.ID) {
+					w.moveChannelToGroup(c, droppedChan.ID, "")
+				}
+				dropHover := chanOver && !w.channelIsUngrouped(draggedChan.ID)
+
+				ungroupedBlock.Children(func() {
+					if dropHover {
+						w.renderUngroupedDropRow(c, t, true)
+					} else {
+						sectionHeader(c, t, ungroupedHeader(c.Locale()))
+					}
+					for _, ch := range ungrouped {
+						ch := ch
+						row := nav.row(c, t, mui.SidebarRow{
+							Key: "all-channels:" + ch.ID, Label: ch.Title, Channel: true, Avatar: ch.AvatarURL,
+							Count:    fmt.Sprintf("%d", counts.perChannel[ch.ID]),
+							Selected: w.app.Selected == "channel:"+ch.ID,
+							OnClick: func() {
+								if w.renamingGroupID != "" {
+									w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
+								}
+								w.app.SelectDestination("channel:" + ch.ID)
+							},
+						})
+						row.Drag(channelDrag{ID: ch.ID})
+						if row.Dragging() {
+							chDrag.alive = true
+							chDrag.channelID = ch.ID
+							row.Opacity(0.4)
 						}
-						w.app.SelectDestination("channel:" + ch.ID)
-					},
+					}
+				})
+			} else if channelDragActive {
+				ungroupedStrip := ui.Column(c.Key("ungrouped-drop-strip")).FillWidth()
+				draggedChan, chanOver := ui.DragOver[channelDrag](ungroupedStrip)
+				droppedChan, chanDropped := ui.Drop[channelDrag](ungroupedStrip)
+				if chanDropped && !w.channelIsUngrouped(droppedChan.ID) {
+					w.moveChannelToGroup(c, droppedChan.ID, "")
+				}
+				dropHover := chanOver && !w.channelIsUngrouped(draggedChan.ID)
+
+				ungroupedStrip.Children(func() {
+					w.renderUngroupedDropRow(c, t, dropHover)
 				})
 			}
 		})
 	})
 	w.settleGroupDrag(c, &drag)
+	if chDrag.alive {
+		w.channelDraggingID = chDrag.channelID
+	} else {
+		w.channelDraggingID = ""
+	}
 	if nav.focused != "" && nav.focused != w.sidebarKeyboard {
 		w.sidebarKeyboard = ""
 	}
@@ -101,6 +142,14 @@ func ungroupedHeader(locale string) string {
 		return "未分组"
 	}
 	return "Ungrouped"
+}
+
+// moveHereLabel returns the label for the drop target badge when hovering a valid group.
+func moveHereLabel(locale string) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return "+ 移入此组"
+	}
+	return "+ Move here"
 }
 
 // renameMenuLabel returns the context menu item label for renaming groups.
@@ -203,83 +252,137 @@ func (n *sidebarNav) move(delta int) func() {
 // keyed by the group, so a drag moves it with its rows' state, and it is the
 // destination a dragged group drops on, so a folded-out group answers anywhere
 // over its channels rather than only over its row.
-func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, index int, nav *sidebarNav, counts sidebarCounts, drag *groupDragFrame) {
+func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, index int, nav *sidebarNav, counts sidebarCounts, drag *groupDragFrame, chDrag *channelDragFrame) {
 	collapsed := w.app.GroupCollapsed(g.ID)
 	focused := false
-	section := ui.Column(c.Key("group-block:" + g.ID))
+	block := ui.Column(c.Key("group-channel-drop:" + g.ID)).FillWidth()
 	renaming := w.renamingGroupID == g.ID
-	section.Children(func() {
-		row := nav.row(c, t, mui.SidebarRow{
-			Key: "group:" + g.ID, Label: g.Name, Count: fmt.Sprintf("%d", counts.group(g.ChannelIDs)),
-			Fold: true, Expanded: !collapsed,
-			Selected: w.app.Selected == "group:"+g.ID,
-			OnClick: func() {
-				if w.renamingGroupID != "" && w.renamingGroupID != g.ID {
-					w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
-				}
-				w.app.SelectDestination("group:" + g.ID)
-			},
-			OnFoldClick: func() {
-				if w.renamingGroupID != "" {
-					w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
-				}
-				_ = w.app.SetGroupCollapsed(g.ID, !collapsed)
-			},
-			OnContextMenu: func(m *ui.Menu) {
-				renameText := renameMenuLabel(c.Locale())
-				if m.Item(renameText).Chosen() {
-					w.startRenameGroup(g.ID, g.Name)
-				}
-			},
-			Renaming:    renaming,
-			RenameValue: &w.renamingGroupName,
-			OnRename: func(newName string) {
-				w.commitRenameGroup(g.ID, newName)
-				c.Invalidate()
-			},
-			OnRenameCancel: func() {
-				w.cancelRenameGroup()
-				c.Invalidate()
-			},
-		})
-		focused = focused || row.Focused()
-		// The row drags its group. MyGo keeps a press that moved a few DIPs
-		// from clicking, so a drag never selects the row; the row stays as
-		// the place the group would land. Drag is disabled during rename.
-		if !renaming {
-			row.Drag(groupDrag{ID: g.ID})
-			if row.Dragging() {
-				drag.alive = true
-				row.Opacity(0.4)
-			}
-			if _, missed := row.DragMissed(); missed {
-				drag.missed = true
-			}
-		}
-		if collapsed {
-			return
-		}
-		for _, id := range g.ChannelIDs {
-			id := id
-			ch := w.channelByID(id)
+	// Check channel drop target on this group block
+	draggedChan, chanOver := ui.DragOver[channelDrag](block)
+	droppedChan, chanDropped := ui.Drop[channelDrag](block)
+	if chanDropped && !w.channelOnlyInGroup(droppedChan.ID, g.ID) {
+		w.moveChannelToGroup(c, droppedChan.ID, g.ID)
+	}
+	validDropTarget := !renaming && chanOver && !w.channelOnlyInGroup(draggedChan.ID, g.ID)
+
+	block.Children(func() {
+		section := ui.Column(c.Key("group-block:" + g.ID)).FillWidth()
+		section.Children(func() {
 			row := nav.row(c, t, mui.SidebarRow{
-				Key: fmt.Sprintf("group:%s:channel:%s", g.ID, id), Label: ch.Title, Channel: true, Avatar: ch.AvatarURL,
-				Count:    fmt.Sprintf("%d", counts.perChannel[id]),
-				Selected: w.app.Selected == "channel:"+id,
+				Key: "group:" + g.ID, Label: g.Name, Count: fmt.Sprintf("%d", counts.group(g.ChannelIDs)),
+				Fold: true, Expanded: !collapsed,
+				Selected:       w.app.Selected == "group:"+g.ID,
+				DropHover:      validDropTarget,
+				DropHoverLabel: moveHereLabel(c.Locale()),
 				OnClick: func() {
+					if w.renamingGroupID != "" && w.renamingGroupID != g.ID {
+						w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
+					}
+					w.app.SelectDestination("group:" + g.ID)
+				},
+				OnFoldClick: func() {
 					if w.renamingGroupID != "" {
 						w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
 					}
-					w.app.SelectDestination("channel:" + id)
+					_ = w.app.SetGroupCollapsed(g.ID, !collapsed)
+				},
+				OnContextMenu: func(m *ui.Menu) {
+					renameText := renameMenuLabel(c.Locale())
+					if m.Item(renameText).Chosen() {
+						w.startRenameGroup(g.ID, g.Name)
+					}
+				},
+				Renaming:    renaming,
+				RenameValue: &w.renamingGroupName,
+				OnRename: func(newName string) {
+					w.commitRenameGroup(g.ID, newName)
+					c.Invalidate()
+				},
+				OnRenameCancel: func() {
+					w.cancelRenameGroup()
+					c.Invalidate()
 				},
 			})
 			focused = focused || row.Focused()
+			// The row drags its group. MyGo keeps a press that moved a few DIPs
+			// from clicking, so a drag never selects the row; the row stays as
+			// the place the group would land. Drag is disabled during rename.
+			if !renaming {
+				row.Drag(groupDrag{ID: g.ID})
+				if row.Dragging() {
+					drag.alive = true
+					row.Opacity(0.4)
+				}
+				if _, missed := row.DragMissed(); missed {
+					drag.missed = true
+				}
+			}
+			if collapsed {
+				return
+			}
+			for _, id := range g.ChannelIDs {
+				id := id
+				ch := w.channelByID(id)
+				row := nav.row(c, t, mui.SidebarRow{
+					Key: fmt.Sprintf("group:%s:channel:%s", g.ID, id), Label: ch.Title, Channel: true, Avatar: ch.AvatarURL,
+					Count:    fmt.Sprintf("%d", counts.perChannel[id]),
+					Selected: w.app.Selected == "channel:"+id,
+					OnClick: func() {
+						if w.renamingGroupID != "" {
+							w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
+						}
+						w.app.SelectDestination("channel:" + id)
+					},
+				})
+				focused = focused || row.Focused()
+				row.Drag(channelDrag{ID: id})
+				if row.Dragging() {
+					chDrag.alive = true
+					chDrag.channelID = id
+					row.Opacity(0.4)
+				}
+			}
+		})
+		if focused {
+			block.ZIndex(1)
+			section.ZIndex(1)
 		}
+		w.groupSectionDrop(c, section, index, drag)
 	})
-	if focused {
-		section.ZIndex(1)
+}
+
+func (w *Window) renderUngroupedDropRow(c *ui.Context, t mui.Tokens, dropHover bool) {
+	row := ui.Row(c.Key("ungrouped-drop-row")).
+		Height(32).FillWidth().Gap(0).Padding(0, mui.Space(2)).
+		Radius(mui.RadiusControl).AlignItems(ui.Center).MarginY(1)
+	if dropHover {
+		row.Background(t.AccentSoft).Border(1.5, t.Accent)
+		row.Children(func() {
+			mui.Control.Apply(ui.Text(c, ungroupedHeader(c.Locale()))).FontSize(13).TextColor(t.Accent).SingleLine().Grow(1)
+			bubble := ui.Row(c.Key("ungrouped-drop-bubble")).
+				Padding(2, mui.Space(1.5)).Radius(mui.RadiusCheck).
+				Background(t.AccentSoft).Border(1, t.Accent).
+				AlignItems(ui.Center)
+			bubble.Children(func() {
+				mui.Control.Apply(ui.Text(c, moveHereLabel(c.Locale()))).FontSize(11).TextColor(t.Accent).SingleLine()
+			})
+		})
+	} else {
+		row.Background(t.Sidebar).Border(1, t.Border).BorderStyle(ui.BorderDashed)
+		row.Children(func() {
+			mui.Control.Apply(ui.Text(c, ungroupedHeader(c.Locale()))).FontSize(12).TextColor(t.Muted).SingleLine()
+		})
 	}
-	w.groupSectionDrop(c, section, index, drag)
+}
+
+// channelDrag is the payload carried when dragging a channel row.
+// It is type-distinct from groupDrag so channel drag and group reorder never cross.
+type channelDrag struct{ ID string }
+
+// channelDragFrame tracks channel drag state within the current frame.
+type channelDragFrame struct {
+	alive     bool
+	channelID string
 }
 
 // groupDrag is the value a group header row drags. Only a group row reorders
