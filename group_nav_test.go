@@ -166,21 +166,25 @@ func TestSettingsConcurrentReadersAndWritersStayConsistent(t *testing.T) {
 	}
 }
 
-func TestCardChannelNameOpensChannelAndPreservesCardSelection(t *testing.T) {
-	video := core.Video{ID: "video-1", ChannelID: "UC_1", ChannelTitle: "The PrimeTime", Title: "Episode"}
-	other := core.Video{ID: "video-2", ChannelID: "UC_2", ChannelTitle: "Other channel", Title: "Another episode"}
+func TestCardChannelNameNavigatesInAppAndExpandsGroup(t *testing.T) {
+	video := core.Video{ID: "video-1", ChannelID: "UC_1", ChannelTitle: "The PrimeTime", Title: "Prime Episode"}
+	other := core.Video{ID: "video-2", ChannelID: "UC_2", ChannelTitle: "Other channel", Title: "Another prime episode"}
 	a := &App{
 		Dir:             t.TempDir(),
 		Selected:        "all",
+		Search:          "prime",
 		Settings:        core.Settings{APIKey: "test-key", ExpandedGroups: map[string]bool{}},
 		SelectedVideoID: other.ID,
 		Sync: core.SyncState{
 			Favorites:  map[string]core.FavoriteRecord{},
 			ReadStates: map[string]map[string]core.ReadRecord{},
-			Channels:   map[string]core.Channel{"ch-1": {ID: "ch-1", Title: "Group channel"}},
+			Channels: map[string]core.Channel{
+				"ch-1": {ID: "ch-1", Title: "Group channel"},
+				"UC_1": {ID: "UC_1", Title: "The PrimeTime"},
+			},
 		},
-		Groups:   []core.ChannelGroup{{ID: "group-1", Name: "Group", ChannelIDs: []string{"ch-1"}}},
-		Channels: []core.Channel{{ID: "ch-1", Title: "Group channel"}},
+		Groups:   []core.ChannelGroup{{ID: "group-1", Name: "Group", ChannelIDs: []string{"ch-1", "UC_1"}}},
+		Channels: []core.Channel{{ID: "ch-1", Title: "Group channel"}, {ID: "UC_1", Title: "The PrimeTime"}},
 		Videos:   []core.Video{video, other},
 	}
 	w := &Window{app: a, selectedIndex: new(int)}
@@ -189,43 +193,96 @@ func TestCardChannelNameOpensChannelAndPreservesCardSelection(t *testing.T) {
 	if n := countText(tt, "Group channel"); n != 0 {
 		t.Fatalf("a channel in a collapsed group must not appear again below the groups; got %d matches in %q", n, tt.Texts())
 	}
-	if err := tt.Click("Toggle Group"); err != nil {
-		t.Fatalf("click group fold chevron: %v", err)
-	}
-	if a.GroupCollapsed("group-1") {
-		t.Fatal("clicking fold chevron did not expand group")
-	}
-	if !a.Settings.ExpandedGroups["group-1"] {
-		t.Fatalf("group expansion not saved: %+v", a.Settings.ExpandedGroups)
-	}
-	if n := countText(tt, "Group channel"); n != 1 {
-		t.Fatalf("expanded group should show its channel exactly once; got %d matches in %q", n, tt.Texts())
-	}
-	if err := tt.Click("Toggle Group"); err != nil {
-		t.Fatalf("click fold chevron again: %v", err)
-	}
 	if !a.GroupCollapsed("group-1") {
-		t.Fatal("clicking expanded fold chevron did not collapse it")
-	}
-	if n := countText(tt, "Group channel"); n != 0 {
-		t.Fatalf("collapsed group should remove its channel row; got %d matches in %q", n, tt.Texts())
+		t.Fatal("group-1 should initially be collapsed")
 	}
 
 	if err := tt.Click("The PrimeTime"); err != nil {
 		t.Fatalf("click channel name: %v", err)
 	}
 	urls := tt.OpenedURLs()
-	if len(urls) != 1 || urls[0] != "https://www.youtube.com/channel/UC_1" {
-		t.Fatalf("opened URLs = %q", urls)
+	if len(urls) != 0 {
+		t.Fatalf("expected no opened URLs, got %q", urls)
 	}
-	if a.SelectedVideoID != other.ID {
-		t.Fatalf("card selection changed to %q", a.SelectedVideoID)
+	if a.Selected != "channel:UC_1" {
+		t.Fatalf("Selected = %q, want channel:UC_1", a.Selected)
+	}
+	if a.GroupCollapsed("group-1") {
+		t.Fatal("clicking channel name did not expand its owning group")
+	}
+	if !a.Settings.ExpandedGroups["group-1"] {
+		t.Fatalf("group expansion not saved: %+v", a.Settings.ExpandedGroups)
+	}
+	if a.Search != "" {
+		t.Fatalf("Search = %q, want empty", a.Search)
+	}
+	if a.SelectedVideoID != "" {
+		t.Fatalf("SelectedVideoID = %q, want empty (details panel closed)", a.SelectedVideoID)
 	}
 	if a.Sync.IsRead(video.ID) {
 		t.Fatal("clicking channel name marked video read")
 	}
-	if a.Selected != "all" || a.ChannelFilter != "" {
-		t.Fatalf("sidebar navigation changed: %q, %q", a.Selected, a.ChannelFilter)
+
+	tt.Frame()
+	if n := countText(tt, "The PrimeTime"); n < 1 {
+		t.Fatalf("expanded group should show The PrimeTime in sidebar; got %d matches", n)
+	}
+}
+
+func TestCardChannelNameNavigatesUngroupedAndAlreadyExpanded(t *testing.T) {
+	vGrouped := core.Video{ID: "v-1", ChannelID: "ch-exp", ChannelTitle: "Expanded Channel", Title: "Exp Video"}
+	vUngrouped := core.Video{ID: "v-2", ChannelID: "ch-ungrouped", ChannelTitle: "Solo Channel", Title: "Solo Video"}
+	a := &App{
+		Dir:      t.TempDir(),
+		Selected: "all",
+		Search:   "stale",
+		Settings: core.Settings{
+			APIKey:         "test-key",
+			ExpandedGroups: map[string]bool{"g-open": true, "g-closed": false},
+		},
+		Groups: []core.ChannelGroup{
+			{ID: "g-open", Name: "Open Group", ChannelIDs: []string{"ch-exp"}},
+			{ID: "g-closed", Name: "Closed Group", ChannelIDs: []string{"ch-closed"}},
+		},
+		Channels: []core.Channel{
+			{ID: "ch-exp", Title: "Expanded Channel"},
+			{ID: "ch-closed", Title: "Closed Channel"},
+			{ID: "ch-ungrouped", Title: "Solo Channel"},
+		},
+		Videos: []core.Video{vGrouped, vUngrouped},
+	}
+	w := &Window{app: a, selectedIndex: new(int)}
+
+	// 1. Navigate to already-expanded channel
+	w.navigateToChannel("ch-exp")
+	if a.Selected != "channel:ch-exp" {
+		t.Fatalf("Selected = %q, want channel:ch-exp", a.Selected)
+	}
+	if a.GroupCollapsed("g-open") {
+		t.Fatal("open group should stay open")
+	}
+	if !a.GroupCollapsed("g-closed") {
+		t.Fatal("closed group should stay closed")
+	}
+	if a.Search != "" {
+		t.Fatalf("Search = %q, want empty", a.Search)
+	}
+
+	// 2. Navigate to ungrouped channel
+	a.Search = "query"
+	a.SelectedVideoID = "v-1"
+	w.navigateToChannel("ch-ungrouped")
+	if a.Selected != "channel:ch-ungrouped" {
+		t.Fatalf("Selected = %q, want channel:ch-ungrouped", a.Selected)
+	}
+	if a.Search != "" {
+		t.Fatalf("Search = %q, want empty", a.Search)
+	}
+	if a.SelectedVideoID != "" {
+		t.Fatalf("SelectedVideoID = %q, want empty", a.SelectedVideoID)
+	}
+	if !a.GroupCollapsed("g-closed") {
+		t.Fatal("closed group should stay closed")
 	}
 }
 
@@ -299,19 +356,23 @@ func TestGroupHeaderKeyboardToggleKeepsFocus(t *testing.T) {
 }
 
 func TestCardChannelNameKeyboardOpensChannel(t *testing.T) {
-	video := core.Video{ID: "video-1", ChannelID: "UC_1", ChannelTitle: "The PrimeTime", Title: "Episode"}
-	other := core.Video{ID: "video-2", ChannelID: "UC_2", ChannelTitle: "Other channel", Title: "Another episode"}
+	video := core.Video{ID: "video-1", ChannelID: "UC_1", ChannelTitle: "The PrimeTime", Title: "Prime Episode"}
+	other := core.Video{ID: "video-2", ChannelID: "UC_2", ChannelTitle: "Other channel", Title: "Another prime episode"}
 	a := &App{
 		Dir:             t.TempDir(),
 		Selected:        "all",
-		Settings:        core.Settings{APIKey: "test-key"},
+		Search:          "prime",
+		Settings:        core.Settings{APIKey: "test-key", ExpandedGroups: map[string]bool{}},
 		SelectedVideoID: other.ID,
 		Sync: core.SyncState{
 			Favorites:  map[string]core.FavoriteRecord{},
 			ReadStates: map[string]map[string]core.ReadRecord{},
 			Channels:   map[string]core.Channel{"UC_1": {ID: "UC_1", Title: "The PrimeTime"}},
+			Groups:     map[string]core.ChannelGroup{"g-1": {ID: "g-1", Name: "Fun", ChannelIDs: []string{"UC_1"}}},
 		},
-		Videos: []core.Video{video, other},
+		Groups:   []core.ChannelGroup{{ID: "g-1", Name: "Fun", ChannelIDs: []string{"UC_1"}}},
+		Channels: []core.Channel{{ID: "UC_1", Title: "The PrimeTime"}},
+		Videos:   []core.Video{video, other},
 	}
 	w := &Window{app: a, selectedIndex: new(int)}
 	tt := ui.NewTester(w.view, 1280, 840)
@@ -335,11 +396,35 @@ func TestCardChannelNameKeyboardOpensChannel(t *testing.T) {
 	}
 	tt.Key(0, ui.KeyEnter)
 	urls := tt.OpenedURLs()
-	if len(urls) != 1 || urls[0] != "https://www.youtube.com/channel/UC_1" {
-		t.Fatalf("opened URLs = %q", urls)
+	if len(urls) != 0 {
+		t.Fatalf("expected no opened URLs, got %q", urls)
 	}
-	if a.SelectedVideoID != other.ID {
-		t.Fatalf("card selection changed to %q", a.SelectedVideoID)
+	if a.Selected != "channel:UC_1" {
+		t.Fatalf("Selected = %q, want channel:UC_1", a.Selected)
+	}
+	if a.GroupCollapsed("g-1") {
+		t.Fatal("group g-1 should be expanded")
+	}
+	if a.Search != "" {
+		t.Fatalf("Search = %q, want empty", a.Search)
+	}
+	if a.SelectedVideoID != "" {
+		t.Fatalf("SelectedVideoID = %q, want empty", a.SelectedVideoID)
+	}
+}
+
+func TestChannelLinkTooltip(t *testing.T) {
+	if got := channelLinkTooltip("Anna Cramling", "en_US"); got != "View Anna Cramling" {
+		t.Fatalf("en_US tooltip = %q, want %q", got, "View Anna Cramling")
+	}
+	if got := channelLinkTooltip("Anna Cramling", "zh_CN"); got != "查看频道 Anna Cramling" {
+		t.Fatalf("zh_CN tooltip = %q, want %q", got, "查看频道 Anna Cramling")
+	}
+	if got := channelLinkTooltip("", "en_US"); got != "View channel" {
+		t.Fatalf("en_US empty tooltip = %q, want %q", got, "View channel")
+	}
+	if got := channelLinkTooltip("", "zh_CN"); got != "查看频道" {
+		t.Fatalf("zh_CN empty tooltip = %q, want %q", got, "查看频道")
 	}
 }
 
@@ -367,6 +452,18 @@ func TestCardChannelNameHandlesEmptyChannelID(t *testing.T) {
 		if strings.Contains(url, "channel/") {
 			t.Fatalf("opened invalid channel URL: %q", url)
 		}
+	}
+	if a.Selected != "all" {
+		t.Fatalf("Selected changed for empty channel ID: %q", a.Selected)
+	}
+	if a.SelectChannel("") {
+		t.Fatal("SelectChannel with empty string should return false")
+	}
+	if !a.SelectChannel("ch-synced-only") {
+		t.Fatal("SelectChannel with non-empty string should return true")
+	}
+	if a.Selected != "channel:ch-synced-only" {
+		t.Fatalf("Selected = %q, want channel:ch-synced-only", a.Selected)
 	}
 }
 

@@ -138,6 +138,9 @@ func (a *App) settingsBytes(s core.Settings) ([]byte, error) {
 }
 
 func (a *App) saveSettings(data []byte) error {
+	if a.Dir == "" {
+		return nil
+	}
 	return atomicWrite(filepath.Join(a.Dir, "settings.json"), data)
 }
 
@@ -950,23 +953,30 @@ func (a *App) ConsumeHandoff() error {
 	return a.reload()
 }
 
-// SelectChannel routes the UI to a channel's filtered view and clears the
-// transient search/unread filters so the destination is unambiguous.
+// SelectChannel routes the UI to a channel's filtered view, expands its
+// owning group if collapsed, and clears transient search/unread filters so
+// the destination is unambiguous.
 func (a *App) SelectChannel(channelID string) bool {
 	if channelID == "" {
 		return false
 	}
-	for _, ch := range a.Channels {
-		if ch.ID == channelID {
-			a.SelectDestination("channel:" + channelID)
-			a.ChannelFilter = ""
-			a.Search = ""
-			a.UnreadOnly = false
-			a.SelectedVideoID = ""
-			return true
+	a.SelectDestination("channel:" + channelID)
+	a.ChannelFilter = ""
+	a.Search = ""
+	a.UnreadOnly = false
+	a.SelectedVideoID = ""
+	a.expandGroupForChannel(channelID)
+	return true
+}
+
+func (a *App) expandGroupForChannel(channelID string) {
+	for _, g := range a.Groups {
+		if slices.Contains(g.ChannelIDs, channelID) {
+			if a.GroupCollapsed(g.ID) {
+				_ = a.SetGroupCollapsed(g.ID, false)
+			}
 		}
 	}
-	return false
 }
 
 func (a *App) VisibleVideos() []core.Video {
