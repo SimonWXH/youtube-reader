@@ -109,8 +109,37 @@ type Window struct {
 	// nil when no group drag has moved the list.
 	groupDragOrder []string
 
+	// renamingGroupID is the ID of the group currently being inline-renamed in the sidebar.
+	renamingGroupID   string
+	renamingGroupName string
+
 	// settingsWindow is the standalone Settings window and its view state.
 	settingsWindow settingsWindow
+}
+
+func (w *Window) startRenameGroup(id, name string) {
+	if w.renamingGroupID != "" && w.renamingGroupID != id {
+		w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
+	}
+	w.renamingGroupID = id
+	w.renamingGroupName = name
+}
+
+func (w *Window) commitRenameGroup(id, newName string) {
+	w.renamingGroupID = ""
+	w.renamingGroupName = ""
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		return
+	}
+	if err := w.app.RenameGroup(id, newName); err != nil {
+		log.Printf("rename group: %v", err)
+	}
+}
+
+func (w *Window) cancelRenameGroup() {
+	w.renamingGroupID = ""
+	w.renamingGroupName = ""
 }
 
 func (w *Window) toast(c *ui.Context, msg string, isError bool) {
@@ -365,8 +394,14 @@ func (w *Window) destinationCount(counts sidebarCounts) int {
 	case destinationID(w.app.Selected, "channel:") != "":
 		return counts.perChannel[destinationID(w.app.Selected, "channel:")]
 	case destinationID(w.app.Selected, "group:") != "":
-		if g, ok := w.app.Sync.Groups[destinationID(w.app.Selected, "group:")]; ok {
+		gid := destinationID(w.app.Selected, "group:")
+		if g, ok := w.app.Sync.Groups[gid]; ok {
 			return counts.group(g.ChannelIDs)
+		}
+		for _, g := range w.app.Groups {
+			if g.ID == gid {
+				return counts.group(g.ChannelIDs)
+			}
 		}
 	}
 	return counts.total

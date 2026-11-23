@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -186,11 +187,11 @@ func TestCardChannelNameOpensChannelAndPreservesCardSelection(t *testing.T) {
 	if n := countText(tt, "Group channel"); n != 0 {
 		t.Fatalf("a channel in a collapsed group must not appear again below the groups; got %d matches in %q", n, tt.Texts())
 	}
-	if err := tt.Click("Group"); err != nil {
-		t.Fatalf("click group header: %v", err)
+	if err := tt.Click("Toggle Group"); err != nil {
+		t.Fatalf("click group fold chevron: %v", err)
 	}
 	if a.GroupCollapsed("group-1") {
-		t.Fatal("clicking group header did not expand group")
+		t.Fatal("clicking fold chevron did not expand group")
 	}
 	if !a.Settings.ExpandedGroups["group-1"] {
 		t.Fatalf("group expansion not saved: %+v", a.Settings.ExpandedGroups)
@@ -198,11 +199,11 @@ func TestCardChannelNameOpensChannelAndPreservesCardSelection(t *testing.T) {
 	if n := countText(tt, "Group channel"); n != 1 {
 		t.Fatalf("expanded group should show its channel exactly once; got %d matches in %q", n, tt.Texts())
 	}
-	if err := tt.Click("Group"); err != nil {
-		t.Fatalf("click group header again: %v", err)
+	if err := tt.Click("Toggle Group"); err != nil {
+		t.Fatalf("click fold chevron again: %v", err)
 	}
 	if !a.GroupCollapsed("group-1") {
-		t.Fatal("clicking expanded group header did not collapse it")
+		t.Fatal("clicking expanded fold chevron did not collapse it")
 	}
 	if n := countText(tt, "Group channel"); n != 0 {
 		t.Fatalf("collapsed group should remove its channel row; got %d matches in %q", n, tt.Texts())
@@ -240,7 +241,7 @@ func TestGroupHeaderKeyboardToggleKeepsFocus(t *testing.T) {
 
 	found := false
 	for _, info := range tt.AccessAll() {
-		if info.Name == "Group" && info.Role == ui.RoleDisclosure {
+		if info.Name == "Toggle Group" && info.Role == ui.RoleDisclosure {
 			found = true
 			if info.Expanded {
 				t.Fatal("new group is exposed as expanded")
@@ -248,7 +249,7 @@ func TestGroupHeaderKeyboardToggleKeepsFocus(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("group header is not exposed as a disclosure")
+		t.Fatal("group fold chevron is not exposed as a disclosure")
 	}
 	if n := countText(tt, "Group channel"); n != 0 {
 		t.Fatalf("a grouped channel must not appear outside its group; got %d matches in %q", n, tt.Texts())
@@ -257,19 +258,19 @@ func TestGroupHeaderKeyboardToggleKeepsFocus(t *testing.T) {
 	var disclosure ui.AccessInfo
 	for i := 0; i < 20; i++ {
 		tt.Key(0, ui.KeyTab)
-		disclosure, _ = tt.AccessByRole(ui.RoleDisclosure, "Group")
+		disclosure, _ = tt.AccessByRole(ui.RoleDisclosure, "Toggle Group")
 		if disclosure.Focused {
 			break
 		}
 	}
 	if !disclosure.Focused {
-		t.Fatal("Tab did not focus the group header")
+		t.Fatal("Tab did not focus the group fold chevron")
 	}
 	tt.Key(0, ui.KeyEnter)
 	if a.GroupCollapsed("group-1") {
 		t.Fatal("Enter did not expand the group")
 	}
-	disclosure, _ = tt.AccessByRole(ui.RoleDisclosure, "Group")
+	disclosure, _ = tt.AccessByRole(ui.RoleDisclosure, "Toggle Group")
 	if !disclosure.Focused {
 		t.Fatal("focus lost after expanding the group")
 	}
@@ -286,7 +287,7 @@ func TestGroupHeaderKeyboardToggleKeepsFocus(t *testing.T) {
 	if n := countText(tt, "Group channel"); n != 0 {
 		t.Fatalf("collapsed group should remove its channel row; got %d matches in %q", n, tt.Texts())
 	}
-	disclosure, _ = tt.AccessByRole(ui.RoleDisclosure, "Group")
+	disclosure, _ = tt.AccessByRole(ui.RoleDisclosure, "Toggle Group")
 	if !disclosure.Focused {
 		t.Fatal("focus lost after collapsing the group")
 	}
@@ -377,4 +378,313 @@ func countText(tt *ui.Tester, want string) int {
 		}
 	}
 	return n
+}
+
+func TestGroupSelectionDecoupledFromCollapse(t *testing.T) {
+	v1 := core.Video{ID: "v-1", ChannelID: "ch-1", Title: "Tech Video"}
+	v2 := core.Video{ID: "v-2", ChannelID: "ch-2", Title: "Cooking Video"}
+	a := &App{
+		Dir:      t.TempDir(),
+		Selected: "all",
+		Settings: core.Settings{APIKey: "test-key", ExpandedGroups: map[string]bool{}},
+		Sync: core.SyncState{
+			Favorites:  map[string]core.FavoriteRecord{},
+			ReadStates: map[string]map[string]core.ReadRecord{},
+			Channels: map[string]core.Channel{
+				"ch-1": {ID: "ch-1", Title: "Tech Channel"},
+				"ch-2": {ID: "ch-2", Title: "Cooking Channel"},
+			},
+			Groups: map[string]core.ChannelGroup{
+				"g-tech": {ID: "g-tech", Name: "Technology", ChannelIDs: []string{"ch-1"}},
+			},
+		},
+		Groups: []core.ChannelGroup{
+			{ID: "g-tech", Name: "Technology", ChannelIDs: []string{"ch-1"}},
+		},
+		Channels: []core.Channel{
+			{ID: "ch-1", Title: "Tech Channel"},
+			{ID: "ch-2", Title: "Cooking Channel"},
+		},
+		Videos: []core.Video{v1, v2},
+	}
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 840)
+	tt.Frame()
+
+	if w.title() != "All videos" {
+		t.Fatalf("initial title = %q, want All videos", w.title())
+	}
+	if len(a.VisibleVideos()) != 2 {
+		t.Fatalf("all videos visible count = %d, want 2", len(a.VisibleVideos()))
+	}
+	if !a.GroupCollapsed("g-tech") {
+		t.Fatal("group should initially be collapsed")
+	}
+
+	// 1. Click group name row: navigates to group, aggregates videos, updates title, does NOT expand group.
+	if err := tt.Click("Technology"); err != nil {
+		t.Fatalf("click Technology row: %v", err)
+	}
+	tt.Frame()
+
+	if a.Selected != "group:g-tech" {
+		t.Fatalf("after clicking group row, a.Selected = %q, want group:g-tech", a.Selected)
+	}
+	if w.title() != "Technology" {
+		t.Fatalf("after clicking group row, toolbar title = %q, want Technology", w.title())
+	}
+	if !a.GroupCollapsed("g-tech") {
+		t.Fatal("clicking group row must not toggle collapse state")
+	}
+	visible := a.VisibleVideos()
+	if len(visible) != 1 || visible[0].ID != "v-1" {
+		t.Fatalf("group visible videos = %+v, want only v-1", visible)
+	}
+
+	// 2. Click chevron: expands group, preserves selection.
+	if err := tt.Click("Toggle Technology"); err != nil {
+		t.Fatalf("click chevron: %v", err)
+	}
+	tt.Frame()
+
+	if a.GroupCollapsed("g-tech") {
+		t.Fatal("clicking chevron did not expand group")
+	}
+	if a.Selected != "group:g-tech" {
+		t.Fatalf("clicking chevron changed selection to %q, want group:g-tech", a.Selected)
+	}
+	if countText(tt, "Tech Channel") != 1 {
+		t.Fatal("expanded group should show Tech Channel row")
+	}
+
+	// 3. Click chevron again: collapses group, preserves selection.
+	if err := tt.Click("Toggle Technology"); err != nil {
+		t.Fatalf("click chevron again: %v", err)
+	}
+	tt.Frame()
+
+	if !a.GroupCollapsed("g-tech") {
+		t.Fatal("clicking chevron again did not collapse group")
+	}
+	if a.Selected != "group:g-tech" {
+		t.Fatalf("clicking chevron again changed selection to %q, want group:g-tech", a.Selected)
+	}
+	if countText(tt, "Tech Channel") != 0 {
+		t.Fatal("collapsed group should hide Tech Channel row")
+	}
+
+	// 4. Click group row again: stays on group, does not expand.
+	if err := tt.Click("Technology"); err != nil {
+		t.Fatalf("click Technology row again: %v", err)
+	}
+	tt.Frame()
+	if !a.GroupCollapsed("g-tech") {
+		t.Fatal("clicking group row again must not toggle collapse state")
+	}
+	if a.Selected != "group:g-tech" {
+		t.Fatalf("clicking group row again changed selection to %q", a.Selected)
+	}
+}
+
+func TestAppRenameGroupPersistsToSyncFile(t *testing.T) {
+	dir := t.TempDir()
+	syncPath := filepath.Join(dir, "youtube-reader-sync.json")
+	a := newTestApp(t, dir)
+	defer a.Close()
+	a.Settings.SyncPath = syncPath
+
+	g := core.ChannelGroup{ID: "group-1", Name: "Original", ChannelIDs: []string{"ch-1"}, UpdatedAt: 100}
+	a.Sync.Groups = map[string]core.ChannelGroup{"group-1": g}
+	a.Groups = []core.ChannelGroup{g}
+	if err := a.SaveSync(); err != nil {
+		t.Fatalf("save initial sync: %v", err)
+	}
+
+	if err := a.RenameGroup("group-1", "   "); err == nil {
+		t.Fatal("RenameGroup with empty name should return error")
+	}
+	if err := a.RenameGroup("nonexistent", "New Name"); err == nil {
+		t.Fatal("RenameGroup with nonexistent ID should return error")
+	}
+
+	if err := a.RenameGroup("group-1", "Renamed Tech"); err != nil {
+		t.Fatalf("RenameGroup: %v", err)
+	}
+	if a.Sync.Groups["group-1"].Name != "Renamed Tech" {
+		t.Fatalf("sync group name = %q, want Renamed Tech", a.Sync.Groups["group-1"].Name)
+	}
+	if a.Groups[0].Name != "Renamed Tech" {
+		t.Fatalf("app group name = %q, want Renamed Tech", a.Groups[0].Name)
+	}
+
+	// Verify persistence in sync.json
+	data, err := os.ReadFile(syncPath)
+	if err != nil {
+		t.Fatalf("read sync file: %v", err)
+	}
+	var loaded core.SyncState
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		t.Fatalf("unmarshal sync file: %v", err)
+	}
+	persisted, ok := loaded.Groups["group-1"]
+	if !ok {
+		t.Fatalf("group-1 not found in persisted sync: %+v", loaded.Groups)
+	}
+	if persisted.Name != "Renamed Tech" {
+		t.Fatalf("persisted group name = %q, want Renamed Tech", persisted.Name)
+	}
+	if persisted.UpdatedAt <= 100 {
+		t.Fatalf("persisted UpdatedAt = %d, want > 100", persisted.UpdatedAt)
+	}
+}
+
+func TestGroupContextMenuRenameUIAndPersistence(t *testing.T) {
+	dir := t.TempDir()
+	syncPath := filepath.Join(dir, "youtube-reader-sync.json")
+	a := newTestApp(t, dir)
+	defer a.Close()
+	a.Settings.SyncPath = syncPath
+
+	g := core.ChannelGroup{ID: "group-1", Name: "Science", ChannelIDs: []string{"ch-1"}, UpdatedAt: 100}
+	a.Sync.Groups = map[string]core.ChannelGroup{"group-1": g}
+	a.Groups = []core.ChannelGroup{g}
+	a.Channels = []core.Channel{{ID: "ch-1", Title: "Science Channel"}}
+	a.Selected = "group:group-1"
+	if err := a.SaveSync(); err != nil {
+		t.Fatalf("save initial sync: %v", err)
+	}
+
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 840)
+	tt.Frame()
+
+	if w.title() != "Science" {
+		t.Fatalf("initial title = %q, want Science", w.title())
+	}
+
+	// Right-click on the group row to open context menu.
+	if err := tt.RightClick("Science"); err != nil {
+		t.Fatalf("right click group row: %v", err)
+	}
+	menu := tt.Menu()
+	if len(menu) == 0 || menu[0] != "Rename" {
+		t.Fatalf("context menu items = %q, want [Rename]", menu)
+	}
+
+	// Choose "Rename" from menu
+	if err := tt.ChooseMenuItem("Rename"); err != nil {
+		t.Fatalf("choose Rename: %v", err)
+	}
+
+	// Rename text input is now visible and focused.
+	// Type new name and press Enter.
+	w.renamingGroupName = "Computer Science"
+	tt.Frame()
+	tt.Key(0, ui.KeyEnter)
+	tt.Frame()
+
+	if a.Sync.Groups["group-1"].Name != "Computer Science" {
+		t.Fatalf("sync group name after rename = %q, want Computer Science", a.Sync.Groups["group-1"].Name)
+	}
+	if a.Groups[0].Name != "Computer Science" {
+		t.Fatalf("app group name after rename = %q, want Computer Science", a.Groups[0].Name)
+	}
+	if w.title() != "Computer Science" {
+		t.Fatalf("toolbar title after rename = %q, want Computer Science", w.title())
+	}
+
+	// Check persisted file
+	data, err := os.ReadFile(syncPath)
+	if err != nil {
+		t.Fatalf("read sync file: %v", err)
+	}
+	var loaded core.SyncState
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		t.Fatalf("unmarshal sync file: %v", err)
+	}
+	if loaded.Groups["group-1"].Name != "Computer Science" {
+		t.Fatalf("persisted group name = %q, want Computer Science", loaded.Groups["group-1"].Name)
+	}
+}
+
+func TestGroupContextMenuRenameChineseLocaleAndCancel(t *testing.T) {
+	dir := t.TempDir()
+	syncPath := filepath.Join(dir, "youtube-reader-sync.json")
+	a := newTestApp(t, dir)
+	defer a.Close()
+	a.Settings.SyncPath = syncPath
+
+	g := core.ChannelGroup{ID: "group-zh", Name: "科技", ChannelIDs: []string{"ch-1"}, UpdatedAt: 100}
+	a.Sync.Groups = map[string]core.ChannelGroup{"group-zh": g}
+	a.Groups = []core.ChannelGroup{g}
+	_ = a.SaveSync()
+
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 840)
+	tt.SetLocale("zh-Hans")
+	tt.Frame()
+
+	// Right-click group in Chinese locale shows "重命名"
+	if err := tt.RightClick("科技"); err != nil {
+		t.Fatalf("right click group row: %v", err)
+	}
+	menu := tt.Menu()
+	if len(menu) == 0 || menu[0] != "重命名" {
+		t.Fatalf("Chinese locale menu = %q, want [重命名]", menu)
+	}
+
+	if err := tt.ChooseMenuItem("重命名"); err != nil {
+		t.Fatalf("choose 重命名: %v", err)
+	}
+
+	// In renaming state, modify buffer but press Escape to cancel
+	w.renamingGroupName = "新名称"
+	tt.Key(0, ui.KeyEscape)
+	tt.Frame()
+
+	// Should keep original name
+	if a.Sync.Groups["group-zh"].Name != "科技" {
+		t.Fatalf("after Escape, name changed to %q, want 科技", a.Sync.Groups["group-zh"].Name)
+	}
+}
+
+func TestGroupRenameDoesNotTriggerGroupDrag(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+
+	g1 := core.ChannelGroup{ID: "group-1", Name: "Science", ChannelIDs: []string{"ch-1"}, UpdatedAt: 100}
+	g2 := core.ChannelGroup{ID: "group-2", Name: "Tech", ChannelIDs: []string{"ch-2"}, UpdatedAt: 100}
+	a.Sync.Groups = map[string]core.ChannelGroup{"group-1": g1, "group-2": g2}
+	a.Groups = []core.ChannelGroup{g1, g2}
+	a.Channels = []core.Channel{{ID: "ch-1", Title: "Science Channel"}, {ID: "ch-2", Title: "Tech Channel"}}
+	a.Settings.SidebarWidth = defaultSidebarWidth
+
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 840)
+	tt.Frame()
+
+	if err := tt.RightClick("Science"); err != nil {
+		t.Fatalf("right click group row: %v", err)
+	}
+	if err := tt.ChooseMenuItem("Rename"); err != nil {
+		t.Fatalf("choose Rename: %v", err)
+	}
+	tt.Frame()
+
+	inputField, ok := tt.AccessByRole(ui.RoleTextField, "Rename Science")
+	if !ok {
+		t.Fatal("rename text field not found")
+	}
+	techBox := rowBox(t, tt, "Tech")
+
+	dragPointer(tt, inputField.Bounds, techBox.X+20, techBox.Y+techBox.H/2)
+
+	want := []string{"Science", "Tech"}
+	if got := groupNames(a.Groups); !slices.Equal(got, want) {
+		t.Fatalf("group reordered during rename drag: got %q, want %q", got, want)
+	}
+	if w.groupDragOrder != nil {
+		t.Fatalf("groupDragOrder = %v, want nil", w.groupDragOrder)
+	}
 }

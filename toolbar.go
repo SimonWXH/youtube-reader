@@ -413,6 +413,11 @@ func (w *Window) title() string {
 		if g, ok := w.app.Sync.Groups[gid]; ok {
 			return g.Name
 		}
+		for _, g := range w.app.Groups {
+			if g.ID == gid {
+				return g.Name
+			}
+		}
 	case strings.HasPrefix(w.app.Selected, "channel:"):
 		ch := w.channelByID(strings.TrimPrefix(w.app.Selected, "channel:"))
 		return ch.Title

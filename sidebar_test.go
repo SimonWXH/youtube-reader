@@ -311,8 +311,8 @@ func TestSidebarWidthMatchesDesign(t *testing.T) {
 }
 
 // TestSidebarArrowKeysWalkSelection proves the keyboard-only selection
-// model: Down and Up move the selection row by row and skip the fold rows in
-// between, while the fold rows themselves stay reachable with Tab.
+// model: Down and Up move the selection row by row including group rows,
+// while the fold chevrons themselves stay reachable with Tab.
 func TestSidebarArrowKeysWalkSelection(t *testing.T) {
 	a := sidebarTestApp(t, true)
 	tt := sidebarTester(t, a)
@@ -332,11 +332,16 @@ func TestSidebarArrowKeysWalkSelection(t *testing.T) {
 	}
 
 	tt.Key(0, ui.KeyDown)
-	if a.Selected != "channel:ch-a" {
-		t.Fatalf("Down from Favorites selected %q, want channel:ch-a", a.Selected)
+	if a.Selected != "group:group-a" {
+		t.Fatalf("Down from Favorites selected %q, want group:group-a", a.Selected)
 	}
-	if tt.Focused("Alpha") {
-		t.Fatal("the arrow keys stopped on the fold row instead of skipping it")
+	if !tt.Focused("Alpha") {
+		t.Fatal("the arrow keys did not navigate to the group row")
+	}
+
+	tt.Key(0, ui.KeyDown)
+	if a.Selected != "channel:ch-a" {
+		t.Fatalf("Down from Alpha selected %q, want channel:ch-a", a.Selected)
 	}
 
 	// The grouped channel is now the last row: Down at the end must leave
@@ -355,8 +360,12 @@ func TestSidebarArrowKeysWalkSelection(t *testing.T) {
 	}
 
 	tt.Key(0, ui.KeyUp)
+	if a.Selected != "group:group-a" {
+		t.Fatalf("Up from the last row selected %q, want group:group-a", a.Selected)
+	}
+	tt.Key(0, ui.KeyUp)
 	if a.Selected != "favorites" {
-		t.Fatalf("Up from the last row selected %q, want favorites", a.Selected)
+		t.Fatalf("Up from group selected %q, want favorites", a.Selected)
 	}
 	tt.Key(0, ui.KeyUp)
 	if a.Selected != "all" {
@@ -403,8 +412,8 @@ func TestSidebarArrowFocusRingAfterPointerClick(t *testing.T) {
 		}
 
 		tt.Key(0, ui.KeyDown)
-		if a.Selected != "channel:ch-a" {
-			t.Fatalf("dark=%v: Down after a click selected %q, want channel:ch-a", dark, a.Selected)
+		if a.Selected != "group:group-a" {
+			t.Fatalf("dark=%v: Down after a click selected %q, want group:group-a", dark, a.Selected)
 		}
 		tt.Frame()
 		first, last, ok := ringLines(t, tt, tokens, int(defaultSidebarWidth))
@@ -433,8 +442,8 @@ func TestSidebarArrowFocusRingSurvivesWindowBlur(t *testing.T) {
 			t.Fatalf("dark=%v: click Favorites: %v", dark, err)
 		}
 		tt.Key(0, ui.KeyDown)
-		if a.Selected != "channel:ch-a" {
-			t.Fatalf("dark=%v: Down after a click selected %q, want channel:ch-a", dark, a.Selected)
+		if a.Selected != "group:group-a" {
+			t.Fatalf("dark=%v: Down after a click selected %q, want group:group-a", dark, a.Selected)
 		}
 		first, last, ok := ringLines(t, tt, tokens, int(defaultSidebarWidth))
 		if !ok {
@@ -474,19 +483,26 @@ func TestSidebarReturnOpensFocusedRow(t *testing.T) {
 		t.Fatalf("Return on the All videos row selected %q, want all", a.Selected)
 	}
 
-	// Return also drives the fold rows: the group is collapsed, so Return on
-	// its row opens it and the channel row appears under it.
+	// Return selects the focused group row, while Return on the fold chevron
+	// toggles expanding and collapsing.
 	focusByTab(t, tt, "Alpha")
 	tt.Key(0, ui.KeyEnter)
+	if a.Selected != "group:group-a" {
+		t.Fatalf("Return on the group row selected %q, want group:group-a", a.Selected)
+	}
+
+	// Enter on the fold chevron toggles fold
+	focusByTab(t, tt, "Toggle Alpha")
+	tt.Key(0, ui.KeyEnter)
 	if a.GroupCollapsed("group-a") {
-		t.Fatal("Return on the group row did not expand the group")
+		t.Fatal("Return on the fold chevron did not expand the group")
 	}
 	if n := countText(tt, "Alpha channel"); n != 1 {
 		t.Fatalf("expanded group should show its channel exactly once; got %d in %q", n, tt.Texts())
 	}
 	tt.Key(0, ui.KeyEnter)
 	if !a.GroupCollapsed("group-a") {
-		t.Fatal("Return on the expanded group row did not collapse it")
+		t.Fatal("Return on the fold chevron did not collapse the group")
 	}
 	if n := countText(tt, "Alpha channel"); n != 0 {
 		t.Fatalf("collapsed group should drop its channel row; got %d in %q", n, tt.Texts())
@@ -627,12 +643,12 @@ func TestGroupFoldStateSurvivesRelaunch(t *testing.T) {
 	a.Sync.Channels["ch-a"] = a.Channels[0]
 
 	tt := sidebarTester(t, a)
-	if err := tt.Click("Alpha"); err != nil {
-		t.Fatalf("click group row: %v", err)
+	if err := tt.Click("Toggle Alpha"); err != nil {
+		t.Fatalf("click fold chevron: %v", err)
 	}
 	tt.Frame()
 	if a.GroupCollapsed("group-a") {
-		t.Fatal("clicking the group row did not expand it")
+		t.Fatal("clicking the fold chevron did not expand it")
 	}
 	if data, err := os.ReadFile(filepath.Join(dir, "settings.json")); err != nil {
 		t.Fatalf("settings file: %v", err)
@@ -656,8 +672,8 @@ func TestGroupFoldStateSurvivesRelaunch(t *testing.T) {
 	}
 
 	// Folding it back persists the collapse too.
-	if err := tt.Click("Alpha"); err != nil {
-		t.Fatalf("click group row again: %v", err)
+	if err := tt.Click("Toggle Alpha"); err != nil {
+		t.Fatalf("click fold chevron again: %v", err)
 	}
 	tt.Frame()
 	settings = defaultSettings()
