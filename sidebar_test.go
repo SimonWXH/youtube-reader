@@ -311,8 +311,8 @@ func TestSidebarWidthMatchesDesign(t *testing.T) {
 }
 
 // TestSidebarArrowKeysWalkSelection proves the keyboard-only selection
-// model: Down and Up move the selection row by row and skip the fold rows in
-// between, while the fold rows themselves stay reachable with Tab.
+// model: Down and Up move the selection row by row including group rows,
+// while the fold chevrons themselves stay reachable with Tab.
 func TestSidebarArrowKeysWalkSelection(t *testing.T) {
 	a := sidebarTestApp(t, true)
 	tt := sidebarTester(t, a)
@@ -483,8 +483,8 @@ func TestSidebarReturnOpensFocusedRow(t *testing.T) {
 		t.Fatalf("Return on the All videos row selected %q, want all", a.Selected)
 	}
 
-	// Return also drives the fold rows: the group is collapsed, so Return on
-	// its row opens it and the channel row appears under it.
+	// Return selects the focused group row, while Return on the fold chevron
+	// toggles expanding and collapsing.
 	focusByTab(t, tt, "Alpha")
 	tt.Key(0, ui.KeyEnter)
 	if a.Selected != "group:group-a" {

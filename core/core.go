@@ -279,6 +279,8 @@ func (s *SyncState) ReplaceGroups(groups []ChannelGroup, channels []Channel, now
 	s.UpdatedAt = now
 }
 
+// RenameGroup updates the name and timestamp of the group with the given ID.
+// It returns false if the group does not exist or newName is blank.
 func (s *SyncState) RenameGroup(id, newName string, now int64) bool {
 	normalizeSync(s)
 	if s.Groups == nil {

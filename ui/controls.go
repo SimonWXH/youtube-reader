@@ -28,8 +28,9 @@ const ScrollBottomInset float32 = 20
 //
 // A row shows one of three leads: a 16 pt accent glyph (Symbol), a 24 pt
 // channel avatar with a monogram fallback (Channel), or a 12 pt disclosure
-// chevron that folds the rows below it (Fold). The label is 13 pt Regular,
-// or 11 pt Semibold for a fold row, and Count is 11 pt Medium tabular
+// chevron that folds the rows below it (Fold). A fold row separates chevron
+// toggle from row selection and supports inline renaming. The label is 13 pt
+// Regular, or 11 pt Semibold for a fold row, and Count is 11 pt Medium tabular
 // figures at the trailing edge.
 //
 // Hover paints SurfaceAlt. A selected row paints the AccentSoft tint with
@@ -46,10 +47,10 @@ type SidebarRow struct {
 	Fold           bool   // this row folds the rows below it
 	Expanded       bool   // the fold is open, so the chevron points down
 	Selected       bool
-	Renaming       bool   // row is currently being renamed inline
-	RenameValue    *string // value buffer for the rename text input
+	Renaming       bool                 // row is currently being renamed inline
+	RenameValue    *string              // value buffer for the rename text input
 	OnRename       func(newName string) // callback on rename submit
-	OnRenameCancel func() // callback on rename cancel
+	OnRenameCancel func()               // callback on rename cancel
 	OnClick        func()
 	OnFoldClick    func()
 	OnContextMenu  func(m *ui.Menu)
@@ -72,7 +73,7 @@ func (r SidebarRow) Build(c *ui.Context, tokens Tokens) ui.Element {
 	}
 
 	if r.Fold {
-		container := ui.Row(c).Key(r.Key + ":container").
+		container := ui.Row(c).Key(r.Key+":container").
 			Height(rowHeight).FillWidth().Gap(0).Padding(0, Space(2)).
 			Radius(RadiusControl).Background(face.Background).TextColor(face.Text).
 			Transition(Fade).MarginY(1)

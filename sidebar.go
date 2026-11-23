@@ -113,8 +113,7 @@ func renameMenuLabel(locale string) string {
 
 // sidebarNav keeps the sidebar's keyboard order for one frame. Rows register
 // themselves as they build, so Up and Down can move the selection from the
-// focused row to the next row that navigates, skipping the fold rows in
-// between exactly as a native source list does.
+// focused row to the next navigable row.
 type sidebarNav struct {
 	w       *Window
 	keys    []string          // every focusable row, in visual order
@@ -245,8 +244,8 @@ func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, 
 		})
 		focused = focused || row.Focused()
 		// The row drags its group. MyGo keeps a press that moved a few DIPs
-		// from clicking, so the fold switch still works and a drag never
-		// toggles it; the row stays as the place the group would land.
+		// from clicking, so a drag never selects the row; the row stays as
+		// the place the group would land. Drag is disabled during rename.
 		if !renaming {
 			row.Drag(groupDrag{ID: g.ID})
 			if row.Dragging() {
