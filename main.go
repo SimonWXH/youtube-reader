@@ -272,12 +272,17 @@ func serveNotificationDeliveries(app *App, w *Window) {
 
 // helperRefreshed reads the refresh the helper committed to the shared store
 // while this app was running, so a click on its notification opens a channel
-// view that already holds the videos it announced.
+// view that already holds the videos it announced. MyGo runs it on the main
+// thread once the app is ready, so a hand-off that lands while the app is still
+// launching is read rather than dropped, and the window the socket goroutine
+// reads is the one the main thread installed.
 func (w *Window) helperRefreshed() {
-	if w.window == nil {
-		return
-	}
-	w.window.Update(w.reloadHelperRefresh)
+	mygo.App.WhenReady(func() {
+		w.reloadHelperRefresh()
+		if w.window != nil {
+			w.window.Invalidate()
+		}
+	})
 }
 
 // reloadHelperRefresh is helperRefreshed's main-thread half: it reads the

@@ -43,15 +43,31 @@ func TestNotifiedVideosPersistApartFromRetainedVideos(t *testing.T) {
 		t.Fatalf("videos = %+v, err = %v; want none", videos, err)
 	}
 
-	// A record far older than the uploads window every refresh reads cannot
-	// match a fetched video again, so the next commit drops it.
-	later := now.Add(notifiedVideoRetention + 2*time.Hour)
-	commit("v-3", later)
+	// A record must outlive the 30-day uploads window every refresh reads, or a
+	// video retention dropped could be fetched and announced again; a record far
+	// older than that can never match a fetched video again and is dropped. The
+	// bounds are the uploads window and a generous multiple of it, not the
+	// production constant, so a retention that is too short fails here.
+	aged := now.Add(-31 * 24 * time.Hour)
+	expired := now.Add(-90 * 24 * time.Hour)
+	commit("v-old", expired)
+	if err := store.CommitRefresh(ctx, RefreshCommit{
+		Revision: 2,
+		Notified: []VideoNotification{
+			{VideoID: "v-aged", NotifiedAt: aged.UnixMilli()},
+			{VideoID: "v-now", NotifiedAt: now.UnixMilli()},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	notified, err = store.NotifiedVideoIDs(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(notified) != 1 || !notified["v-3"] {
-		t.Fatalf("notified after pruning = %+v", notified)
+	if !notified["v-aged"] || !notified["v-now"] {
+		t.Fatalf("records inside the uploads window were pruned: %+v", notified)
+	}
+	if notified["v-old"] {
+		t.Fatalf("a record older than the uploads window was kept: %+v", notified)
 	}
 }
