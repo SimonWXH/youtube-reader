@@ -112,7 +112,6 @@ type Window struct {
 	// renamingGroupID is the ID of the group currently being inline-renamed in the sidebar.
 	renamingGroupID   string
 	renamingGroupName string
-	renamingFocus     bool
 
 	// settingsWindow is the standalone Settings window and its view state.
 	settingsWindow settingsWindow
@@ -124,13 +123,11 @@ func (w *Window) startRenameGroup(id, name string) {
 	}
 	w.renamingGroupID = id
 	w.renamingGroupName = name
-	w.renamingFocus = true
 }
 
 func (w *Window) commitRenameGroup(id, newName string) {
 	w.renamingGroupID = ""
 	w.renamingGroupName = ""
-	w.renamingFocus = false
 	newName = strings.TrimSpace(newName)
 	if newName == "" {
 		return
@@ -143,7 +140,6 @@ func (w *Window) commitRenameGroup(id, newName string) {
 func (w *Window) cancelRenameGroup() {
 	w.renamingGroupID = ""
 	w.renamingGroupName = ""
-	w.renamingFocus = false
 }
 
 func (w *Window) toast(c *ui.Context, msg string, isError bool) {
