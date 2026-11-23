@@ -449,7 +449,7 @@ func (w *Window) emptyPane(c *ui.Context, t mui.Tokens, in mui.PaneInput) {
 			w.app.UnreadOnly = false
 		}
 	case mui.EmptyFavorites:
-		spec.OnAction = func() { w.app.Selected = "all" }
+		spec.OnAction = func() { w.app.SelectDestination("all") }
 	default:
 		spec.OnAction = func() { w.runRefresh(true) }
 		spec.ActionDisabled, spec.ActionTooltip = w.refreshDisabledReason()

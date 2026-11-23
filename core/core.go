@@ -86,6 +86,12 @@ type Settings struct {
 	GroupOrder []string `json:"groupOrder,omitempty"`
 	// LastSettingsPane is the Settings window's pane, restored on reopen.
 	LastSettingsPane string `json:"lastSettingsPane,omitempty"`
+	// LastSelectedDestination is the sidebar destination the reader last
+	// chose: "all", "favorites", "group:<id>" or "channel:<id>". The next
+	// launch restores it after checking it still names something that
+	// exists, and falls back to "all" when it does not. Like the other UI
+	// preferences it stays in settings.json and is never synced.
+	LastSelectedDestination string `json:"lastSelectedDestination,omitempty"`
 	// LastFavoritesExport is when favorites were last written to the backup
 	// file, for the Backups pane's "Last export" line.
 	LastFavoritesExport string `json:"lastFavoritesExport,omitempty"`

@@ -243,13 +243,65 @@ func LoadApp() (*App, error) {
 		lock.Release()
 		return nil, err
 	}
-	app := &App{Settings: settings, Sync: state, Store: store, Dir: dir, DeviceID: device, Lock: lock, Selected: "all"}
+	app := &App{Settings: settings, Sync: state, Store: store, Dir: dir, DeviceID: device, Lock: lock, Selected: defaultDestination}
 	if err := app.reload(); err != nil {
 		store.Close()
 		lock.Release()
 		return nil, err
 	}
+	// The destination is restored after the reload, because whether the
+	// stored group or channel still exists is a question only the loaded
+	// library answers. A notification click that launched the app runs
+	// later and overrides what this restored.
+	app.Selected = app.restoredDestination(app.settingsSnapshot().LastSelectedDestination)
 	return app, nil
+}
+
+// defaultDestination is the sidebar entry a launch opens on when no stored
+// destination survives, and the value the sidebar itself starts from.
+const defaultDestination = "all"
+
+// restoredDestination returns the destination a launch should open on. The
+// stored value is accepted only while it still names something the sidebar
+// shows: a group or channel that was removed falls back to All videos, so a
+// launch never opens on a pane its destination cannot fill.
+func (a *App) restoredDestination(stored string) string {
+	switch {
+	case stored == "all" || stored == "favorites":
+		return stored
+	case destinationID(stored, "group:") != "":
+		id := destinationID(stored, "group:")
+		for _, g := range a.Groups {
+			if g.ID == id {
+				return stored
+			}
+		}
+	case destinationID(stored, "channel:") != "":
+		id := destinationID(stored, "channel:")
+		for _, ch := range a.Channels {
+			if ch.ID == id {
+				return stored
+			}
+		}
+	}
+	return defaultDestination
+}
+
+// SelectDestination is the one place the sidebar destination changes. Every
+// entry point goes through it - each sidebar row and the keyboard navigation
+// that runs those rows, the empty pane's way back to the library, and the
+// notification click's channel jump - so the stored destination always names
+// what the reader left selected. It stays in local settings and is never
+// synced.
+func (a *App) SelectDestination(destination string) {
+	a.Selected = destination
+	_, _ = a.updateSettings(func(s *core.Settings) bool {
+		if s.LastSelectedDestination == destination {
+			return false
+		}
+		s.LastSelectedDestination = destination
+		return true
+	})
 }
 
 func (a *App) reload() error {
@@ -906,7 +958,7 @@ func (a *App) SelectChannel(channelID string) bool {
 	}
 	for _, ch := range a.Channels {
 		if ch.ID == channelID {
-			a.Selected = "channel:" + channelID
+			a.SelectDestination("channel:" + channelID)
 			a.ChannelFilter = ""
 			a.Search = ""
 			a.UnreadOnly = false

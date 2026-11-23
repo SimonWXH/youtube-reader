@@ -26,7 +26,7 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 					if w.renamingGroupID != "" {
 						w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
 					}
-					w.app.Selected = "all"
+					w.app.SelectDestination("all")
 				},
 			})
 			nav.row(c, t, mui.SidebarRow{
@@ -36,7 +36,7 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 					if w.renamingGroupID != "" {
 						w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
 					}
-					w.app.Selected = "favorites"
+					w.app.SelectDestination("favorites")
 				},
 			})
 			for i, g := range w.app.Groups {
@@ -64,7 +64,7 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 						if w.renamingGroupID != "" {
 							w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
 						}
-						w.app.Selected = "channel:" + ch.ID
+						w.app.SelectDestination("channel:" + ch.ID)
 					},
 				})
 			}
@@ -217,7 +217,7 @@ func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, 
 				if w.renamingGroupID != "" && w.renamingGroupID != g.ID {
 					w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
 				}
-				w.app.Selected = "group:" + g.ID
+				w.app.SelectDestination("group:" + g.ID)
 			},
 			OnFoldClick: func() {
 				if w.renamingGroupID != "" {
@@ -270,7 +270,7 @@ func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, 
 					if w.renamingGroupID != "" {
 						w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
 					}
-					w.app.Selected = "channel:" + id
+					w.app.SelectDestination("channel:" + id)
 				},
 			})
 			focused = focused || row.Focused()
