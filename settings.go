@@ -665,56 +665,244 @@ func (w *Window) backupsPane(c *ui.Context, t mui.Tokens, settings core.Settings
 	})
 }
 
-// notificationsPane holds explicit per-channel consent, and the permission
-// state when macOS refused the app's notifications.
+// notificationsPane holds explicit per-channel consent, grouped like the left
+// sidebar with derived per-group batch toggles, and the permission state when
+// macOS refused the app's notifications.
 func (w *Window) notificationsPane(c *ui.Context, t mui.Tokens, settings core.Settings) {
 	if settings.NotificationPermissionDenied {
 		w.notificationsDeniedBanner(c, t)
 	}
-	mui.Secondary.Apply(ui.Text(c, "Turn on a channel to be notified when it publishes a new video. Notifications are local to this Mac.")).
+	mui.Secondary.Apply(ui.Text(c, notificationsDescription(c.Locale()))).
 		TextColor(t.Muted).MaxLines(3).Wrap()
 
+	groups := w.notificationGroups()
+	totalChannels := 0
+	for _, grp := range groups {
+		totalChannels += len(grp.Channels)
+	}
+
 	channels := w.app.channelSnapshot()
-	sort.Slice(channels, func(i, j int) bool {
-		if channels[i].Title != channels[j].Title {
-			return channels[i].Title < channels[j].Title
-		}
-		return channels[i].ID < channels[j].ID
-	})
+	buttonChannelsCount := len(channels)
+	if buttonChannelsCount == 0 {
+		buttonChannelsCount = totalChannels
+	}
+
 	w.settingsRow(c, t, "", func() {
 		ui.Row(c).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
-			w.settingsButton(c, t, "settings-enable-all", "Enable All", nil, settingsButtonSecondary, len(channels) > 0, "", func() {
+			w.settingsButton(c, t, "settings-enable-all", enableAllLabel(c.Locale()), nil, settingsButtonSecondary, buttonChannelsCount > 0, "", func() {
 				if !w.app.EnableAllNotifications() {
 					return
 				}
-				w.toast(c, "Notifications enabled", false)
+				w.toast(c, notificationsToastEnabled(c.Locale()), false)
 				w.invalidateMainWindow()
 				w.refreshSettingsWindow()
 			})
-			w.settingsHelper(c, t, "For every channel you follow.", false)
+			w.settingsButton(c, t, "settings-disable-all", disableAllLabel(c.Locale()), nil, settingsButtonSecondary, len(settings.NotificationIDs) > 0, "", func() {
+				if !w.app.DisableAllNotifications() {
+					return
+				}
+				w.toast(c, notificationsToastDisabled(c.Locale()), false)
+				w.invalidateMainWindow()
+				w.refreshSettingsWindow()
+			})
+			w.settingsHelper(c, t, notificationsHelperText(c.Locale()), false)
 		})
 	})
 
-	if len(channels) == 0 {
-		mui.Secondary.Apply(ui.Text(c, "Import subscriptions to choose channels.")).TextColor(t.Muted).SingleLine()
+	if totalChannels == 0 {
+		mui.Secondary.Apply(ui.Text(c, notificationsEmptyText(c.Locale()))).TextColor(t.Muted).SingleLine()
 		return
 	}
-	list := ui.Column(c).FillWidth().Border(mui.Hairline, t.BorderSoft).Radius(mui.RadiusNotice).Background(t.Surface).Clip()
-	list.Children(func() {
-		for i := range channels {
-			channel := channels[i]
+
+	ui.Column(c).FillWidth().Gap(mui.Space(3)).Children(func() {
+		for _, grp := range groups {
+			w.notificationGroupCard(c, t, settings, grp)
+		}
+	})
+}
+
+// notificationGroup holds the display state for one group card in the
+// settings notifications pane.
+type notificationGroup struct {
+	ID          string
+	Name        string
+	IsUngrouped bool
+	Channels    []core.Channel
+}
+
+// notificationGroups partitions channels into ordered group sections that match
+// the left sidebar, followed by an Ungrouped section if any channels lack a group.
+func (w *Window) notificationGroups() []notificationGroup {
+	allChannels := w.app.channelSnapshot()
+	channelsByID := make(map[string]core.Channel, len(allChannels)+len(w.app.Channels))
+	for _, ch := range w.app.Channels {
+		channelsByID[ch.ID] = ch
+	}
+	for _, ch := range allChannels {
+		existing, ok := channelsByID[ch.ID]
+		if ok {
+			if ch.Title == "" && existing.Title != "" {
+				ch.Title = existing.Title
+			}
+			if ch.AvatarURL == "" && existing.AvatarURL != "" {
+				ch.AvatarURL = existing.AvatarURL
+			}
+		}
+		channelsByID[ch.ID] = ch
+	}
+	for id, ch := range channelsByID {
+		found := false
+		for _, existing := range allChannels {
+			if existing.ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			allChannels = append(allChannels, ch)
+		}
+	}
+
+	var rawGroups []core.ChannelGroup
+	if len(w.app.Groups) > 0 && len(w.app.Groups) == len(w.app.Sync.Groups) {
+		rawGroups = w.app.Groups
+	} else if len(w.app.Sync.Groups) > 0 {
+		rawGroups = orderGroups(w.app.Sync.Groups, w.app.settingsSnapshot().GroupOrder)
+	}
+
+	var displayGroups []notificationGroup
+	groupedIDs := make(map[string]bool)
+
+	for _, g := range rawGroups {
+		seen := make(map[string]bool)
+		var groupChannels []core.Channel
+		for _, cid := range g.ChannelIDs {
+			if cid == "" || seen[cid] {
+				continue
+			}
+			seen[cid] = true
+			ch, ok := channelsByID[cid]
+			if !ok {
+				ch = w.channelByID(cid)
+			}
+			groupChannels = append(groupChannels, ch)
+			groupedIDs[cid] = true
+		}
+		displayGroups = append(displayGroups, notificationGroup{
+			ID:          g.ID,
+			Name:        g.Name,
+			IsUngrouped: false,
+			Channels:    groupChannels,
+		})
+	}
+
+	var ungroupedChannels []core.Channel
+	for _, ch := range allChannels {
+		if !groupedIDs[ch.ID] {
+			ungroupedChannels = append(ungroupedChannels, ch)
+		}
+	}
+	sort.Slice(ungroupedChannels, func(i, j int) bool {
+		if ungroupedChannels[i].Title != ungroupedChannels[j].Title {
+			return ungroupedChannels[i].Title < ungroupedChannels[j].Title
+		}
+		return ungroupedChannels[i].ID < ungroupedChannels[j].ID
+	})
+
+	if len(ungroupedChannels) > 0 {
+		displayGroups = append(displayGroups, notificationGroup{
+			ID:          "ungrouped",
+			Name:        "",
+			IsUngrouped: true,
+			Channels:    ungroupedChannels,
+		})
+	}
+
+	return displayGroups
+}
+
+// notificationGroupCard renders one group card with a master switch and summary
+// header over its channel rows.
+func (w *Window) notificationGroupCard(c *ui.Context, t mui.Tokens, settings core.Settings, grp notificationGroup) {
+	total := len(grp.Channels)
+	enabledCount := 0
+	targetIDs := make([]string, 0, total)
+	for _, ch := range grp.Channels {
+		targetIDs = append(targetIDs, ch.ID)
+		if containsID(settings.NotificationIDs, ch.ID) {
+			enabledCount++
+		}
+	}
+	allOn := total > 0 && enabledCount == total
+	groupSwitchOn := allOn
+	groupTitle := grp.Name
+	if grp.IsUngrouped {
+		groupTitle = ungroupedHeader(c.Locale())
+	}
+	summary := notificationsGroupSummary(c.Locale(), enabledCount, total)
+	switchKey := "settings-notify-group-" + grp.ID
+
+	card := ui.Column(c.Key("settings-notify-card-" + grp.ID)).
+		FillWidth().
+		Border(mui.Hairline, t.BorderSoft).
+		Radius(mui.RadiusNotice).
+		Background(t.Surface).
+		Clip()
+
+	card.Children(func() {
+		// Group card header
+		ui.Row(c).Height(36).FillWidth().AlignItems(ui.Center).Gap(mui.Space(2)).
+			Padding(0, mui.Space(3)).Background(t.SurfaceAlt).Children(func() {
+			mui.SectionHeader.Apply(ui.Text(c, groupTitle)).TextColor(t.Text).SingleLine().Grow(1)
+			mui.Metadata.Apply(ui.Text(c, summary)).TextColor(t.Muted).SingleLine()
+			sw := w.settingsSwitch(c, t, switchKey, &groupSwitchOn, groupTitle)
+			if total == 0 {
+				sw.Disabled(true)
+			}
+			if sw.Changed() {
+				w.saveSettings(func(s *core.Settings) bool {
+					if allOn {
+						s.NotificationIDs = removeIDs(s.NotificationIDs, targetIDs)
+					} else {
+						s.NotificationIDs = addIDs(s.NotificationIDs, targetIDs)
+					}
+					return true
+				})
+			}
+		})
+
+		if total == 0 {
+			ui.Box(c).Height(mui.Hairline).FillWidth().Background(t.BorderSoft)
+			ui.Row(c).Height(30).FillWidth().AlignItems(ui.Center).Padding(0, mui.Space(3)).Children(func() {
+				emptyLabel := "No channels in this group"
+				if strings.HasPrefix(strings.ToLower(c.Locale()), "zh") {
+					emptyLabel = "该分组暂无频道"
+				}
+				mui.Secondary.Apply(ui.Text(c, emptyLabel)).TextColor(t.Muted).SingleLine()
+			})
+			return
+		}
+
+		ui.Box(c).Height(mui.Hairline).FillWidth().Background(t.BorderSoft)
+
+		// Channel rows
+		for i, channel := range grp.Channels {
 			if i > 0 {
 				ui.Box(c).Height(mui.Hairline).FillWidth().Background(t.BorderSoft)
 			}
+			channel := channel
 			title := channel.Title
 			if title == "" {
 				title = channel.ID
 			}
-			enabled := w.app.notificationEnabled(channel.ID)
-			ui.Row(c).Height(settingsControlH).FillWidth().AlignItems(ui.Center).Gap(mui.Space(2)).
-				Padding(0, mui.Space(2)).Children(func() {
+			enabled := containsID(settings.NotificationIDs, channel.ID)
+			channelSwitchKey := "settings-notify-" + channel.ID
+
+			ui.Row(c).Height(mui.SidebarChannelRowHeight).FillWidth().AlignItems(ui.Center).Gap(mui.Space(2)).
+				Padding(0, mui.Space(3)).Children(func() {
+				mui.ChannelAvatar(c, t, channel.AvatarURL, title, mui.SidebarChannelAvatar)
 				mui.Control.Apply(ui.Text(c, title)).TextColor(t.Text).SingleLine().Grow(1)
-				if w.settingsSwitch(c, t, "settings-notify-"+channel.ID, &enabled, title).Changed() {
+				if w.settingsSwitch(c, t, channelSwitchKey, &enabled, title).Changed() {
 					id := channel.ID
 					w.saveSettings(func(s *core.Settings) bool {
 						s.NotificationIDs = toggleID(s.NotificationIDs, id, enabled)
@@ -724,6 +912,106 @@ func (w *Window) notificationsPane(c *ui.Context, t mui.Tokens, settings core.Se
 			})
 		}
 	})
+}
+
+func notificationsDescription(locale string) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return "开启频道的通知，在其发布新视频时收到提醒。通知仅在此 Mac 上生效。"
+	}
+	return "Turn on a channel to be notified when it publishes a new video. Notifications are local to this Mac."
+}
+
+func enableAllLabel(locale string) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return "全部开启"
+	}
+	return "Enable All"
+}
+
+func disableAllLabel(locale string) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return "全部关闭"
+	}
+	return "Disable All"
+}
+
+func notificationsHelperText(locale string) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return "为你关注的每个频道设置。"
+	}
+	return "For every channel you follow."
+}
+
+func notificationsEmptyText(locale string) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return "导入订阅后选择频道。"
+	}
+	return "Import subscriptions to choose channels."
+}
+
+func notificationsGroupSummary(locale string, enabled, total int) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return fmt.Sprintf("%d/%d 已启用", enabled, total)
+	}
+	return fmt.Sprintf("%d/%d enabled", enabled, total)
+}
+
+func notificationsToastEnabled(locale string) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return "已开启通知"
+	}
+	return "Notifications enabled"
+}
+
+func notificationsToastDisabled(locale string) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return "已关闭通知"
+	}
+	return "Notifications disabled"
+}
+
+// containsID reports whether id appears in ids.
+func containsID(ids []string, id string) bool {
+	for _, x := range ids {
+		if x == id {
+			return true
+		}
+	}
+	return false
+}
+
+// addIDs adds targetIDs to ids without duplicates, preserving order.
+func addIDs(ids []string, targetIDs []string) []string {
+	seen := make(map[string]bool, len(ids)+len(targetIDs))
+	out := make([]string, 0, len(ids)+len(targetIDs))
+	for _, id := range ids {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	for _, id := range targetIDs {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// removeIDs removes all targetIDs from ids, preserving order.
+func removeIDs(ids []string, targetIDs []string) []string {
+	remove := make(map[string]bool, len(targetIDs))
+	for _, id := range targetIDs {
+		remove[id] = true
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !remove[id] {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // notificationsDeniedBanner offers the one useful action when macOS refused

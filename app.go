@@ -829,6 +829,19 @@ func (a *App) EnableAllNotifications() bool {
 	return changed
 }
 
+// DisableAllNotifications turns off notifications for every subscription.
+// It reports whether any consent was removed.
+func (a *App) DisableAllNotifications() bool {
+	changed, _ := a.updateSettings(func(s *core.Settings) bool {
+		if len(s.NotificationIDs) == 0 {
+			return false
+		}
+		s.NotificationIDs = nil
+		return true
+	})
+	return changed
+}
+
 func (a *App) DrainQueuedSyncWrites() error {
 	ctx := context.Background()
 	items, err := a.Store.DrainQueue(ctx)
