@@ -27,6 +27,14 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db, path: path}
+	// A store written before announced videos were remembered has videos but no
+	// notified records. The first process to open it seeds the table from the
+	// videos that build already stored, so they are not announced again.
+	newNotified, err := s.missingTable(ctx, "notified")
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
 	for _, ddl := range []string{
 		`CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY, title TEXT, group_ids TEXT, avatar_url TEXT, uploads TEXT, updated_at INTEGER)`,
 		`CREATE TABLE IF NOT EXISTS videos (id TEXT PRIMARY KEY, channel_id TEXT, channel_title TEXT, title TEXT, description TEXT, thumbnail_url TEXT, avatar_url TEXT, published_at TEXT, duration TEXT, width INTEGER, height INTEGER, is_short INTEGER)`,
@@ -39,11 +47,27 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 			return nil, err
 		}
 	}
+	if newNotified {
+		if _, err := db.Execute(ctx, `INSERT OR IGNORE INTO notified(video_id, notified_at) SELECT id, ? FROM videos`, time.Now().UnixMilli()); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
 	if _, err := db.Execute(ctx, `PRAGMA journal_mode=WAL`); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return s, nil
+}
+
+// missingTable reports whether the store does not have the named table yet, so
+// a caller can tell a fresh store from one an older build wrote.
+func (s *Store) missingTable(ctx context.Context, name string) (bool, error) {
+	rows, err := s.db.Query(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name=?`, name)
+	if err != nil {
+		return false, err
+	}
+	return len(rows.Values) == 0, nil
 }
 
 func (s *Store) Close() error   { return s.db.Close() }

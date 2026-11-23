@@ -71,3 +71,39 @@ func TestNotifiedVideosPersistApartFromRetainedVideos(t *testing.T) {
 		t.Fatalf("a record older than the uploads window was kept: %+v", notified)
 	}
 }
+
+// TestOpenStoreSeedsAnnouncedVideosFromAnOlderStore proves the upgrade path: a
+// store written before announced videos were remembered has videos but no
+// notified records, and the first open seeds the table so those videos are not
+// announced again.
+func TestOpenStoreSeedsAnnouncedVideosFromAnOlderStore(t *testing.T) {
+	ctx := context.Background()
+	path := t.TempDir() + "/videos.sqlite"
+	store, err := OpenStore(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CommitRefresh(ctx, RefreshCommit{Videos: []Video{
+		{ID: "v-stored", ChannelID: "ch-1", Title: "Stored"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	// An older build has no notified table at all.
+	if _, err := store.DB().Execute(ctx, `DROP TABLE notified`); err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+
+	reopened, err := OpenStore(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	notified, err := reopened.NotifiedVideoIDs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !notified["v-stored"] {
+		t.Fatalf("stored videos were not seeded as announced: %+v", notified)
+	}
+}
