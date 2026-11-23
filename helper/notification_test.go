@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,6 +65,89 @@ func TestQueueNotificationClicksPreservesEarlierPosts(t *testing.T) {
 	}
 }
 
+func TestPostHelperNotificationDoesNotLaunchTheApp(t *testing.T) {
+	var scripts []string
+	previous := osascriptForHelper
+	previousRunning := appRunningForHelper
+	osascriptForHelper = func(script string) error {
+		scripts = append(scripts, script)
+		return nil
+	}
+	appRunningForHelper = func() bool { return false }
+	defer func() { osascriptForHelper, appRunningForHelper = previous, previousRunning }()
+
+	plan := core.NotificationPlan{ChannelName: "A \"quoted\" channel", Count: 2, NewestTitle: "Newest video"}
+	routable, err := postHelperNotification(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if routable {
+		t.Fatal("plain notification reported click routing")
+	}
+	if len(scripts) != 1 {
+		t.Fatalf("osascript calls = %d, want 1", len(scripts))
+	}
+	script := scripts[0]
+	if strings.Contains(script, "tell application") {
+		t.Fatalf("script targets an application, which can launch the main app: %q", script)
+	}
+	for _, want := range []string{
+		`display notification "2 new videos\nNewest video"`,
+		`with title "A \"quoted\" channel"`,
+		`subtitle "New videos" sound name "default"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("script %q does not contain %q", script, want)
+		}
+	}
+}
+
+func TestAppRunningForHelperScopesToCurrentUser(t *testing.T) {
+	var gotArgs []string
+	previous := pgrepForHelper
+	pgrepForHelper = func(args ...string) error {
+		gotArgs = args
+		return nil
+	}
+	defer func() { pgrepForHelper = previous }()
+
+	if !appRunningForHelper() {
+		t.Fatal("appRunningForHelper returned false when pgrep succeeded")
+	}
+	wantUID := strconv.Itoa(os.Getuid())
+	if len(gotArgs) != 4 || gotArgs[0] != "-u" || gotArgs[1] != wantUID || gotArgs[2] != "-x" || gotArgs[3] != "YouTube Reader" {
+		t.Fatalf("pgrep args = %q, want [-u %s -x YouTube Reader]", gotArgs, wantUID)
+	}
+}
+
+func TestPostHelperNotificationTargetsRunningApp(t *testing.T) {
+	var scripts []string
+	previous := osascriptForHelper
+	previousRunning := appRunningForHelper
+	osascriptForHelper = func(script string) error {
+		scripts = append(scripts, script)
+		return nil
+	}
+	appRunningForHelper = func() bool { return true }
+	defer func() { osascriptForHelper, appRunningForHelper = previous, previousRunning }()
+
+	plan := core.NotificationPlan{ChannelName: "Channel", Count: 1, NewestTitle: "Video"}
+	routable, err := postHelperNotification(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !routable {
+		t.Fatal("app-targeted notification did not report click routing")
+	}
+	if len(scripts) != 1 {
+		t.Fatalf("osascript calls = %d, want 1", len(scripts))
+	}
+	want := `tell application id "com.simon.youtubereader" to display notification "1 new video\nVideo" with title "Channel" subtitle "New videos" sound name "default"`
+	if scripts[0] != want {
+		t.Fatalf("script = %q, want %q", scripts[0], want)
+	}
+}
+
 func TestHelperRunRecordsClickHandoffWhenNotified(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
@@ -82,9 +167,9 @@ func TestHelperRunRecordsClickHandoffWhenNotified(t *testing.T) {
 	if err := writeSettings(dir, core.Settings{APIKey: "key", SyncPath: filepath.Join(dir, "sync.json"), RefreshMinutes: 60}); err != nil {
 		t.Fatal(err)
 	}
-	h, err := HelperRun(context.Background(), dir, false, now, func(plan core.NotificationPlan) error {
+	h, err := HelperRun(context.Background(), dir, false, now, func(plan core.NotificationPlan) (bool, error) {
 		postCalls++
-		return nil
+		return true, nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -102,5 +187,39 @@ func TestHelperRunRecordsClickHandoffWhenNotified(t *testing.T) {
 	}
 	if len(queue.Clicks) != 1 || queue.Clicks[0].ChannelID != "ch-1" {
 		t.Fatalf("queue = %+v", queue.Clicks)
+	}
+}
+
+func TestHelperRunDoesNotQueueClickForPlainNotification(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	postCalls := 0
+	originalRefresh := refreshForHelper
+	originalNetwork := networkAvailableForHelper
+	refreshForHelper = func(ctx context.Context, client core.YouTube, settings core.Settings, state core.SyncState, store *core.Store, existing []core.Video, revision int64, force bool, at time.Time) core.RefreshResult {
+		return core.RefreshResult{
+			Changed:     true,
+			Description: "Refreshed 2 videos",
+			Notified:    []core.NotificationPlan{{ChannelID: "ch-1", ChannelName: "One", Count: 2}},
+		}
+	}
+	networkAvailableForHelper = func(ctx context.Context) bool { return true }
+	defer func() { refreshForHelper = originalRefresh; networkAvailableForHelper = originalNetwork }()
+
+	if err := writeSettings(dir, core.Settings{APIKey: "key", SyncPath: filepath.Join(dir, "sync.json"), RefreshMinutes: 60}); err != nil {
+		t.Fatal(err)
+	}
+	h, err := HelperRun(context.Background(), dir, false, now, func(plan core.NotificationPlan) (bool, error) {
+		postCalls++
+		return false, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if postCalls != 1 || len(h.Clicks) != 0 {
+		t.Fatalf("posts=%d handoff=%+v", postCalls, h)
+	}
+	if _, err := os.Stat(notificationClicksPath(dir)); !os.IsNotExist(err) {
+		t.Fatalf("plain notification wrote a click queue: %v", err)
 	}
 }

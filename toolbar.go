@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/sfsymbols"
 	"github.com/egoist/mygo/ui"
 	"github.com/simon/youtube-reader/core"
 	mui "github.com/simon/youtube-reader/ui"
@@ -26,15 +27,15 @@ const (
 	searchFieldMin     float32 = 124
 )
 
-// The toolbar glyphs the shared ui/icons.go does not have yet: the sidebar
-// toggle, the overflow menu, and the collapsed Unwatched check box. They
-// follow the same 24 pt box, 1.5 pt stroke, round joins as the rest of the
-// set.
-var (
-	toolbarIconSidebar     = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>`))
-	toolbarIconMore        = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg>`))
-	toolbarIconUnwatched   = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>`))
-	toolbarIconUnwatchedOn = ui.MustParseSVG([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 3 3 5-6"/></svg>`))
+// The toolbar uses native SF Symbols, like the status popover and the
+// shared pane states. The control's own label names the command; the glyph
+// is decoration and carries a stable name for frame tests.
+const (
+	toolbarSymbolSidebar     = "sidebar.left"
+	toolbarSymbolRefresh     = "arrow.clockwise"
+	toolbarSymbolMore        = "ellipsis.circle"
+	toolbarSymbolUnwatched   = "square"
+	toolbarSymbolUnwatchedOn = "checkmark.square"
 )
 
 // shell is the window root: the toolbar spans the window, as the title bar it
@@ -152,7 +153,14 @@ func (w *Window) sidebarToggle(c *ui.Context, t mui.Tokens) {
 		label:   w.sidebarMenuLabel(),
 		tooltip: w.sidebarMenuLabel(),
 		on:      w.sidebarHidden,
-		content: func() { ui.Icon(c, toolbarIconSidebar).Size(toolbarGlyph, toolbarGlyph) },
+		content: func() {
+			color := t.Muted
+			if w.sidebarHidden {
+				color = t.Accent
+			}
+			sfsymbols.Symbol(c, toolbarSymbolSidebar).Size(toolbarGlyph).
+				Color(color).Element.Role(ui.RoleNone)
+		},
 		onClick: func() { w.setSidebarHidden(!w.sidebarHidden) },
 	})
 }
@@ -165,7 +173,10 @@ func (w *Window) refreshControl(c *ui.Context, t mui.Tokens) {
 		key:     "refresh",
 		label:   "Refresh",
 		tooltip: "Refresh",
-		content: func() { ui.Icon(c, mui.IconRefresh).Size(toolbarGlyph, toolbarGlyph) },
+		content: func() {
+			sfsymbols.Symbol(c, toolbarSymbolRefresh).Size(toolbarGlyph).
+				Color(t.Muted).Element.Role(ui.RoleNone)
+		},
 		onClick: func() { w.runRefresh(true) },
 	}
 	if w.app.refreshBlocked(time.Now()) {
@@ -191,7 +202,10 @@ func (w *Window) overflowControl(c *ui.Context, t mui.Tokens) {
 		key:     "more",
 		label:   "More",
 		tooltip: "More",
-		content: func() { ui.Icon(c, toolbarIconMore).Size(toolbarGlyph, toolbarGlyph) },
+		content: func() {
+			sfsymbols.Symbol(c, toolbarSymbolMore).Size(toolbarGlyph).
+				Color(t.Muted).Element.Role(ui.RoleNone)
+		},
 	})
 	el.PopoverMenuButton(func(m *ui.Menu) { w.overflowMenu(m) },
 		ui.PopoverMenuButtonOptions{At: ui.AnchorBottomEnd, Self: ui.AnchorTopEnd})
@@ -319,9 +333,10 @@ func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
 				Label("Unwatched").Tooltip("Unwatched").
 				FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
 				Cursor(ui.CursorPointer)
-			face, glyph, state := t.Muted, toolbarIconUnwatched, "Unwatched off"
+			face := t.Muted
+			glyph, state := toolbarSymbolUnwatched, "Unwatched off"
 			if w.app.UnreadOnly {
-				face, glyph, state = t.Accent, toolbarIconUnwatchedOn, "Unwatched on"
+				face, glyph, state = t.Accent, toolbarSymbolUnwatchedOn, "Unwatched on"
 			}
 			box.Draw(func(p *ui.Painter, r ui.Rect) {
 				if box.Pressed() || box.Hovered() {
@@ -329,7 +344,8 @@ func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
 				}
 			})
 			box.Children(func() {
-				ui.Icon(c, glyph).Size(toolbarGlyph, toolbarGlyph).TextColor(face).Label(state)
+				sfsymbols.Symbol(c, glyph).Size(toolbarGlyph).
+					Color(face).Element.Role(ui.RoleNone).Label(state)
 			})
 		} else {
 			ui.Checkbox(c.Key("unwatched"), &w.app.UnreadOnly, "Unwatched").
