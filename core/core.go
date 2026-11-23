@@ -72,6 +72,15 @@ type Settings struct {
 	DetailsWidth   float32         `json:"detailsWidth,omitempty"`
 	MaxGridColumns int             `json:"maxGridColumns,omitempty"`
 	ExpandedGroups map[string]bool `json:"expandedGroups,omitempty"`
+	// WindowWidth, WindowHeight, WindowX and WindowY are the main window's
+	// frame: the size and position the next launch opens with. A zero size
+	// means none has been stored yet and the default applies, and a zero
+	// position means the window opens centered. They stay in settings.json
+	// and are never synced.
+	WindowWidth  int `json:"windowWidth,omitempty"`
+	WindowHeight int `json:"windowHeight,omitempty"`
+	WindowX      int `json:"windowX,omitempty"`
+	WindowY      int `json:"windowY,omitempty"`
 	// GroupOrder is the sidebar's group order, by group ID, as the user
 	// left it. A group the list does not name joins in alphabetical order.
 	GroupOrder []string `json:"groupOrder,omitempty"`
