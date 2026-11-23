@@ -214,6 +214,11 @@ func (w *Window) cancelRefreshRun() {
 	}
 }
 
+// showNotificationForApp displays one notification through the app's native
+// notification center. It is a seam so the permission bookkeeping can be
+// tested without a packaged app to notify from.
+var showNotificationForApp = showNotification
+
 // showNotification displays one local notification and reports what the system
 // said, so a refusal can be recorded for the Notifications pane.
 func showNotification(plan NotificationPlan) error {

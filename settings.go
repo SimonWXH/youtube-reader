@@ -1081,9 +1081,15 @@ func (a *App) eraseFavorites() error {
 // helper's notifications arrive here too, through the local socket, so a
 // refusal is remembered whichever process asked for the refresh.
 func (a *App) postNotification(plan NotificationPlan) bool {
-	err := showNotification(plan)
+	err := showNotificationForApp(plan)
+	if err != nil && !errors.Is(err, mygo.ErrNotificationsDenied) {
+		// A failure that is not a refusal - notifications unsupported in an
+		// unbundled run, or the event loop stopping - says nothing about the
+		// permission macOS recorded, so the pane keeps its answer.
+		return false
+	}
+	denied := errors.Is(err, mygo.ErrNotificationsDenied)
 	changed, _ := a.updateSettings(func(s *core.Settings) bool {
-		denied := errors.Is(err, mygo.ErrNotificationsDenied)
 		if s.NotificationPermissionDenied == denied {
 			return false
 		}

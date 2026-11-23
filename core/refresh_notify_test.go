@@ -63,13 +63,19 @@ func notifyUploadsServer(t *testing.T, channels int, videosPerChannel int, now t
 	}))
 }
 
+// testRefreshNow is the refresh clock these fixtures run at: the wall clock,
+// truncated so published times stay stable through one test.
+func testRefreshNow() time.Time { return time.Now().UTC().Truncate(time.Second) }
+
 // TestRefreshDoesNotRenotifyRetentionDroppedVideos is the captain's hourly
 // repeat: retention keeps only the newest 400 videos, so a video it drops was
 // never committed and the next refresh counts it as new again. The notified
 // records live beside the refresh, not in the retained video rows.
 func TestRefreshDoesNotRenotifyRetentionDroppedVideos(t *testing.T) {
 	const channels, perChannel = 9, 50 // 450 fetched; retention keeps 400
-	now := time.Date(2026, 11, 23, 5, 0, 0, 0, time.UTC)
+	// PlaylistVideos drops uploads older than 30 days by the wall clock, so the
+	// fixtures are laid out from now rather than from a fixed date.
+	now := testRefreshNow()
 	srv := notifyUploadsServer(t, channels, perChannel, now)
 	defer srv.Close()
 	client := YouTube{Key: "key", Client: srv.Client(), BaseURL: srv.URL + "/youtube/v3"}
@@ -120,7 +126,7 @@ func TestRefreshDoesNotRenotifyRetentionDroppedVideos(t *testing.T) {
 // TestRefreshDoesNotNotifyReadVideos proves a video the reader has already
 // read never counts as new, even while retention still holds its row.
 func TestRefreshDoesNotNotifyReadVideos(t *testing.T) {
-	now := time.Date(2026, 11, 23, 5, 0, 0, 0, time.UTC)
+	now := testRefreshNow()
 	srv := notifyUploadsServer(t, 1, 1, now)
 	defer srv.Close()
 	client := YouTube{Key: "key", Client: srv.Client(), BaseURL: srv.URL + "/youtube/v3"}
