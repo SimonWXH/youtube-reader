@@ -830,7 +830,7 @@ func (w *Window) notificationGroupCard(c *ui.Context, t mui.Tokens, settings cor
 	summary := notificationsGroupSummary(c.Locale(), enabledCount, total)
 	switchKey := "settings-notify-group-" + grp.ID
 
-	card := ui.Column(c.Key("settings-notify-card-" + grp.ID)).
+	card := ui.Column(c.Key("settings-notify-card-"+grp.ID)).
 		FillWidth().
 		Border(mui.Hairline, t.BorderSoft).
 		Radius(mui.RadiusNotice).
