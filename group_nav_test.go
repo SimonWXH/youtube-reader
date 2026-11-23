@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -644,5 +645,46 @@ func TestGroupContextMenuRenameChineseLocaleAndCancel(t *testing.T) {
 	// Should keep original name
 	if a.Sync.Groups["group-zh"].Name != "科技" {
 		t.Fatalf("after Escape, name changed to %q, want 科技", a.Sync.Groups["group-zh"].Name)
+	}
+}
+
+func TestGroupRenameDoesNotTriggerGroupDrag(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+
+	g1 := core.ChannelGroup{ID: "group-1", Name: "Science", ChannelIDs: []string{"ch-1"}, UpdatedAt: 100}
+	g2 := core.ChannelGroup{ID: "group-2", Name: "Tech", ChannelIDs: []string{"ch-2"}, UpdatedAt: 100}
+	a.Sync.Groups = map[string]core.ChannelGroup{"group-1": g1, "group-2": g2}
+	a.Groups = []core.ChannelGroup{g1, g2}
+	a.Channels = []core.Channel{{ID: "ch-1", Title: "Science Channel"}, {ID: "ch-2", Title: "Tech Channel"}}
+	a.Settings.SidebarWidth = defaultSidebarWidth
+
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 840)
+	tt.Frame()
+
+	if err := tt.RightClick("Science"); err != nil {
+		t.Fatalf("right click group row: %v", err)
+	}
+	if err := tt.ChooseMenuItem("Rename"); err != nil {
+		t.Fatalf("choose Rename: %v", err)
+	}
+	tt.Frame()
+
+	inputField, ok := tt.AccessByRole(ui.RoleTextField, "Rename Science")
+	if !ok {
+		t.Fatal("rename text field not found")
+	}
+	techBox := rowBox(t, tt, "Tech")
+
+	dragPointer(tt, inputField.Bounds, techBox.X+20, techBox.Y+techBox.H/2)
+
+	want := []string{"Science", "Tech"}
+	if got := groupNames(a.Groups); !slices.Equal(got, want) {
+		t.Fatalf("group reordered during rename drag: got %q, want %q", got, want)
+	}
+	if w.groupDragOrder != nil {
+		t.Fatalf("groupDragOrder = %v, want nil", w.groupDragOrder)
 	}
 }

@@ -247,13 +247,15 @@ func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, 
 		// The row drags its group. MyGo keeps a press that moved a few DIPs
 		// from clicking, so the fold switch still works and a drag never
 		// toggles it; the row stays as the place the group would land.
-		row.Drag(groupDrag{ID: g.ID})
-		if row.Dragging() {
-			drag.alive = true
-			row.Opacity(0.4)
-		}
-		if _, missed := row.DragMissed(); missed {
-			drag.missed = true
+		if !renaming {
+			row.Drag(groupDrag{ID: g.ID})
+			if row.Dragging() {
+				drag.alive = true
+				row.Opacity(0.4)
+			}
+			if _, missed := row.DragMissed(); missed {
+				drag.missed = true
+			}
 		}
 		if collapsed {
 			return
