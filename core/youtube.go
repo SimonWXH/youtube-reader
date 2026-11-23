@@ -98,6 +98,16 @@ type ytVideosResponse struct {
 
 var ErrQuota = errors.New("quota exceeded")
 
+// ErrChannelNotFound is a lookup that reached YouTube and found no channel. The
+// add-subscription dialog tells it apart from a failed request, so the reader
+// is told to check the handle rather than the network.
+var ErrChannelNotFound = errors.New("channel not found")
+
+// ErrChannelRefUnresolvable is a reference the Data API has no lookup for, such
+// as a custom /c/ link. The app rejects those locally, so this only answers a
+// caller that resolved one by mistake.
+var ErrChannelRefUnresolvable = errors.New("channel reference cannot be looked up")
+
 func apiError(message string, status int) error {
 	if status == 403 || status == 429 || strings.Contains(strings.ToLower(message), "quota") {
 		return ErrQuota
@@ -105,49 +115,140 @@ func apiError(message string, status int) error {
 	return errors.New(message)
 }
 
+// channelsByQuery performs one channels.list request for query and decodes the
+// channel records it returns. Every lookup of a channel ID, handle, or legacy
+// username goes through it, so they share one request, one decode, and one
+// reading of the API's errors.
+func (y YouTube) channelsByQuery(ctx context.Context, query url.Values) ([]Channel, error) {
+	query.Set("part", "snippet,contentDetails")
+	query.Set("maxResults", "50")
+	query.Set("key", y.Key)
+	var resp ytChannelsResponse
+	client := y.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, y.baseURL()+"/channels?"+query.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	httpResp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	err = json.NewDecoder(httpResp.Body).Decode(&resp)
+	httpResp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	if httpResp.StatusCode >= 400 {
+		message := ""
+		if resp.Error != nil {
+			message = resp.Error.Message
+		}
+		return nil, apiError(message, httpResp.StatusCode)
+	}
+	out := make([]Channel, 0, len(resp.Items))
+	for _, item := range resp.Items {
+		out = append(out, Channel{
+			ID:         item.ID,
+			Title:      item.Snippet.Title,
+			AvatarURL:  item.Snippet.Thumbnails.Default.URL,
+			UploadedAt: item.ContentDetails.RelatedPlaylists.Uploads,
+			UpdatedAt:  time.Now().UnixMilli(),
+		})
+	}
+	return out, nil
+}
+
 func (y YouTube) ChannelInfo(ctx context.Context, ids []string) ([]Channel, error) {
 	var out []Channel
 	for start := 0; start < len(ids); start += 50 {
 		end := minInt(start+50, len(ids))
-		var resp ytChannelsResponse
-		q := url.Values{"part": {"snippet,contentDetails"}, "id": {strings.Join(ids[start:end], ",")}, "maxResults": {"50"}}
-		q.Set("key", y.Key)
-		client := y.Client
-		if client == nil {
-			client = http.DefaultClient
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, y.baseURL()+"/channels?"+q.Encode(), nil)
+		channels, err := y.channelsByQuery(ctx, url.Values{"id": {strings.Join(ids[start:end], ",")}})
 		if err != nil {
 			return nil, err
 		}
-		httpResp, err := client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		err = json.NewDecoder(httpResp.Body).Decode(&resp)
-		httpResp.Body.Close()
-		if err != nil {
-			return nil, err
-		}
-		if httpResp.StatusCode >= 400 {
-			message := ""
-			if resp.Error != nil {
-				message = resp.Error.Message
-			}
-			return nil, apiError(message, httpResp.StatusCode)
-		}
-		for _, item := range resp.Items {
-			ch := Channel{
-				ID:         item.ID,
-				Title:      item.Snippet.Title,
-				AvatarURL:  item.Snippet.Thumbnails.Default.URL,
-				UploadedAt: item.ContentDetails.RelatedPlaylists.Uploads,
-				UpdatedAt:  time.Now().UnixMilli(),
-			}
-			out = append(out, ch)
-		}
+		out = append(out, channels...)
 	}
 	return out, nil
+}
+
+// ResolveChannelRef looks up the channel a parsed reference names. A bare name
+// is tried as a handle first and as a legacy username second, which is the one
+// fallback the API offers; a video link resolves to the channel that uploaded
+// the video. A lookup that finds nothing, or a channel without a title, reports
+// ErrChannelNotFound so no subscription is created without a name.
+func (y YouTube) ResolveChannelRef(ctx context.Context, ref ChannelRef) (Channel, error) {
+	switch ref.Kind {
+	case ChannelRefID:
+		return y.firstChannel(ctx, url.Values{"id": {ref.Value}})
+	case ChannelRefHandle:
+		return y.firstChannel(ctx, url.Values{"forHandle": {ref.Value}})
+	case ChannelRefUsername:
+		return y.firstChannel(ctx, url.Values{"forUsername": {ref.Value}})
+	case ChannelRefName:
+		channel, err := y.firstChannel(ctx, url.Values{"forHandle": {ref.Value}})
+		if err == nil || !errors.Is(err, ErrChannelNotFound) {
+			return channel, err
+		}
+		return y.firstChannel(ctx, url.Values{"forUsername": {ref.Value}})
+	case ChannelRefVideo:
+		return y.channelOfVideo(ctx, ref.Value)
+	default:
+		return Channel{}, ErrChannelRefUnresolvable
+	}
+}
+
+// firstChannel is one lookup that must name exactly one channel.
+func (y YouTube) firstChannel(ctx context.Context, query url.Values) (Channel, error) {
+	channels, err := y.channelsByQuery(ctx, query)
+	if err != nil {
+		return Channel{}, err
+	}
+	for _, channel := range channels {
+		if strings.TrimSpace(channel.Title) != "" {
+			return channel, nil
+		}
+	}
+	return Channel{}, ErrChannelNotFound
+}
+
+// channelOfVideo resolves a video link to the channel that uploaded the video.
+func (y YouTube) channelOfVideo(ctx context.Context, videoID string) (Channel, error) {
+	var resp ytVideosResponse
+	q := url.Values{"part": {"snippet"}, "id": {videoID}, "maxResults": {"1"}}
+	q.Set("key", y.Key)
+	client := y.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, y.baseURL()+"/videos?"+q.Encode(), nil)
+	if err != nil {
+		return Channel{}, err
+	}
+	httpResp, err := client.Do(req)
+	if err != nil {
+		return Channel{}, err
+	}
+	err = json.NewDecoder(httpResp.Body).Decode(&resp)
+	httpResp.Body.Close()
+	if err != nil {
+		return Channel{}, err
+	}
+	if httpResp.StatusCode >= 400 {
+		message := ""
+		if resp.Error != nil {
+			message = resp.Error.Message
+		}
+		return Channel{}, apiError(message, httpResp.StatusCode)
+	}
+	for _, item := range resp.Items {
+		if item.Snippet.ChannelID != "" {
+			return y.firstChannel(ctx, url.Values{"id": {item.Snippet.ChannelID}})
+		}
+	}
+	return Channel{}, ErrChannelNotFound
 }
 
 func minInt(a, b int) int {

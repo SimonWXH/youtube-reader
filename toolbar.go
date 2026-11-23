@@ -56,6 +56,9 @@ func (w *Window) shell(c *ui.Context) {
 	ui.Column(c).Fill().Background(tokens.App).Children(func() {
 		w.toolbar(c, tokens)
 		ui.Column(c).Grow(1).MinHeight(0).Children(func() { w.view(c) })
+		// The add-subscription panel is the window's one modal surface: it
+		// covers the toolbar as well as the panes behind its scrim.
+		w.addDialogModal(c, tokens)
 	})
 }
 

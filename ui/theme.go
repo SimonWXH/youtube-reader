@@ -74,6 +74,13 @@ type Tokens struct {
 	Success    ui.Color // Success is the up-to-date mark.
 	Focus      ui.Color // Focus draws the 2 pt ring.
 	Shadow     ui.Color // Shadow is a legacy shadow ink; the L1 popover ink is specified with the elevation geometry.
+	// ModalScrim is the L2 backdrop over the window behind an in-window
+	// modal panel. It is ink, not a surface: a modal never replaces the
+	// window's surfaces with an opaque colour.
+	ModalScrim ui.Color
+	// ModalShadow is the L2 panel's shadow ink, drawn with the
+	// ElevationModal geometry below.
+	ModalShadow ui.Color
 }
 
 // NewTokens derives a palette from the system theme. Dark mode uses its own
@@ -81,43 +88,47 @@ type Tokens struct {
 func NewTokens(base *ui.Theme, prefersDark bool) Tokens {
 	if prefersDark {
 		return Tokens{
-			App:        ui.Hex("#191a1c"),
-			Sidebar:    ui.Hex("#1f2023"),
-			Surface:    ui.Hex("#25272b"),
-			SurfaceAlt: ui.Hex("#2c2e33"),
-			Border:     ui.Hex("#3a3d43"),
-			BorderSoft: ui.Hex("#303237"),
-			Text:       ui.Hex("#f2f2f3"),
-			Muted:      ui.Hex("#a8acb3"),
-			Faint:      ui.Hex("#9a9ea6"),
-			Accent:     ui.Hex("#7fb1e8"),
-			AccentText: ui.Hex("#101820"),
-			AccentSoft: ui.Hex("#26384c"),
-			Danger:     ui.Hex("#e78a8a"),
-			Warning:    ui.Hex("#d4ab6a"),
-			Success:    ui.Hex("#8dc7a9"),
-			Focus:      ui.Hex("#9cc7f5"),
-			Shadow:     ui.RGBA(0, 0, 0, 0.36),
+			App:         ui.Hex("#191a1c"),
+			Sidebar:     ui.Hex("#1f2023"),
+			Surface:     ui.Hex("#25272b"),
+			SurfaceAlt:  ui.Hex("#2c2e33"),
+			Border:      ui.Hex("#3a3d43"),
+			BorderSoft:  ui.Hex("#303237"),
+			Text:        ui.Hex("#f2f2f3"),
+			Muted:       ui.Hex("#a8acb3"),
+			Faint:       ui.Hex("#9a9ea6"),
+			Accent:      ui.Hex("#7fb1e8"),
+			AccentText:  ui.Hex("#101820"),
+			AccentSoft:  ui.Hex("#26384c"),
+			Danger:      ui.Hex("#e78a8a"),
+			Warning:     ui.Hex("#d4ab6a"),
+			Success:     ui.Hex("#8dc7a9"),
+			Focus:       ui.Hex("#9cc7f5"),
+			Shadow:      ui.RGBA(0, 0, 0, 0.36),
+			ModalScrim:  ui.RGBA(0, 0, 0, 0.44),
+			ModalShadow: ui.RGBA(0, 0, 0, 0.72),
 		}
 	}
 	return Tokens{
-		App:        ui.Hex("#f7f7f5"),
-		Sidebar:    ui.Hex("#f1f1ee"),
-		Surface:    ui.Hex("#ffffff"),
-		SurfaceAlt: ui.Hex("#f5f5f3"),
-		Border:     ui.Hex("#d9d9d4"),
-		BorderSoft: ui.Hex("#e8e8e4"),
-		Text:       ui.Hex("#1f2023"),
-		Muted:      ui.Hex("#666970"),
-		Faint:      ui.Hex("#6f7278"),
-		Accent:     ui.Hex("#2f6699"),
-		AccentText: ui.Hex("#ffffff"),
-		AccentSoft: ui.Hex("#e7f0f8"),
-		Danger:     ui.Hex("#a94b4b"),
-		Warning:    ui.Hex("#8a6224"),
-		Success:    ui.Hex("#397a5b"),
-		Focus:      ui.Hex("#2f6699"),
-		Shadow:     ui.RGBA(28, 30, 33, 0.12),
+		App:         ui.Hex("#f7f7f5"),
+		Sidebar:     ui.Hex("#f1f1ee"),
+		Surface:     ui.Hex("#ffffff"),
+		SurfaceAlt:  ui.Hex("#f5f5f3"),
+		Border:      ui.Hex("#d9d9d4"),
+		BorderSoft:  ui.Hex("#e8e8e4"),
+		Text:        ui.Hex("#1f2023"),
+		Muted:       ui.Hex("#666970"),
+		Faint:       ui.Hex("#6f7278"),
+		Accent:      ui.Hex("#2f6699"),
+		AccentText:  ui.Hex("#ffffff"),
+		AccentSoft:  ui.Hex("#e7f0f8"),
+		Danger:      ui.Hex("#a94b4b"),
+		Warning:     ui.Hex("#8a6224"),
+		Success:     ui.Hex("#397a5b"),
+		Focus:       ui.Hex("#2f6699"),
+		Shadow:      ui.RGBA(28, 30, 33, 0.12),
+		ModalScrim:  ui.RGBA(0, 0, 0, 0.32),
+		ModalShadow: ui.RGBA(24, 26, 28, 0.34),
 	}
 }
 
@@ -149,16 +160,24 @@ const (
 )
 
 // Elevation. Cards, rows, and forms stay flat (L0); only popovers and overflow
-// menus are raised (L1) with offset 14 pt, blur 34 pt, spread -10 pt; modal
-// alerts are drawn by the system (L2). The L1 shadow ink is owned by design
-// board B3 and must be painted exactly as: light 0 0 0 0.5px rgba(0,0,0,.12)
-// plus 0 14px 34px -10px rgba(24,26,28,.28); dark 0 0 0 0.5px rgba(0,0,0,.5)
-// plus 0 14px 34px -10px rgba(0,0,0,.65); with a 0.5 pt stroke. Tokens.Shadow
-// is not the L1 ink.
+// menus are raised (L1) with offset 14 pt, blur 34 pt, spread -10 pt. L2 is the
+// in-window modal panel: macOS draws a system alert, but a panel the app draws
+// itself over the window - the add-subscription dialog, and every modal that
+// follows it - is a surface at Modal elevation over Tokens.ModalScrim. The L1
+// shadow ink is owned by design board B3 and must be painted exactly as: light
+// 0 0 0 0.5px rgba(0,0,0,.12) plus 0 14px 34px -10px rgba(24,26,28,.28); dark
+// 0 0 0 0.5px rgba(0,0,0,.5) plus 0 14px 34px -10px rgba(0,0,0,.65); with a
+// 0.5 pt stroke. Tokens.Shadow is not the L1 ink.
 const (
 	ElevationOffsetY float32 = 14
 	ElevationBlur    float32 = 34
 	ElevationSpread  float32 = -10
+	// The L2 panel rises higher than a popover so that it separates from
+	// the scrimmed window it covers, and keeps a wider spread so its ink
+	// spreads into the scrim instead of ending in a hard band.
+	ElevationModalOffsetY float32 = 24
+	ElevationModalBlur    float32 = 48
+	ElevationModalSpread  float32 = -12
 )
 
 // State is one of the eight defined interactive states.

@@ -1,6 +1,7 @@
 package core
 
 import (
+	crand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -333,6 +334,22 @@ func StableGroupID(name string) string {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(name))
 	return fmt.Sprintf("group-%x", h.Sum64())
+}
+
+// NewGroupID returns a fresh ID for a group the reader creates in the app. It
+// is random rather than derived from the name, because a group the reader names
+// is easy to name twice: two groups of one name would share a name-derived ID
+// and overwrite each other, in this device's state and on every other device.
+// OPML import keeps StableGroupID, so importing the same document twice still
+// merges the groups it names.
+func NewGroupID() string {
+	b := make([]byte, 4)
+	if _, err := crand.Read(b); err != nil {
+		// crypto/rand does not fail on macOS; a timestamp keeps the ID
+		// unique enough to be usable rather than panicking in a frame.
+		return fmt.Sprintf("group-%08x", time.Now().UnixNano()&0xffffffff)
+	}
+	return "group-" + hex.EncodeToString(b)
 }
 
 type opmlOutline struct {

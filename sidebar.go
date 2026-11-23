@@ -4,10 +4,73 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/sfsymbols"
 	"github.com/egoist/mygo/ui"
 	"github.com/simon/youtube-reader/core"
 	mui "github.com/simon/youtube-reader/ui"
 )
+
+// The sidebar footer, from the approved board: a fixed 34 pt bar below the
+// scrolling list, holding one compact 28 by 28 pt icon button inset 8 pt from
+// the sidebar's leading edge. The list gives up exactly the bar's height, so a
+// row never sits under it, also at the minimum window height.
+const (
+	sidebarFooterHeight float32 = 34
+	sidebarAddSize      float32 = 28
+	sidebarAddGlyph     float32 = 14
+	sidebarFooterInset  float32 = 8
+	sidebarMenuWidth    float32 = 196
+)
+
+// The plus menu's icons, made once from the app's own SVG line set.
+var (
+	sidebarMenuNewGroupIcon = mustMenuIcon(mui.IconFolderPlus)
+	sidebarMenuAddSubIcon   = mustMenuIcon(mui.IconPlayRectangle)
+)
+
+// sidebarMenuWords are the plus menu's two commands, and the sentence a group
+// that cannot be written says, in the reader's language.
+type sidebarMenuWords struct {
+	newGroup        string
+	addSubscription string
+	groupSaveFailed string
+}
+
+// sidebarMenuCopy returns the plus menu's words in the reader's language.
+func sidebarMenuCopy(locale string) sidebarMenuWords {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return sidebarMenuWords{
+			newGroup:        "新建分组",
+			addSubscription: "新增订阅…",
+			groupSaveFailed: "无法保存这个分组。请重试。",
+		}
+	}
+	return sidebarMenuWords{
+		newGroup:        "New Group",
+		addSubscription: "Add Subscription…",
+		groupSaveFailed: "Could not save the group. Try again.",
+	}
+}
+
+// defaultNewGroupName is the name a group starts with, so Enter on the inline
+// field keeps a group the reader can find rather than an unnamed one.
+func defaultNewGroupName(locale string) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return "新分组"
+	}
+	return "New Group"
+}
+
+// mustMenuIcon makes a menu icon of one SVG, or none when it cannot be drawn:
+// a menu without its glyph still names its commands.
+func mustMenuIcon(svg *ui.SVG) ui.MenuIcon {
+	icon, err := mygo.NewMenuIconSVG(svg, true)
+	if err != nil {
+		return nil
+	}
+	return icon
+}
 
 func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 	nav := &sidebarNav{w: w, focus: w.sidebarFocus, actions: map[string]func(){}}
@@ -18,7 +81,9 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 
 	sidebar := ui.Column(c).Fill().Shrink(0).Background(t.Sidebar)
 	sidebar.Children(func() {
-		ui.Scroll(c).Grow(1).Padding(0, mui.Space(2), mui.Space(2)+mui.ScrollBottomInset).Children(func() {
+		// The list clips at its own edge, so a row scrolled past the last
+		// visible one stops at the footer instead of painting under it.
+		ui.Scroll(c).Grow(1).MinHeight(0).Clip().Padding(0, mui.Space(2), mui.Space(2)+mui.ScrollBottomInset).Children(func() {
 			sectionHeader(c, t, "Library")
 			nav.row(c, t, mui.SidebarRow{
 				Key: "all", Label: "All videos", Symbol: "play.rectangle", Count: fmt.Sprintf("%d", counts.total),
@@ -105,6 +170,7 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 				})
 			}
 		})
+		w.sidebarFooter(c, t)
 	})
 	w.settleGroupDrag(c, &drag)
 	if chDrag.alive {
@@ -120,6 +186,83 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 	// and never leak into the grid or the toolbar.
 	sidebar.OnShortcut(0, ui.KeyDown, nav.move(1))
 	sidebar.OnShortcut(0, ui.KeyUp, nav.move(-1))
+}
+
+// sidebarFooter is the fixed bar under the list: one compact plus button that
+// opens the menu of the two things a reader adds from here. The column lays the
+// scrolling list out with the room that is left, so the bar never sits over a
+// row, also at the minimum window height.
+func (w *Window) sidebarFooter(c *ui.Context, t mui.Tokens) {
+	bar := ui.Row(c).Key("sidebar-footer").Height(sidebarFooterHeight).Shrink(0).FillWidth().
+		AlignItems(ui.Center).Padding(0, sidebarFooterInset).Background(t.Sidebar).
+		Role(ui.RoleGroup).Label("Library actions")
+	bar.Draw(func(p *ui.Painter, r ui.Rect) {
+		p.Fill(ui.Rect{X: r.X, Y: r.Y, W: r.W, H: mui.Hairline}, t.BorderSoft, 0)
+	})
+	bar.Children(func() {
+		w.sidebarAddButton(c, t)
+	})
+}
+
+// sidebarAddButton is the board's compact icon button: 28 by 28 pt, a 14 pt
+// plus, a 6 pt radius, and no label. It rests quiet on the sidebar, lightens
+// under the pointer, and keeps the accent face while its menu shows.
+func (w *Window) sidebarAddButton(c *ui.Context, t mui.Tokens) {
+	button := ui.ButtonBase(c).Key("sidebar-add").Size(sidebarAddSize, sidebarAddSize).Padding(0).
+		Radius(mui.RadiusControl).Label("New group or subscription").
+		Cursor(ui.CursorPointer).Transition(mui.Fade).
+		FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
+	color := t.Muted
+	switch {
+	case w.sidebarMenuOpen:
+		color = t.Accent
+	case button.Hovered() || button.Pressed():
+		color = t.Text
+	}
+	button.Children(func() {
+		sfsymbols.Symbol(c, "plus").Size(sidebarAddGlyph).Color(color).Element.Role(ui.RoleNone)
+	})
+	button.Draw(func(p *ui.Painter, r ui.Rect) {
+		switch {
+		case w.sidebarMenuOpen || button.Pressed():
+			p.Fill(r, t.AccentSoft, mui.RadiusControl)
+			p.Stroke(r, t.Accent, mui.RadiusControl, mui.Hairline)
+		case button.Hovered():
+			p.Fill(r, t.SurfaceAlt, mui.RadiusControl)
+			p.Stroke(r, t.BorderSoft, mui.RadiusControl, mui.Hairline)
+		}
+	})
+	words := sidebarMenuCopy(c.Locale())
+	button.PopoverMenuButton(func(m *ui.Menu) {
+		if m.Item(words.newGroup).Icon(sidebarMenuNewGroupIcon).Chosen() {
+			w.newGroupFromMenu(c)
+		}
+		if m.Item(words.addSubscription).Icon(sidebarMenuAddSubIcon).Chosen() {
+			w.openAddDialog()
+		}
+	}, ui.PopoverMenuButtonOptions{
+		// The menu opens upward from the button, as a footer control's does, so
+		// it never runs past the window's bottom edge.
+		At: ui.AnchorTopStart, Self: ui.AnchorBottomStart, Open: &w.sidebarMenuOpen,
+		Panel: func(panel ui.Element) {
+			panel.MinWidth(sidebarMenuWidth).Radius(mui.RadiusNotice).
+				Border(mui.Hairline/2, t.Border).
+				Shadow(0, mui.ElevationOffsetY, mui.ElevationBlur, mui.ElevationSpread, t.Shadow)
+		},
+	})
+}
+
+// newGroupFromMenu appends a group and puts it straight into the sidebar's
+// inline rename, which stays the app's one naming surface for a group.
+func (w *Window) newGroupFromMenu(c *ui.Context) {
+	group, err := w.app.CreateGroup(defaultNewGroupName(c.Locale()))
+	if err != nil {
+		w.toast(c, sidebarMenuCopy(c.Locale()).groupSaveFailed, true)
+		return
+	}
+	w.renamingGroupNew = group.ID
+	w.startRenameGroup(group.ID, group.Name)
+	c.Invalidate()
 }
 
 // groupedChannelIDs is the set of every channel that appears in a group.
