@@ -260,6 +260,74 @@ func TestWorkspaceDockDragReorder(t *testing.T) {
 	if order[0] != WorkspaceRSS || order[1] != WorkspaceVideos {
 		t.Fatalf("order after drag = %v, want RSS at index 0", order)
 	}
+
+	// Now drag RSS over Videos (right half of Videos):
+	videosBox, _ = tt.Find("Videos")
+	rssBox, _ = tt.Find("RSS")
+	sx, sy = rssBox.X+rssBox.W/2, rssBox.Y+rssBox.H/2
+	tx, ty = videosBox.X+videosBox.W*3/4, videosBox.Y+videosBox.H/2
+
+	tt.Press(sx, sy)
+	tt.Move(sx, sy-5)
+	tt.Move(tx, ty)
+	tt.Frame()
+	tt.Release(tx, ty)
+	tt.Frame()
+
+	// RSS should now be inserted after Videos:
+	order = w.currentWorkspaceOrder()
+	if order[0] != WorkspaceVideos || order[1] != WorkspaceRSS {
+		t.Fatalf("order after right-half drag = %v, want Videos at index 0, RSS at index 1", order)
+	}
+}
+
+func TestWorkspaceInitializationActiveSelection(t *testing.T) {
+	a, w := setupWorkspaceTestApp(t)
+	a.Settings.ActiveWorkspace = WorkspaceRSS
+	a.Selected = "channel:ch-1"
+	a.SelectedVideoID = "v-1"
+
+	tt := ui.NewTester(w.view, 1280, 808)
+	tt.Frame()
+
+	if w.activeWorkspaceName() != WorkspaceRSS {
+		t.Fatalf("active workspace = %q, want %q", w.activeWorkspaceName(), WorkspaceRSS)
+	}
+	if a.Selected != "all" {
+		t.Fatalf("RSS active selection = %q, want 'all'", a.Selected)
+	}
+	if a.SelectedVideoID != "" {
+		t.Fatalf("RSS SelectedVideoID = %q, want empty", a.SelectedVideoID)
+	}
+
+	w.selectWorkspace(WorkspaceVideos)
+	tt.Frame()
+
+	if w.activeWorkspaceName() != WorkspaceVideos {
+		t.Fatalf("after switching to videos, active workspace = %q, want %q", w.activeWorkspaceName(), WorkspaceVideos)
+	}
+	if a.Selected != "channel:ch-1" {
+		t.Fatalf("restored videos selection = %q, want 'channel:ch-1'", a.Selected)
+	}
+	if a.SelectedVideoID != "v-1" {
+		t.Fatalf("restored videos SelectedVideoID = %q, want 'v-1'", a.SelectedVideoID)
+	}
+}
+
+func TestWorkspaceInitializationInvalidActiveWorkspace(t *testing.T) {
+	a, w := setupWorkspaceTestApp(t)
+	a.Settings.ActiveWorkspace = "unknown_workspace"
+	a.Selected = "channel:ch-1"
+
+	tt := ui.NewTester(w.view, 1280, 808)
+	tt.Frame()
+
+	if w.activeWorkspaceName() != WorkspaceVideos {
+		t.Fatalf("active workspace = %q, want fallback to %q", w.activeWorkspaceName(), WorkspaceVideos)
+	}
+	if a.Selected != "channel:ch-1" {
+		t.Fatalf("videos selection = %q, want 'channel:ch-1'", a.Selected)
+	}
 }
 
 // TestWorkspaceKeyboardShortcuts verifies Cmd+1..4 shortcuts switch workspaces.

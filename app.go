@@ -439,6 +439,9 @@ func (a *App) SetWorkspaceOrder(order []string) error {
 
 // SetActiveWorkspace stores the active workspace in local settings.
 func (a *App) SetActiveWorkspace(id string) error {
+	if !isValidWorkspace(id) {
+		id = WorkspaceVideos
+	}
 	_, err := a.updateSettings(func(s *core.Settings) bool {
 		if s.ActiveWorkspace == id {
 			return false

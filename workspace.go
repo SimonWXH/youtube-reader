@@ -26,18 +26,22 @@ var DefaultWorkspaceOrder = []string{
 	WorkspaceWeChatNotes,
 }
 
+// isValidWorkspace reports whether id is a valid top-level workspace.
+func isValidWorkspace(id string) bool {
+	switch id {
+	case WorkspaceVideos, WorkspaceRSS, WorkspaceReadLater, WorkspaceWeChatNotes:
+		return true
+	default:
+		return false
+	}
+}
+
 // sanitizeWorkspaceOrder validates and ensures all 4 workspaces are present exactly once.
 func sanitizeWorkspaceOrder(order []string) []string {
-	valid := map[string]bool{
-		WorkspaceVideos:      true,
-		WorkspaceRSS:         true,
-		WorkspaceReadLater:   true,
-		WorkspaceWeChatNotes: true,
-	}
 	seen := map[string]bool{}
 	var res []string
 	for _, id := range order {
-		if valid[id] && !seen[id] {
+		if isValidWorkspace(id) && !seen[id] {
 			seen[id] = true
 			res = append(res, id)
 		}
@@ -71,16 +75,38 @@ type WorkspaceState struct {
 func (w *Window) ensureWorkspaceInit() {
 	if w.workspaceStates == nil {
 		w.workspaceStates = make(map[string]*WorkspaceState, 4)
-		w.workspaceStates[WorkspaceVideos] = &WorkspaceState{Selected: "all"}
+		videosSelected := "all"
+		if w.app != nil && w.app.Selected != "" {
+			videosSelected = w.app.Selected
+		}
+		var videosItemID string
+		var videosSearch, videosFilter string
+		var videosUnreadOnly bool
+		if w.app != nil {
+			videosItemID = w.app.SelectedVideoID
+			videosSearch = w.app.Search
+			videosFilter = w.app.ChannelFilter
+			videosUnreadOnly = w.app.UnreadOnly
+		}
+		w.workspaceStates[WorkspaceVideos] = &WorkspaceState{
+			Search:         videosSearch,
+			Filter:         videosFilter,
+			UnreadOnly:     videosUnreadOnly,
+			Selected:       videosSelected,
+			SelectedItemID: videosItemID,
+		}
 		w.workspaceStates[WorkspaceRSS] = &WorkspaceState{Selected: "all"}
 		w.workspaceStates[WorkspaceReadLater] = &WorkspaceState{Selected: "all"}
 		w.workspaceStates[WorkspaceWeChatNotes] = &WorkspaceState{Selected: "all"}
 	}
 	if w.activeWorkspace == "" {
-		if w.app != nil && w.app.Settings.ActiveWorkspace != "" {
-			w.activeWorkspace = w.app.Settings.ActiveWorkspace
-		} else {
-			w.activeWorkspace = WorkspaceVideos
+		target := WorkspaceVideos
+		if w.app != nil && isValidWorkspace(w.app.Settings.ActiveWorkspace) {
+			target = w.app.Settings.ActiveWorkspace
+		}
+		w.activeWorkspace = target
+		if target != WorkspaceVideos {
+			w.restoreWorkspaceState(target)
 		}
 	}
 }
@@ -102,7 +128,7 @@ func (w *Window) currentWorkspaceOrder() []string {
 // selectWorkspace switches to the specified workspace, preserving state isolation.
 func (w *Window) selectWorkspace(target string) {
 	w.ensureWorkspaceInit()
-	if target == w.activeWorkspace {
+	if !isValidWorkspace(target) || target == w.activeWorkspace {
 		return
 	}
 	w.saveWorkspaceState(w.activeWorkspace)
@@ -319,7 +345,7 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 
 			insertAfter := false
 			if over || isDrop {
-				if _, x, inside := slot.PointerPosition(); inside {
+				if x, _, inside := slot.PointerPosition(); inside {
 					insertAfter = x >= slot.LayoutBounds().W/2
 				}
 			}
