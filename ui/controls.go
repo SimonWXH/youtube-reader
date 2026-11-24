@@ -239,7 +239,7 @@ func (r SidebarRow) Build(c *ui.Context, tokens Tokens) ui.Element {
 	}
 
 	if r.Renaming {
-		container := ui.Row(c).Key(r.Key + ":rename-container").
+		container := ui.Row(c).Key(r.Key+":rename-container").
 			Height(rowHeight).FillWidth().Gap(Space(2)).Padding(0, Space(2)).
 			Radius(RadiusControl).AlignItems(ui.Center).
 			Background(tokens.Sidebar).MarginY(1)

@@ -14,18 +14,18 @@ import (
 )
 
 const (
-	addRSSDialogWidth              float32 = 420
-	addRSSDialogPadding            float32 = 20
-	addRSSDialogFieldHeight        float32 = 28
-	addRSSDialogInputPadding       float32 = 8
-	addRSSDialogGroupFieldHeight   float32 = 26
-	addRSSDialogHelperLine         float32 = 14
-	addRSSDialogCardHeight         float32 = 52
-	addRSSDialogControlHeight      float32 = 28
-	addRSSDialogPickerHeight       float32 = 28
-	addRSSDialogPickerInset        float32 = 9
-	addRSSDialogResolveTimeout             = 12 * time.Second
-	addRSSDialogGroupNewSentinel           = "\x00new-group"
+	addRSSDialogWidth            float32 = 420
+	addRSSDialogPadding          float32 = 20
+	addRSSDialogFieldHeight      float32 = 28
+	addRSSDialogInputPadding     float32 = 8
+	addRSSDialogGroupFieldHeight float32 = 26
+	addRSSDialogHelperLine       float32 = 14
+	addRSSDialogCardHeight       float32 = 52
+	addRSSDialogControlHeight    float32 = 28
+	addRSSDialogPickerHeight     float32 = 28
+	addRSSDialogPickerInset      float32 = 9
+	addRSSDialogResolveTimeout           = 12 * time.Second
+	addRSSDialogGroupNewSentinel         = "\x00new-group"
 )
 
 type addRSSDialogState uint8
