@@ -768,9 +768,21 @@ func TestRSSReaderViewRendersArticle(t *testing.T) {
 	if w.rssReader.active != 0 {
 		t.Fatalf("at the top the active block = %d, want 0", w.rssReader.active)
 	}
-	// The picture block keeps its frame and is named for what it shows.
-	if img, ok := tt.AccessByRole(ui.RoleImage, "A reading room with tall windows"); !ok || img.Bounds.H <= 0 {
-		t.Fatalf("picture block = %+v, %v; want a laid-out named frame", img, ok)
+	// The picture block keeps its frame and is named for what it shows. The
+	// stubbed network never delivers the picture, so the frame settles into the
+	// failed-image placeholder, which still carries the alt text as its name and
+	// is itself the link to the original image.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		img, ok := tt.AccessByRole(ui.RoleLink, "A reading room with tall windows")
+		if ok && img.Bounds.H > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("picture block = %+v, %v; want a laid-out named frame", img, ok)
+		}
+		tt.Frame()
+		time.Sleep(5 * time.Millisecond)
 	}
 
 	saveRSSReaderScreenshot(t, tt, "01-reader-full-text.png")
