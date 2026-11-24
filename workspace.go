@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo/plugins/sfsymbols"
 	"github.com/egoist/mygo/ui"
+	"github.com/simon/youtube-reader/core"
 	mui "github.com/simon/youtube-reader/ui"
 )
 
@@ -73,6 +75,8 @@ type WorkspaceState struct {
 	// workspace keeps its own ScrollState, tracked directly by the sidebar
 	// scroll container, so switching pages keeps each page's own place.
 	SidebarScroll ui.ScrollState
+	// ContentScroll is where the workspace's middle timeline is scrolled.
+	ContentScroll ui.ScrollState
 }
 
 // workspaceSidebarScroll returns the sidebar scroll state of a workspace,
@@ -85,6 +89,17 @@ func (w *Window) workspaceSidebarScroll(id string) *ui.ScrollState {
 		w.workspaceStates[id] = st
 	}
 	return &st.SidebarScroll
+}
+
+// workspaceRSSArticlesScroll returns the article list scroll state for RSS.
+func (w *Window) workspaceRSSArticlesScroll() *ui.ScrollState {
+	w.ensureWorkspaceInit()
+	st := w.workspaceStates[WorkspaceRSS]
+	if st == nil {
+		st = &WorkspaceState{Selected: "all"}
+		w.workspaceStates[WorkspaceRSS] = st
+	}
+	return &st.ContentScroll
 }
 
 func (w *Window) ensureWorkspaceInit() {
@@ -110,7 +125,14 @@ func (w *Window) ensureWorkspaceInit() {
 			Selected:       videosSelected,
 			SelectedItemID: videosItemID,
 		}
-		w.workspaceStates[WorkspaceRSS] = &WorkspaceState{Selected: "all"}
+		var rssItemID string
+		if w.app != nil {
+			rssItemID = w.app.SelectedRSSArticleID
+		}
+		w.workspaceStates[WorkspaceRSS] = &WorkspaceState{
+			Selected:       "all",
+			SelectedItemID: rssItemID,
+		}
 		w.workspaceStates[WorkspaceReadLater] = &WorkspaceState{Selected: "all"}
 		w.workspaceStates[WorkspaceWeChatNotes] = &WorkspaceState{Selected: "all"}
 	}
@@ -209,6 +231,8 @@ func (w *Window) saveWorkspaceState(id string) {
 		st.Selected = w.app.Selected
 		if id == WorkspaceVideos {
 			st.SelectedItemID = w.app.SelectedVideoID
+		} else if id == WorkspaceRSS {
+			st.SelectedItemID = w.app.SelectedRSSArticleID
 		}
 	}
 	st.SelectedIndex = w.selectedIndex
@@ -231,6 +255,11 @@ func (w *Window) restoreWorkspaceState(id string) {
 			w.app.SelectedVideoID = st.SelectedItemID
 		} else {
 			w.app.SelectedVideoID = ""
+		}
+		if id == WorkspaceRSS {
+			w.app.SelectedRSSArticleID = st.SelectedItemID
+		} else {
+			w.app.SelectedRSSArticleID = ""
 		}
 	}
 	w.selectedIndex = st.SelectedIndex
@@ -499,8 +528,120 @@ func (w *Window) rssMainArea(c *ui.Context, t mui.Tokens, rowWidth float32) {
 // rssContent renders Column 2: the RSS middle timeline and search filter bar.
 func (w *Window) rssContent(c *ui.Context, t mui.Tokens) {
 	ui.Column(c).Grow(1).MinWidth(0).Background(t.App).Children(func() {
+		w.rssColumnHeader(c, t)
 		w.rssContentStrip(c, t)
-		w.rssEmptyState(c, t)
+		w.rssArticlesArea(c, t)
+	})
+}
+
+// selectedRSSSourceTitle returns the human-readable title for the currently selected RSS source/folder.
+func (w *Window) selectedRSSSourceTitle(locale string) string {
+	zh := strings.HasPrefix(strings.ToLower(locale), "zh")
+	if w.app == nil || w.app.Selected == "all" || w.app.Selected == "" {
+		if zh {
+			return "全部文章"
+		}
+		return "All Articles"
+	}
+	if w.app.Selected == "starred" {
+		if zh {
+			return "标星文章"
+		}
+		return "Starred"
+	}
+	if strings.HasPrefix(w.app.Selected, "feed:") {
+		fid := strings.TrimPrefix(w.app.Selected, "feed:")
+		if title := w.app.FeedTitle(fid); title != "" {
+			return title
+		}
+		return fid
+	}
+	if strings.HasPrefix(w.app.Selected, "group:") {
+		gid := strings.TrimPrefix(w.app.Selected, "group:")
+		for _, g := range w.app.RSSGroups {
+			if g.ID == gid {
+				return g.Name
+			}
+		}
+		return gid
+	}
+	return w.app.Selected
+}
+
+// rssSelectionUnreadCount returns the unread count matching the current selection.
+func (w *Window) rssSelectionUnreadCount() int {
+	if w.app == nil {
+		return 0
+	}
+	selected := w.app.Selected
+	if selected == "all" || selected == "" {
+		return w.app.RSSUnreadCount("")
+	}
+	if selected == "starred" {
+		cnt := 0
+		for _, art := range w.app.RSSArticles {
+			if art.Starred && !art.Read {
+				cnt++
+			}
+		}
+		return cnt
+	}
+	if strings.HasPrefix(selected, "feed:") {
+		fid := strings.TrimPrefix(selected, "feed:")
+		return w.app.RSSUnreadCount(fid)
+	}
+	if strings.HasPrefix(selected, "group:") {
+		gid := strings.TrimPrefix(selected, "group:")
+		allowed := make(map[string]bool)
+		for _, g := range w.app.RSSGroups {
+			if g.ID == gid {
+				for _, fid := range g.FeedIDs {
+					allowed[fid] = true
+				}
+				break
+			}
+		}
+		cnt := 0
+		for _, art := range w.app.RSSArticles {
+			if allowed[art.FeedID] && !art.Read {
+				cnt++
+			}
+		}
+		return cnt
+	}
+	return w.app.RSSUnreadCount("")
+}
+
+// rssColumnHeader renders the NetNewsWire-style column header with source title and unread count.
+func (w *Window) rssColumnHeader(c *ui.Context, t mui.Tokens) {
+	locale := c.Locale()
+	zh := strings.HasPrefix(strings.ToLower(locale), "zh")
+	title := w.selectedRSSSourceTitle(locale)
+	unread := w.rssSelectionUnreadCount()
+
+	var unreadText string
+	if unread == 1 {
+		unreadText = "1 unread"
+		if zh {
+			unreadText = "1 篇未读"
+		}
+	} else {
+		unreadText = fmt.Sprintf("%d unread", unread)
+		if zh {
+			unreadText = fmt.Sprintf("%d 篇未读", unread)
+		}
+	}
+
+	header := ui.Row(c.Key("rss-column-header")).Height(36).Shrink(0).FillWidth().
+		Padding(0, mui.Space(4)).AlignItems(ui.Center).
+		Role(ui.RoleGroup).Label("Article column header")
+	header.Draw(func(p *ui.Painter, r ui.Rect) {
+		p.Fill(ui.Rect{X: r.X, Y: r.Y + r.H - mui.Hairline, W: r.W, H: mui.Hairline}, t.BorderSoft, 0)
+	})
+	header.Children(func() {
+		mui.SectionHeader.Apply(ui.Text(c, title)).TextColor(t.Text).SingleLine().Shrink(1)
+		ui.Spacer(c)
+		mui.Metadata.Apply(ui.Text(c, unreadText)).TextColor(t.Muted).SingleLine().Shrink(0)
 	})
 }
 
@@ -509,11 +650,46 @@ func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	searchLabel := "Search articles"
 	unreadLabel := "Unread"
-	countText := "0 articles"
 	if zh {
 		searchLabel = "搜索文章"
 		unreadLabel = "未读"
-		countText = "0 篇文章"
+	}
+
+	visibleCount := 0
+	if w.app != nil {
+		visibleCount = len(w.app.VisibleRSSArticles())
+	}
+
+	var countText string
+	if visibleCount == 0 {
+		countText = "0 articles"
+		if zh {
+			countText = "0 篇文章"
+		}
+	} else if w.app != nil && w.app.UnreadOnly {
+		if visibleCount == 1 {
+			countText = "1 unread"
+			if zh {
+				countText = "1 篇未读"
+			}
+		} else {
+			countText = fmt.Sprintf("%d unread", visibleCount)
+			if zh {
+				countText = fmt.Sprintf("%d 篇未读", visibleCount)
+			}
+		}
+	} else {
+		if visibleCount == 1 {
+			countText = "1 article"
+			if zh {
+				countText = "1 篇文章"
+			}
+		} else {
+			countText = fmt.Sprintf("%d articles", visibleCount)
+			if zh {
+				countText = fmt.Sprintf("%d 篇文章", visibleCount)
+			}
+		}
 	}
 
 	labelWidth, _ := c.MeasureText(0, ui.Span{Text: unreadLabel, Size: mui.Control.Size, Weight: int(mui.Control.Weight)})
@@ -547,6 +723,223 @@ func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens) {
 	})
 }
 
+// rssArticlesArea renders the scrollable list of article item rows or the empty state.
+func (w *Window) rssArticlesArea(c *ui.Context, t mui.Tokens) {
+	if w.app == nil {
+		w.rssEmptyState(c, t)
+		return
+	}
+
+	articles := w.app.VisibleRSSArticles()
+	if len(articles) == 0 {
+		w.rssEmptyState(c, t)
+		return
+	}
+
+	scroll := ui.Scroll(c.Key("rss-articles-scroll")).Grow(1).MinHeight(0).Clip().
+		TrackScroll(w.workspaceRSSArticlesScroll()).
+		Padding(mui.Space(2), mui.Space(3), mui.Space(3)+mui.ScrollBottomInset, mui.Space(3)).
+		Role(ui.RoleList).Label("Articles")
+
+	scroll.OnShortcut(0, ui.KeyDown, func() {
+		w.moveRSSSelection(articles, 1)
+	})
+	scroll.OnShortcut(0, ui.KeyUp, func() {
+		w.moveRSSSelection(articles, -1)
+	})
+
+	scroll.Children(func() {
+		ui.Column(c).Grow(1).Gap(mui.Space(1)).Children(func() {
+			for i, art := range articles {
+				isSelected := w.app.SelectedRSSArticleID == art.ID
+				w.rssArticleItemRow(c, t, art, i, isSelected)
+			}
+		})
+	})
+}
+
+// rssArticleItemRow renders one NetNewsWire-style article card in the middle column.
+func (w *Window) rssArticleItemRow(c *ui.Context, t mui.Tokens, art core.RSSArticle, index int, isSelected bool) {
+	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
+	dotClicked := false
+	row := ui.ButtonBase(c).Key("rss-article:" + art.ID).
+		FillWidth().Padding(mui.Space(2), mui.Space(2.5)).
+		Radius(mui.RadiusControl).Cursor(ui.CursorPointer).
+		FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
+		Transition(mui.Fade).Role(ui.RoleListItem).Label(art.Title)
+
+	row.ContextMenu(func(m *ui.Menu) {
+		readLabel := "Mark as Read"
+		if zh {
+			readLabel = "标记为已读"
+		}
+		if art.Read {
+			readLabel = "Mark as Unread"
+			if zh {
+				readLabel = "标记为未读"
+			}
+		}
+		if m.Item(readLabel).Chosen() {
+			_ = w.app.MarkRSSArticleRead(art.ID, !art.Read)
+		}
+	})
+
+	row.Draw(func(p *ui.Painter, r ui.Rect) {
+		if isSelected {
+			p.Fill(r, t.AccentSoft, mui.RadiusControl)
+		} else if row.Hovered() || row.Pressed() {
+			p.Fill(r, t.SurfaceAlt, mui.RadiusControl)
+		}
+		if !isSelected && !row.Hovered() {
+			p.Fill(ui.Rect{X: r.X + mui.Space(2), Y: r.Y + r.H - mui.Hairline, W: r.W - 2*mui.Space(2), H: mui.Hairline}, t.BorderSoft, 0)
+		}
+	})
+
+	row.Children(func() {
+		ui.Row(c).FillWidth().Gap(mui.Space(2)).AlignItems(ui.Start).Children(func() {
+			// Left indicator column: fixed 12pt wide, holds 6pt accent dot when unread
+			ui.Column(c).Width(12).AlignItems(ui.Center).Padding(4, 0, 0, 0).Children(func() {
+				if !art.Read {
+					dot := ui.ButtonBase(c).Key("rss-unread-dot:" + art.ID).
+						Size(6, 6).Radius(mui.RadiusCheck).Background(t.Accent).
+						Label("Unread").Cursor(ui.CursorPointer)
+					if dot.Clicked() {
+						dotClicked = true
+						_ = w.app.MarkRSSArticleRead(art.ID, true)
+					}
+				}
+			})
+
+			// Text column: Source+Date, Title, Snippet
+			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
+				// Line 1: Source Name (muted gray) + Published Date
+				ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
+					sourceName := ""
+					if w.app != nil {
+						sourceName = w.app.FeedTitle(art.FeedID)
+					}
+					if sourceName == "" {
+						sourceName = art.Author
+					}
+					if sourceName == "" {
+						sourceName = "RSS"
+					}
+					mui.Metadata.Apply(ui.Text(c, sourceName)).TextColor(t.Muted).SingleLine().Shrink(1)
+					ui.Spacer(c)
+					dateStr := FormatArticleDate(art.PublishedAt, time.Now())
+					mui.Metadata.Apply(ui.Text(c, dateStr)).TextColor(t.Muted).SingleLine().Shrink(0)
+				})
+
+				// Line 2: Title (Semibold, max 2 lines)
+				titleColor := t.Text
+				if isSelected {
+					titleColor = t.Accent
+				} else if art.Read {
+					titleColor = t.Muted
+				}
+				mui.CardTitle.Apply(ui.Text(c, art.Title)).TextColor(titleColor).MaxLines(2).Wrap()
+
+				// Line 3-4: 2-line plain text snippet
+				snippet := CleanArticleSnippet(art.Snippet, art.ContentHTML, 200)
+				if snippet != "" {
+					snippetColor := t.Muted
+					if art.Read {
+						snippetColor = t.Faint
+					}
+					mui.Secondary.Apply(ui.Text(c, snippet)).TextColor(snippetColor).MaxLines(2).Wrap()
+				}
+			})
+		})
+	})
+
+	if !dotClicked && row.Clicked() {
+		w.selectRSSArticle(art.ID)
+	}
+}
+
+// selectRSSArticle selects the article by ID, updating app state and firing observer.
+func (w *Window) selectRSSArticle(id string) {
+	if w.app == nil {
+		return
+	}
+	w.app.SelectRSSArticle(id)
+	if w.onRSSArticleSelected != nil {
+		if art := w.app.SelectedRSSArticle(); art != nil {
+			w.onRSSArticleSelected(*art)
+		}
+	}
+}
+
+// moveRSSSelection moves the selected article up or down in visual order.
+func (w *Window) moveRSSSelection(articles []core.RSSArticle, delta int) {
+	if len(articles) == 0 {
+		return
+	}
+	current := -1
+	for i, art := range articles {
+		if art.ID == w.app.SelectedRSSArticleID {
+			current = i
+			break
+		}
+	}
+	target := 0
+	if current >= 0 {
+		target = current + delta
+		if target < 0 {
+			target = 0
+		}
+		if target >= len(articles) {
+			target = len(articles) - 1
+		}
+	}
+	w.selectRSSArticle(articles[target].ID)
+}
+
+// FormatArticleDate formats an article's published timestamp for display in the middle list row.
+// For recent articles (< 24h), it returns relative time (e.g. "just now", "15m ago", "2h ago").
+// If published in the current year, it formats as "Jan 2" (e.g. "Nov 23").
+// Otherwise, it formats as "Jan 2, 2006".
+func FormatArticleDate(raw string, now time.Time) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		t, err = time.Parse("2006-01-02T15:04:05", raw)
+		if err != nil {
+			t, err = time.Parse("2006-01-02", raw)
+			if err != nil {
+				return raw
+			}
+		}
+	}
+	t = t.Local()
+	nowLocal := now.Local()
+	d := nowLocal.Sub(t)
+	if d > -time.Minute && d < 24*time.Hour {
+		if rel := core.RelativeDate(raw, now); rel != "" {
+			return rel
+		}
+		return "just now"
+	}
+	if t.Year() == nowLocal.Year() {
+		return t.Format("Jan 2")
+	}
+	return t.Format("Jan 2, 2006")
+}
+
+// CleanArticleSnippet cleans and bounds the snippet to maxRunes, collapsing extra whitespace/newlines.
+func CleanArticleSnippet(snippet, content string, maxRunes int) string {
+	if maxRunes <= 0 {
+		maxRunes = 200
+	}
+	raw := snippet
+	if strings.TrimSpace(raw) == "" {
+		raw = content
+	}
+	return core.CleanSnippet(raw, "", maxRunes)
+}
+
 // rssEmptyState renders the empty article timeline.
 func (w *Window) rssEmptyState(c *ui.Context, t mui.Tokens) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
@@ -555,6 +948,15 @@ func (w *Window) rssEmptyState(c *ui.Context, t mui.Tokens) {
 	if zh {
 		title = "暂无文章"
 		sentence = "订阅源的文章将显示在此处。"
+	}
+
+	if w.app != nil && (w.app.Search != "" || w.app.UnreadOnly) {
+		title = "No Matching Articles"
+		sentence = "Try clearing search terms or the unread filter."
+		if zh {
+			title = "无匹配文章"
+			sentence = "尝试清除搜索词或未读过滤。"
+		}
 	}
 
 	mui.EmptyPane(c, t, mui.EmptySpec{

@@ -179,6 +179,7 @@ type Window struct {
 	// starts. The app leaves it nil and fetches in the background; a test
 	// records the request instead of starting a lookup that outlives it.
 	onAddedChannel func(channel core.Channel)
+	onRSSArticleSelected func(article core.RSSArticle)
 
 	// RSS inline renaming state:
 	renamingRSSGroupID   string
