@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"image/png"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo"
@@ -539,3 +543,153 @@ func TestChannelUnsubscribeAndResubscribeSymmetry(t *testing.T) {
 		t.Fatalf("v-sym-fav not found after re-subscribe: %v, ok=%v", video, ok)
 	}
 }
+
+func TestChannelUnsubscribeEvidenceScreenshots(t *testing.T) {
+	dir := os.Getenv("YTREADER_EVIDENCE_DIR")
+	if dir == "" {
+		t.Skip("YTREADER_EVIDENCE_DIR is unset")
+	}
+
+	origDialog := dialogMessage
+	defer func() { dialogMessage = origDialog }()
+
+	tempDir := t.TempDir()
+	syncPath := filepath.Join(tempDir, "youtube-reader-sync.json")
+	a := newTestApp(t, tempDir)
+	defer a.Close()
+	a.Settings.SyncPath = syncPath
+
+	chGrouped := core.Channel{ID: "ch-grouped", Title: "Veritasium", AvatarURL: "https://example.com/v.jpg"}
+	chUngrouped := core.Channel{ID: "ch-ungrouped", Title: "3Blue1Brown", AvatarURL: "https://example.com/3b.jpg"}
+	g := core.ChannelGroup{ID: "group-tech", Name: "Tech", ChannelIDs: []string{chGrouped.ID}, UpdatedAt: 100}
+
+	vNormal := core.Video{ID: "v-normal", ChannelID: chGrouped.ID, Title: "The Simplest Math Problem", PublishedAt: "2026-01-01T00:00:00Z"}
+	vFav := core.Video{ID: "v-fav", ChannelID: chGrouped.ID, Title: "Why The Speed of Light Cannot Be Measured", PublishedAt: "2026-01-02T00:00:00Z"}
+	vOther := core.Video{ID: "v-other", ChannelID: chUngrouped.ID, Title: "Essence of Linear Algebra", PublishedAt: "2026-01-03T00:00:00Z"}
+
+	a.Sync.Groups = map[string]core.ChannelGroup{"group-tech": g}
+	a.Groups = []core.ChannelGroup{g}
+	a.Sync.Channels = map[string]core.Channel{
+		chGrouped.ID:   chGrouped,
+		chUngrouped.ID: chUngrouped,
+	}
+	a.Channels = []core.Channel{chGrouped, chUngrouped}
+	a.Settings.NotificationIDs = []string{chGrouped.ID, chUngrouped.ID}
+
+	// Favorite v-fav
+	a.Sync.SetFavorite(vFav, true, 1000)
+	if err := a.SaveSync(); err != nil {
+		t.Fatalf("save sync: %v", err)
+	}
+	if err := a.SaveSettings(); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := a.Store.CommitRefresh(ctx, core.RefreshCommit{
+		Channels: []core.Channel{chGrouped, chUngrouped},
+		Videos:   []core.Video{vNormal, vFav, vOther},
+		Revision: 1,
+	}); err != nil {
+		t.Fatalf("store commit: %v", err)
+	}
+	_ = a.reload()
+	_ = a.SetGroupCollapsed("group-tech", false)
+
+	// Set selection to the channel that will be unsubscribed
+	a.Selected = "channel:" + chGrouped.ID
+	a.ChannelFilter = chGrouped.ID
+	a.SelectedVideoID = vNormal.ID
+
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 840)
+
+	// 1. Screenshot of right-click menu in English
+	tt.SetLocale("en")
+	tt.Frame()
+	if err := tt.RightClick("Veritasium"); err != nil {
+		t.Fatalf("right click Veritasium: %v", err)
+	}
+	menu := tt.Menu()
+	if len(menu) != 1 || menu[0] != "Unsubscribe" {
+		t.Fatalf("English menu = %v, want [Unsubscribe]", menu)
+	}
+	saveScreenshot(t, tt, filepath.Join(dir, "sidebar-channel-context-menu-en.png"))
+
+	// 2. Screenshot of right-click menu in Chinese
+	tt.SetLocale("zh-Hans")
+	tt.Frame()
+	if err := tt.RightClick("Veritasium"); err != nil {
+		t.Fatalf("right click Veritasium in Chinese: %v", err)
+	}
+	menuZh := tt.Menu()
+	if len(menuZh) != 1 || menuZh[0] != "取消订阅" {
+		t.Fatalf("Chinese menu = %v, want [取消订阅]", menuZh)
+	}
+	saveScreenshot(t, tt, filepath.Join(dir, "sidebar-channel-context-menu-zh.png"))
+
+	// 3. User chooses Unsubscribe -> dialog appears -> user confirms
+	dialogMessage = func(opts mygo.MessageOptions) (mygo.MessageResult, error) {
+		return mygo.MessageResult{Button: 1}, nil // confirm Unsubscribe
+	}
+	if err := tt.ChooseMenuItem("取消订阅"); err != nil {
+		t.Fatalf("choose 取消订阅: %v", err)
+	}
+
+	// Channel is now unsubscribed!
+	// 4. Capture screenshot of the window after unsubscribe (All videos view)
+	tt.Frame()
+	saveScreenshot(t, tt, filepath.Join(dir, "sidebar-after-unsubscribe-all-preserved.png"))
+
+	// 5. Switch to Favorites view and capture screenshot
+	a.Selected = "favorites"
+	tt.Frame()
+	saveScreenshot(t, tt, filepath.Join(dir, "sidebar-after-unsubscribe-favorites-preserved.png"))
+
+	// 6. Export persisted sync.json to evidence
+	syncData, err := os.ReadFile(syncPath)
+	if err != nil {
+		t.Fatalf("read sync file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sync-state-after-unsubscribe.json"), syncData, 0o644); err != nil {
+		t.Fatalf("write evidence sync: %v", err)
+	}
+
+	// 7. Export SQLite state to evidence
+	storeChans, _ := a.Store.Channels(ctx)
+	storeVids, _ := a.Store.Videos(ctx)
+	var dbReport strings.Builder
+	dbReport.WriteString(fmt.Sprintf("=== SQLite Channels (%d rows) ===\n", len(storeChans)))
+	for _, c := range storeChans {
+		dbReport.WriteString(fmt.Sprintf("- ID: %s | Title: %s\n", c.ID, c.Title))
+	}
+	dbReport.WriteString(fmt.Sprintf("\n=== SQLite Videos (%d rows) ===\n", len(storeVids)))
+	for _, v := range storeVids {
+		dbReport.WriteString(fmt.Sprintf("- ID: %s | Channel: %s | Title: %s | FavoritedAt: %d\n", v.ID, v.ChannelID, v.Title, v.FavoritedAt))
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sqlite-videos-after-unsubscribe.txt"), []byte(dbReport.String()), 0o644); err != nil {
+		t.Fatalf("write evidence db: %v", err)
+	}
+
+	// 8. Re-subscribe and capture screenshot
+	if err := a.AddSubscription(chGrouped, "group-tech"); err != nil {
+		t.Fatalf("re-subscribe: %v", err)
+	}
+	a.Selected = "channel:" + chGrouped.ID
+	tt.Frame()
+	saveScreenshot(t, tt, filepath.Join(dir, "sidebar-after-resubscribe.png"))
+}
+
+func saveScreenshot(t *testing.T, tt *ui.Tester, path string) {
+	t.Helper()
+	tt.Frame()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, tt.Image()); err != nil {
+		t.Fatalf("png encode %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatalf("write screenshot %s: %v", path, err)
+	}
+	t.Logf("saved screenshot %s (%d bytes)", path, buf.Len())
+}
+

@@ -344,6 +344,8 @@ var dialogMessage = func(opts mygo.MessageOptions) (mygo.MessageResult, error) {
 	return mygo.Dialog.Message(opts)
 }
 
+// confirmUnsubscribeChannel displays a confirmation dialog and unsubscribes the
+// channel if confirmed, preserving favorited videos.
 func (w *Window) confirmUnsubscribeChannel(c *ui.Context, ch core.Channel) {
 	words := unsubscribeCopy(c.Locale(), ch.Title)
 	result, err := dialogMessage(mygo.MessageOptions{
