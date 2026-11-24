@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -278,7 +280,7 @@ func (w *Window) rssSidebar(c *ui.Context, t mui.Tokens, sidebar ui.Element) {
 			},
 		})
 
-		if w.app == nil || len(w.app.RSSFeeds) == 0 {
+		if w.app == nil || (len(w.app.RSSFeeds) == 0 && len(w.app.RSSGroups) == 0) {
 			ui.Column(c.Key("rss-sidebar-empty")).FillWidth().Padding(mui.Space(4), mui.Space(2)).AlignItems(ui.Center).Gap(mui.Space(2)).Children(func() {
 				ui.Text(c, noFeedsTitle).FontSize(13).TextColor(t.Muted).SingleLine()
 				ui.Text(c, noFeedsDesc).FontSize(11).TextColor(t.Faint).SingleLine()
@@ -291,6 +293,18 @@ func (w *Window) rssSidebar(c *ui.Context, t mui.Tokens, sidebar ui.Element) {
 				})
 				btn.OnClick(func() {
 					w.openAddRSSDialog()
+				})
+
+				importBtnText := rssSidebarMenuCopy(c.Locale()).importOPML
+				importBtn := ui.ButtonBase(c).Key("rss-empty-import-btn").Height(26).PaddingX(mui.Space(3)).
+					Radius(mui.RadiusControl).Background(t.SurfaceAlt).Border(mui.Hairline, t.BorderSoft).
+					Cursor(ui.CursorPointer).Label(importBtnText)
+				mui.Control.Apply(importBtn)
+				importBtn.Children(func() {
+					mui.Control.Apply(ui.Text(c, importBtnText)).FontSize(12).TextColor(t.Text).SingleLine()
+				})
+				importBtn.OnClick(func() {
+					w.importRSSOPML(c)
 				})
 			})
 		} else {
@@ -767,13 +781,20 @@ func (w *Window) rssSidebarAddButton(c *ui.Context, t mui.Tokens) {
 		}
 	})
 
-	words := sidebarMenuCopy(c.Locale())
+	words := rssSidebarMenuCopy(c.Locale())
 	button.PopoverMenuButton(func(m *ui.Menu) {
 		if m.Item(words.newGroup).Icon(sidebarMenuNewGroupIcon).Chosen() {
 			w.newRSSGroupFromMenu(c)
 		}
 		if m.Item(words.addSubscription).Icon(sidebarMenuAddSubIcon).Chosen() {
 			w.openAddRSSDialog()
+		}
+		m.Separator()
+		if m.Item(words.importOPML).Icon(sidebarMenuImportOPMLIcon).Chosen() {
+			w.importRSSOPML(c)
+		}
+		if m.Item(words.exportOPML).Icon(sidebarMenuExportOPMLIcon).Chosen() {
+			w.exportRSSOPML(c)
 		}
 	}, ui.PopoverMenuButtonOptions{
 		At: ui.AnchorTopStart, Self: ui.AnchorBottomStart, Open: &w.rssSidebarMenuOpen,
@@ -783,6 +804,167 @@ func (w *Window) rssSidebarAddButton(c *ui.Context, t mui.Tokens) {
 				Shadow(0, mui.ElevationOffsetY, mui.ElevationBlur, mui.ElevationSpread, t.Shadow)
 		},
 	})
+}
+
+// rssSidebarMenuWords are the RSS plus menu's commands: the sidebar plus menu's
+// own words, which stay owned there, and the two OPML commands this menu adds.
+type rssSidebarMenuWords struct {
+	sidebarMenuWords
+	importOPML string
+	exportOPML string
+}
+
+func rssSidebarMenuCopy(locale string) rssSidebarMenuWords {
+	words := rssSidebarMenuWords{sidebarMenuWords: sidebarMenuCopy(locale)}
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		words.importOPML = "导入 OPML…"
+		words.exportOPML = "导出 OPML…"
+		return words
+	}
+	words.importOPML = "Import OPML…"
+	words.exportOPML = "Export OPML…"
+	return words
+}
+
+func (w *Window) importRSSOPML(c *ui.Context) {
+	locale := ""
+	if c != nil {
+		locale = c.Locale()
+	}
+	zh := strings.HasPrefix(strings.ToLower(locale), "zh")
+
+	title := "Import OPML"
+	if zh {
+		title = "导入 OPML"
+	}
+
+	paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{
+		Parent:      w.dialogParent(),
+		Title:       title,
+		DefaultPath: filepath.Join(os.Getenv("HOME"), "Downloads"),
+		Filters:     []mygo.FileFilter{{Name: "OPML", Extensions: []string{"opml", "xml"}}},
+		Multiple:    true,
+	})
+	if err != nil {
+		errMsg := "Import failed: " + err.Error()
+		if zh {
+			errMsg = "导入失败：" + err.Error()
+		}
+		w.toast(c, errMsg, true)
+		return
+	}
+	if len(paths) == 0 {
+		return
+	}
+
+	go func() {
+		res, importErr := w.app.ImportRSSOPMLPaths(context.Background(), paths)
+		mygo.RunOnMain(func() {
+			_ = w.app.ReloadRSS()
+			if importErr != nil {
+				errMsg := "Import failed: " + importErr.Error()
+				if zh {
+					errMsg = "导入失败：" + importErr.Error()
+				}
+				w.toast(nil, errMsg, true)
+				w.invalidateMainWindow()
+				return
+			}
+
+			w.toast(nil, rssOPMLImportToast(res, zh), false)
+			w.invalidateMainWindow()
+		})
+
+		// Background fetch newly imported feeds without blocking the UI. Each feed
+		// gets its own budget, only a bounded number fetch at once, and the window
+		// reloads as each one returns instead of waiting for the whole batch.
+		if len(res.NewFeedIDs) > 0 && w.app.Store != nil {
+			fetcher := core.NewRSSFetcher(w.app.Store)
+			slots := make(chan struct{}, core.DefaultRSSConcurrency)
+			for _, fid := range res.NewFeedIDs {
+				go func(fid string) {
+					slots <- struct{}{}
+					defer func() { <-slots }()
+					ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+					defer cancel()
+					if f, err := w.app.Store.GetRSSFeed(ctx, fid); err == nil && f != nil {
+						_, _ = fetcher.FetchFeed(ctx, *f)
+					}
+					mygo.RunOnMain(func() {
+						_ = w.app.ReloadRSS()
+						w.invalidateMainWindow()
+					})
+				}(fid)
+			}
+		}
+	}()
+}
+
+// rssOPMLImportToast words the outcome of an OPML import: what came in, and
+// when nothing arrived, how much of the file the library already held.
+func rssOPMLImportToast(res RSSOPMLImportResult, zh bool) string {
+	if zh {
+		switch {
+		case res.FeedsImported > 0 && res.GroupsImported > 0:
+			return fmt.Sprintf("已导入 %d 个订阅源，%d 个分组", res.FeedsImported, res.GroupsImported)
+		case res.FeedsImported > 0:
+			return fmt.Sprintf("已导入 %d 个订阅源", res.FeedsImported)
+		case res.GroupsImported > 0:
+			return fmt.Sprintf("已导入 %d 个分组", res.GroupsImported)
+		case res.FeedsSkipped > 0:
+			return fmt.Sprintf("未发现新订阅源（%d 个已订阅）", res.FeedsSkipped)
+		default:
+			return "未发现新订阅源"
+		}
+	}
+	switch {
+	case res.FeedsImported > 0 && res.GroupsImported > 0:
+		return fmt.Sprintf("Imported %d feed%s and %d group%s",
+			res.FeedsImported, plural(res.FeedsImported),
+			res.GroupsImported, plural(res.GroupsImported))
+	case res.FeedsImported > 0:
+		return fmt.Sprintf("Imported %d feed%s", res.FeedsImported, plural(res.FeedsImported))
+	case res.GroupsImported > 0:
+		return fmt.Sprintf("Imported %d group%s", res.GroupsImported, plural(res.GroupsImported))
+	case res.FeedsSkipped > 0:
+		return fmt.Sprintf("No new feeds to import (%d already subscribed)", res.FeedsSkipped)
+	default:
+		return "No new feeds to import"
+	}
+}
+
+func (w *Window) exportRSSOPML(c *ui.Context) {
+	locale := ""
+	if c != nil {
+		locale = c.Locale()
+	}
+	zh := strings.HasPrefix(strings.ToLower(locale), "zh")
+
+	title := "Export OPML"
+	if zh {
+		title = "导出 OPML"
+	}
+
+	defaultPath := filepath.Join(os.Getenv("HOME"), "Downloads", "subscriptions.opml")
+	path, ok := w.chooseSavePath(title, defaultPath, "OPML", "opml")
+	if !ok || path == "" {
+		return
+	}
+
+	if err := w.app.ExportRSSOPMLToFile(path); err != nil {
+		errMsg := "Export failed: " + err.Error()
+		if zh {
+			errMsg = "导出失败：" + err.Error()
+		}
+		w.toast(c, errMsg, true)
+		return
+	}
+
+	msg := "OPML exported successfully"
+	if zh {
+		msg = "OPML 导出成功"
+	}
+	w.toast(c, msg, false)
 }
 
 func (w *Window) newRSSGroupFromMenu(c *ui.Context) {

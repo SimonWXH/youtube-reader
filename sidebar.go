@@ -25,8 +25,10 @@ const (
 
 // The plus menu's icons, made once from the app's own SVG line set.
 var (
-	sidebarMenuNewGroupIcon = mustMenuIcon(mui.IconFolderPlus)
-	sidebarMenuAddSubIcon   = mustMenuIcon(mui.IconPlayRectangle)
+	sidebarMenuNewGroupIcon   = mustMenuIcon(mui.IconFolderPlus)
+	sidebarMenuAddSubIcon     = mustMenuIcon(mui.IconPlayRectangle)
+	sidebarMenuImportOPMLIcon = mustMenuIcon(mui.IconImport)
+	sidebarMenuExportOPMLIcon = mustMenuIcon(mui.IconExport)
 )
 
 // sidebarMenuWords are the plus menu's two commands, and the sentence a group

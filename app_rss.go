@@ -170,6 +170,49 @@ func (a *App) RSSGroupByID(groupID string) core.RSSGroup {
 	return core.RSSGroup{}
 }
 
+// uniqueRSSGroupName returns name, or name with the first free numeric suffix,
+// so no two active groups share a name case-insensitively. The names come from
+// the store, so a stale in-memory snapshot cannot let a duplicate through.
+func (a *App) uniqueRSSGroupName(ctx context.Context, name, exceptID string) (string, error) {
+	name = strings.TrimSpace(name)
+	var groups []core.RSSGroup
+	if a.Store != nil {
+		stored, err := a.Store.ListRSSGroups(ctx, false)
+		if err != nil {
+			return "", err
+		}
+		groups = stored
+	} else {
+		groups = a.RSSGroups
+	}
+	taken := make(map[string]bool, len(groups))
+	for _, g := range groups {
+		if g.ID != exceptID {
+			taken[strings.ToLower(strings.TrimSpace(g.Name))] = true
+		}
+	}
+	candidate := name
+	for n := 2; taken[strings.ToLower(candidate)]; n++ {
+		candidate = fmt.Sprintf("%s %d", name, n)
+	}
+	return candidate, nil
+}
+
+// activeRSSGroupByName returns the active group whose name matches name
+// case-insensitively, read from the store.
+func (a *App) activeRSSGroupByName(ctx context.Context, name string) (*core.RSSGroup, error) {
+	groups, err := a.Store.ListRSSGroups(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	for i := range groups {
+		if strings.EqualFold(strings.TrimSpace(groups[i].Name), strings.TrimSpace(name)) {
+			return &groups[i], nil
+		}
+	}
+	return nil, nil
+}
+
 // CreateRSSGroup creates a new RSS group with the given name, appends it to the group order,
 // and persists it to the local store.
 func (a *App) CreateRSSGroup(name string) (core.RSSGroup, error) {
@@ -177,6 +220,12 @@ func (a *App) CreateRSSGroup(name string) (core.RSSGroup, error) {
 	if name == "" {
 		return core.RSSGroup{}, errors.New("group name cannot be empty")
 	}
+	ctx := context.Background()
+	unique, err := a.uniqueRSSGroupName(ctx, name, "")
+	if err != nil {
+		return core.RSSGroup{}, err
+	}
+	name = unique
 
 	groupID := "rss-group-" + core.NewGroupID()
 	now := time.Now().UnixMilli()
@@ -188,7 +237,6 @@ func (a *App) CreateRSSGroup(name string) (core.RSSGroup, error) {
 	}
 
 	if a.Store != nil {
-		ctx := context.Background()
 		if err := a.Store.SaveRSSGroup(ctx, group); err != nil {
 			return core.RSSGroup{}, err
 		}
@@ -222,7 +270,11 @@ func (a *App) RenameRSSGroup(id, newName string) error {
 		if g == nil {
 			return fmt.Errorf("group %q not found", id)
 		}
-		g.Name = newName
+		unique, err := a.uniqueRSSGroupName(ctx, newName, id)
+		if err != nil {
+			return err
+		}
+		g.Name = unique
 		g.UpdatedAt = time.Now().UnixMilli()
 		if err := a.Store.SaveRSSGroup(ctx, *g); err != nil {
 			return err
@@ -575,4 +627,280 @@ func (a *App) RefetchRSSArticleContent(ctx context.Context, articleID string) (c
 		return *stored, nil
 	}
 	return *art, nil
+}
+
+// RSSOPMLImportResult summarizes the outcome of importing one or more OPML files.
+// GroupsImported counts the groups the import created or brought back from a
+// tombstone, so a restore is reported rather than silently passing as no change.
+type RSSOPMLImportResult struct {
+	FeedsImported  int
+	FeedsSkipped   int
+	GroupsImported int
+	NewFeedIDs     []string
+}
+
+// ImportRSSOPMLPaths batch imports RSS subscriptions and folders from one or more OPML files.
+// Existing feeds with identical canonical URLs are automatically deduplicated.
+// It is safe to run off the main thread: it writes only the SQLite store and
+// settings, and the caller reloads on the main thread so the frames that read
+// the app never see a half-applied library.
+func (a *App) ImportRSSOPMLPaths(ctx context.Context, paths []string) (RSSOPMLImportResult, error) {
+	if a.Store == nil {
+		return RSSOPMLImportResult{}, errors.New("store not initialized")
+	}
+
+	var allGroups []core.RSSGroup
+	var allFeeds []core.RSSFeed
+
+	for _, p := range paths {
+		parsed, err := core.ParseRSSOPMLFile(p)
+		if err != nil {
+			return RSSOPMLImportResult{}, fmt.Errorf("failed to parse OPML %s: %w", p, err)
+		}
+		allGroups = append(allGroups, parsed.Groups...)
+		allFeeds = append(allFeeds, parsed.Feeds...)
+	}
+
+	if len(allFeeds) == 0 && len(allGroups) == 0 {
+		return RSSOPMLImportResult{}, nil
+	}
+
+	now := time.Now().UnixMilli()
+	var result RSSOPMLImportResult
+
+	// 1. Fetch current groups and map them by normalized name
+	existingGroups, err := a.Store.ListRSSGroups(ctx, true)
+	if err != nil {
+		return result, err
+	}
+	groupByName := make(map[string]*core.RSSGroup)
+	activeGroupCount := 0
+	for i := range existingGroups {
+		if existingGroups[i].Deleted {
+			continue
+		}
+		groupByName[strings.ToLower(strings.TrimSpace(existingGroups[i].Name))] = &existingGroups[i]
+		activeGroupCount++
+	}
+	for i := range existingGroups {
+		if !existingGroups[i].Deleted {
+			continue
+		}
+		normName := strings.ToLower(strings.TrimSpace(existingGroups[i].Name))
+		if _, exists := groupByName[normName]; !exists {
+			groupByName[normName] = &existingGroups[i]
+		}
+	}
+
+	// Map parsed group IDs to existing or newly created group IDs
+	groupIDMap := make(map[string]string)
+	var newGroupIDs []string
+
+	for _, g := range allGroups {
+		normName := strings.ToLower(strings.TrimSpace(g.Name))
+		if normName == "" {
+			continue
+		}
+		existing, exists := groupByName[normName]
+		if !exists || existing.Deleted {
+			raced, err := a.activeRSSGroupByName(ctx, g.Name)
+			if err != nil {
+				return result, err
+			}
+			if raced != nil {
+				groupByName[normName] = raced
+				groupIDMap[g.ID] = raced.ID
+				continue
+			}
+		}
+		if exists {
+			// Reuse existing group and revive if soft-deleted. Deleting a group
+			// removes it from every feed but leaves its own FeedIDs behind, so a
+			// revived group starts from the memberships this import carries.
+			if existing.Deleted {
+				existing.Deleted = false
+				existing.DeletedAt = 0
+				existing.FeedIDs = nil
+				existing.UpdatedAt = now
+				if err := a.Store.SaveRSSGroup(ctx, *existing); err != nil {
+					return result, err
+				}
+				result.GroupsImported++
+			}
+			groupIDMap[g.ID] = existing.ID
+		} else {
+			// Create new group
+			newID := g.ID
+			if newID == "" {
+				newID = "rss-group-" + core.NewGroupID()
+			}
+			if oldG, _ := a.Store.GetRSSGroup(ctx, newID); oldG != nil {
+				newID = "rss-group-" + core.NewGroupID()
+			}
+			newGroup := core.RSSGroup{
+				ID:        newID,
+				Name:      g.Name,
+				SortOrder: activeGroupCount,
+				UpdatedAt: now,
+			}
+			if err := a.Store.SaveRSSGroup(ctx, newGroup); err != nil {
+				return result, err
+			}
+			activeGroupCount++
+			groupByName[normName] = &newGroup
+			groupIDMap[g.ID] = newID
+			newGroupIDs = append(newGroupIDs, newID)
+			result.GroupsImported++
+		}
+	}
+
+	if len(newGroupIDs) > 0 {
+		_, _ = a.updateSettings(func(s *core.Settings) bool {
+			s.RSSGroupOrder = append(s.RSSGroupOrder, newGroupIDs...)
+			return true
+		})
+	}
+
+	// 2. Fetch existing feeds to check for duplicates
+	existingFeeds, err := a.Store.ListRSSFeeds(ctx, true)
+	if err != nil {
+		return result, err
+	}
+	existingFeedMap := make(map[string]core.RSSFeed)
+	for _, f := range existingFeeds {
+		existingFeedMap[f.ID] = f
+		existingFeedMap[core.CanonicalURL(f.FeedURL)] = f
+	}
+
+	importOrder := make([]string, 0, len(allFeeds))
+	importFeeds := make(map[string]*core.RSSFeed)
+	for _, f := range allFeeds {
+		canonicalURL := core.CanonicalURL(f.FeedURL)
+		if canonicalURL == "" {
+			continue
+		}
+		entry, ok := importFeeds[canonicalURL]
+		if !ok {
+			merged := f
+			merged.FeedURL = canonicalURL
+			entry = &merged
+			importFeeds[canonicalURL] = entry
+			importOrder = append(importOrder, canonicalURL)
+		}
+		for _, gid := range f.GroupIDs {
+			if gid != "" && !slices.Contains(entry.GroupIDs, gid) {
+				entry.GroupIDs = append(entry.GroupIDs, gid)
+			}
+		}
+	}
+
+	for _, canonicalURL := range importOrder {
+		f := *importFeeds[canonicalURL]
+		fid := f.ID
+		if fid == "" {
+			fid = core.FeedID(canonicalURL)
+		}
+
+		var mappedGroupIDs []string
+		for _, gid := range f.GroupIDs {
+			targetGID := gid
+			if mapped, ok := groupIDMap[gid]; ok {
+				targetGID = mapped
+			}
+			if targetGID != "" && !slices.Contains(mappedGroupIDs, targetGID) {
+				mappedGroupIDs = append(mappedGroupIDs, targetGID)
+			}
+		}
+
+		existing, subscribed := existingFeedMap[fid]
+		if !subscribed {
+			existing, subscribed = existingFeedMap[canonicalURL]
+		}
+		if subscribed && !existing.Deleted {
+			result.FeedsSkipped++
+			if err := a.addRSSFeedToGroups(ctx, existing, mappedGroupIDs, now); err != nil {
+				return result, err
+			}
+			continue
+		}
+
+		feedToSave := core.RSSFeed{
+			ID:                  fid,
+			FeedURL:             canonicalURL,
+			SiteURL:             f.SiteURL,
+			Title:               f.Title,
+			GroupIDs:            mappedGroupIDs,
+			RefreshIntervalMins: core.DefaultRSSRefreshIntervalMins,
+			UpdatedAt:           now,
+		}
+
+		if err := a.Store.SubscribeRSSFeed(ctx, feedToSave); err != nil {
+			return result, err
+		}
+		if err := a.addRSSFeedToGroups(ctx, feedToSave, mappedGroupIDs, now); err != nil {
+			return result, err
+		}
+
+		result.NewFeedIDs = append(result.NewFeedIDs, fid)
+		result.FeedsImported++
+	}
+
+	return result, nil
+}
+
+// addRSSFeedToGroups makes feed a member of every group in groupIDs on both
+// membership records, the feed's GroupIDs and each group's FeedIDs, so no
+// active group lists a feed whose own GroupIDs omit it.
+func (a *App) addRSSFeedToGroups(ctx context.Context, feed core.RSSFeed, groupIDs []string, now int64) error {
+	if len(groupIDs) == 0 {
+		return nil
+	}
+
+	feedChanged := false
+	for _, gid := range groupIDs {
+		if !slices.Contains(feed.GroupIDs, gid) {
+			feed.GroupIDs = append(feed.GroupIDs, gid)
+			feedChanged = true
+		}
+	}
+	if feedChanged {
+		feed.UpdatedAt = now
+		if err := a.Store.SaveRSSFeed(ctx, feed); err != nil {
+			return err
+		}
+	}
+
+	for _, gid := range groupIDs {
+		grp, err := a.Store.GetRSSGroup(ctx, gid)
+		if err != nil {
+			return err
+		}
+		if grp == nil || slices.Contains(grp.FeedIDs, feed.ID) {
+			continue
+		}
+		grp.FeedIDs = append(grp.FeedIDs, feed.ID)
+		grp.UpdatedAt = now
+		if err := a.Store.SaveRSSGroup(ctx, *grp); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ExportRSSOPMLToFile exports all active RSS subscriptions and groups to a local OPML file.
+func (a *App) ExportRSSOPMLToFile(path string) error {
+	if a.Store == nil {
+		return errors.New("store not initialized")
+	}
+	ctx := context.Background()
+	groups, err := a.Store.ListRSSGroups(ctx, false)
+	if err != nil {
+		return err
+	}
+	feeds, err := a.Store.ListRSSFeeds(ctx, false)
+	if err != nil {
+		return err
+	}
+	orderedGroups := orderRSSGroups(groups, a.settingsSnapshot().RSSGroupOrder)
+	return core.ExportRSSOPMLFile(path, orderedGroups, feeds, "YouTube Reader RSS Subscriptions")
 }
