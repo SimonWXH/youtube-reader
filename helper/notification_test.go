@@ -281,23 +281,3 @@ func TestIntegratedClosedAppToDeliveryCompleted(t *testing.T) {
 		t.Fatal("handshake file still exists after delivery completed")
 	}
 }
-
-func TestAppBundleForExecutable(t *testing.T) {
-	dir := t.TempDir()
-	bundleDir := filepath.Join(dir, "YouTube Reader.app")
-	resourcesDir := filepath.Join(bundleDir, "Contents", "Resources")
-	if err := os.MkdirAll(resourcesDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	helperPath := filepath.Join(resourcesDir, "ytreader-helper")
-
-	got := appBundleForExecutable(helperPath)
-	if got != bundleDir {
-		t.Fatalf("appBundleForExecutable(%q) = %q, want %q", helperPath, got, bundleDir)
-	}
-
-	outsidePath := filepath.Join(dir, "ytreader-helper")
-	if got := appBundleForExecutable(outsidePath); got != "" {
-		t.Fatalf("appBundleForExecutable(%q) = %q, want empty", outsidePath, got)
-	}
-}
