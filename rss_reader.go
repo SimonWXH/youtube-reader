@@ -1075,10 +1075,7 @@ func (w *Window) rssImageBlock(c *ui.Context, t mui.Tokens, key string, block co
 		width, height := rssImageSize(column, imageW, imageH)
 		// The frame's surface is only the place a picture waits in: once it
 		// shows, the picture stands on the page, centred in the column.
-		frame.Height(height).Background(ui.Color{}).
-			Cursor(ui.CursorPointer).Tooltip(url).OnClick(func() {
-			c.OpenURL(url)
-		})
+		frame.Height(height).Background(ui.Color{})
 		frame.Children(func() {
 			ui.Image(c, src).Fit(ui.Contain).Size(width, height)
 		})
