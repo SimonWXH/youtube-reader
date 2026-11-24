@@ -190,12 +190,6 @@ var (
 		Sentence: "Refresh to check your subscriptions for new videos.",
 		Action:   "Refresh now",
 	}
-	emptyCopyChannel = EmptyStateCopy{
-		Symbol:   "play.rectangle",
-		Title:    "No videos from this channel yet",
-		Sentence: "Refresh to check for new videos, or choose another channel.",
-		Action:   "Refresh now",
-	}
 	emptyCopyFavorites = EmptyStateCopy{
 		Symbol:   "star",
 		Title:    "No favorites yet",
@@ -210,7 +204,10 @@ var (
 	}
 )
 
-// CopyForEmpty returns one empty state's words.
+// CopyForEmpty returns one empty state's words. The empty channel pane is the one
+// state whose words depend on the reader's language and on how far the channel's
+// history was read, so it reads ChannelEmptyCopy; the words here are that
+// function's English answer for a channel whose history nobody has loaded yet.
 func CopyForEmpty(v EmptyVariant) EmptyStateCopy {
 	switch v {
 	case EmptySetup:
@@ -218,7 +215,7 @@ func CopyForEmpty(v EmptyVariant) EmptyStateCopy {
 	case EmptyImportChannels:
 		return emptyCopyImportChannels
 	case EmptyChannel:
-		return emptyCopyChannel
+		return ChannelEmptyCopy("en", false)
 	case EmptyFavorites:
 		return emptyCopyFavorites
 	case EmptyFiltered:
@@ -317,7 +314,11 @@ type EmptySpec struct {
 	Copy           EmptyStateCopy
 	ActionDisabled bool
 	ActionTooltip  string
-	OnAction       func()
+	// Reason is the failure the pane's own action reported, redacted and
+	// empty when it adds nothing: the same note box the error state draws, so a
+	// failed action is never silent.
+	Reason   string
+	OnAction func()
 }
 
 // EmptyPane draws an empty state in the pane it belongs to: one symbol, one
@@ -329,6 +330,7 @@ func EmptyPane(c *ui.Context, tokens Tokens, spec EmptySpec) ui.Element {
 		SymbolColor:    tokens.Muted,
 		Title:          spec.Copy.Title,
 		Sentence:       spec.Copy.Sentence,
+		Reason:         spec.Reason,
 		Action:         spec.Copy.Action,
 		ActionDisabled: spec.ActionDisabled,
 		ActionTooltip:  spec.ActionTooltip,

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,13 +37,26 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 		return nil, err
 	}
 	for _, ddl := range []string{
-		`CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY, title TEXT, group_ids TEXT, avatar_url TEXT, uploads TEXT, updated_at INTEGER)`,
-		`CREATE TABLE IF NOT EXISTS videos (id TEXT PRIMARY KEY, channel_id TEXT, channel_title TEXT, title TEXT, description TEXT, thumbnail_url TEXT, avatar_url TEXT, published_at TEXT, duration TEXT, width INTEGER, height INTEGER, is_short INTEGER)`,
+		`CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY, title TEXT, group_ids TEXT, avatar_url TEXT, uploads TEXT, updated_at INTEGER, next_page_token TEXT)`,
+		`CREATE TABLE IF NOT EXISTS videos (id TEXT PRIMARY KEY, channel_id TEXT, channel_title TEXT, title TEXT, description TEXT, thumbnail_url TEXT, avatar_url TEXT, published_at TEXT, duration TEXT, width INTEGER, height INTEGER, is_short INTEGER, is_backfilled INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`,
 		`CREATE TABLE IF NOT EXISTS queue (id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT)`,
 		`CREATE TABLE IF NOT EXISTS notified (video_id TEXT PRIMARY KEY, notified_at INTEGER NOT NULL)`,
 	} {
 		if _, err := db.Execute(ctx, ddl); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
+	// A store an earlier build wrote keeps every row it holds and gains the
+	// fields those builds did not have: the page token that remembers how far a
+	// channel's history paging got, and the mark that keeps a video the reader
+	// loaded that way out of retention's reach.
+	for _, column := range [][3]string{
+		{"channels", "next_page_token", "next_page_token TEXT"},
+		{"videos", "is_backfilled", "is_backfilled INTEGER NOT NULL DEFAULT 0"},
+	} {
+		if err := s.ensureColumn(ctx, column[0], column[1], column[2]); err != nil {
 			db.Close()
 			return nil, err
 		}
@@ -68,6 +82,23 @@ func (s *Store) missingTable(ctx context.Context, name string) (bool, error) {
 		return false, err
 	}
 	return len(rows.Values) == 0, nil
+}
+
+// ensureColumn adds a column an older store does not have, so opening a store a
+// previous build wrote keeps its rows instead of failing on the missing field.
+// The table names are this file's own DDL, never a caller's.
+func (s *Store) ensureColumn(ctx context.Context, table, column, definition string) error {
+	rows, err := s.db.Query(ctx, `SELECT name FROM pragma_table_info('`+table+`')`)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows.Values {
+		if name, _ := row[0].(string); name == column {
+			return nil
+		}
+	}
+	_, err = s.db.Execute(ctx, `ALTER TABLE `+table+` ADD COLUMN `+definition)
+	return err
 }
 
 func (s *Store) Close() error   { return s.db.Close() }
@@ -110,7 +141,7 @@ func (s *Store) Channels(ctx context.Context) ([]Channel, error) {
 }
 
 func (s *Store) Videos(ctx context.Context) ([]Video, error) {
-	rows, err := s.db.Query(ctx, `SELECT id,channel_id,channel_title,title,description,thumbnail_url,avatar_url,published_at,duration,width,height,is_short FROM videos`)
+	rows, err := s.db.Query(ctx, `SELECT id,channel_id,channel_title,title,description,thumbnail_url,avatar_url,published_at,duration,width,height,is_short,is_backfilled FROM videos`)
 	if err != nil {
 		return nil, err
 	}
@@ -121,6 +152,39 @@ func (s *Store) Videos(ctx context.Context) ([]Video, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].PublishedAt > out[j].PublishedAt })
 	return out, nil
+}
+
+// BackfillCursors returns where each channel's history paging stands, by channel
+// ID. A channel the map does not name has never loaded its history; a channel it
+// names with an empty token reached its earliest video.
+func (s *Store) BackfillCursors(ctx context.Context) (map[string]BackfillCursor, error) {
+	rows, err := s.db.Query(ctx, `SELECT id,next_page_token FROM channels WHERE next_page_token IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]BackfillCursor, len(rows.Values))
+	for _, r := range rows.Values {
+		id, _ := r[0].(string)
+		if id == "" {
+			continue
+		}
+		token, _ := r[1].(string)
+		out[id] = BackfillCursor{Started: true, Token: token}
+	}
+	return out, nil
+}
+
+// SetBackfillCursor records the page token a channel's next "load more" click
+// reads, empty once its earliest video is loaded. Recording the token after the
+// page's videos are committed is what makes a failed or interrupted click read
+// the same page again rather than skip it; the videos' primary key makes that
+// repeat harmless.
+func (s *Store) SetBackfillCursor(ctx context.Context, channelID, token string) error {
+	if channelID == "" {
+		return errors.New("a backfill cursor names a channel")
+	}
+	_, err := s.db.Execute(ctx, `INSERT INTO channels(id, next_page_token) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET next_page_token=excluded.next_page_token`, channelID, token)
+	return err
 }
 
 func rowToVideo(r []any) Video {
@@ -137,6 +201,7 @@ func rowToVideo(r []any) Video {
 	v.Width, _ = intFromAny(r[9])
 	v.Height, _ = intFromAny(r[10])
 	v.IsShort = intFromAnyBool(r[11])
+	v.IsBackfilled = intFromAnyBool(r[12])
 	return v
 }
 
@@ -189,7 +254,9 @@ func (s *Store) CommitRefresh(ctx context.Context, c RefreshCommit) error {
 		stmts = append(stmts, sqlite.Statement{SQL: `INSERT INTO channels(id,title,group_ids,avatar_url,uploads,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,group_ids=excluded.group_ids,avatar_url=COALESCE(NULLIF(excluded.avatar_url,''),channels.avatar_url),uploads=COALESCE(NULLIF(excluded.uploads,''),channels.uploads),updated_at=excluded.updated_at`, Args: []any{ch.ID, ch.Title, string(groups), ch.AvatarURL, ch.UploadedAt, ch.UpdatedAt}})
 	}
 	for _, v := range c.Videos {
-		stmts = append(stmts, sqlite.Statement{SQL: `INSERT INTO videos(id,channel_id,channel_title,title,description,thumbnail_url,avatar_url,published_at,duration,width,height,is_short) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET channel_id=excluded.channel_id,channel_title=excluded.channel_title,title=excluded.title,description=excluded.description,thumbnail_url=COALESCE(NULLIF(excluded.thumbnail_url,''),videos.thumbnail_url),avatar_url=COALESCE(NULLIF(excluded.avatar_url,''),videos.avatar_url),published_at=excluded.published_at,duration=COALESCE(NULLIF(excluded.duration,''),videos.duration),width=excluded.width,height=excluded.height,is_short=excluded.is_short`, Args: []any{v.ID, v.ChannelID, v.ChannelTitle, v.Title, v.Description, v.ThumbnailURL, v.AvatarURL, v.PublishedAt, v.Duration, v.Width, v.Height, boolInt(v.IsShort)}})
+		// is_backfilled only ever rises: a refresh re-storing a video the reader
+		// loaded earlier must not put that video back inside retention's reach.
+		stmts = append(stmts, sqlite.Statement{SQL: `INSERT INTO videos(id,channel_id,channel_title,title,description,thumbnail_url,avatar_url,published_at,duration,width,height,is_short,is_backfilled) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET channel_id=excluded.channel_id,channel_title=excluded.channel_title,title=excluded.title,description=excluded.description,thumbnail_url=COALESCE(NULLIF(excluded.thumbnail_url,''),videos.thumbnail_url),avatar_url=COALESCE(NULLIF(excluded.avatar_url,''),videos.avatar_url),published_at=excluded.published_at,duration=COALESCE(NULLIF(excluded.duration,''),videos.duration),width=excluded.width,height=excluded.height,is_short=excluded.is_short,is_backfilled=MAX(COALESCE(videos.is_backfilled,0),excluded.is_backfilled)`, Args: []any{v.ID, v.ChannelID, v.ChannelTitle, v.Title, v.Description, v.ThumbnailURL, v.AvatarURL, v.PublishedAt, v.Duration, v.Width, v.Height, boolInt(v.IsShort), boolInt(v.IsBackfilled)}})
 	}
 	for _, id := range c.DeleteIDs {
 		stmts = append(stmts, sqlite.Statement{SQL: `DELETE FROM videos WHERE id = ?`, Args: []any{id}})

@@ -49,6 +49,11 @@ type Video struct {
 	IsShort         bool   `json:"isShort"`
 	FavoritedAt     int64  `json:"favoritedAt,omitempty"`
 	FavoriteChannel string `json:"favoriteChannel,omitempty"`
+	// IsBackfilled marks a video the reader loaded with the channel page's
+	// "load more" control, beyond the uploads window a refresh reads. It is
+	// kept whatever its upload date and whatever the video cap is: the reader
+	// spent a quota unit on it, and no later refresh can bring it back.
+	IsBackfilled bool `json:"isBackfilled,omitempty"`
 }
 
 type RefreshFailure struct {
@@ -504,18 +509,35 @@ type RetentionPolicy struct {
 
 func DefaultRetention() RetentionPolicy { return RetentionPolicy{Hours: 30, MaxVideos: 400} }
 
+// ApplyRetention keeps the videos a refresh should keep: those the protected
+// callback names, those inside the policy's upload window, and every backfilled
+// one. A backfilled video is older than the window by definition, so it is
+// exempt from the window and from the video cap: the cap counts only the videos
+// a refresh brought, and a reader's loaded history is never what it evicts.
 func ApplyRetention(videos []Video, protected func(Video) bool, now time.Time, p RetentionPolicy) []Video {
 	cutoff := now.Add(-time.Duration(p.Hours) * time.Hour)
 	out := make([]Video, 0, len(videos))
 	for _, v := range videos {
 		t, err := time.Parse(time.RFC3339, v.PublishedAt)
-		if protected(v) || err == nil && !t.Before(cutoff) {
+		if v.IsBackfilled || protected(v) || err == nil && !t.Before(cutoff) {
 			out = append(out, v)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].PublishedAt > out[j].PublishedAt })
 	if len(out) > p.MaxVideos {
-		out = out[:p.MaxVideos]
+		kept := make([]Video, 0, len(out))
+		room := p.MaxVideos
+		for _, v := range out {
+			if v.IsBackfilled {
+				kept = append(kept, v)
+				continue
+			}
+			if room > 0 {
+				room--
+				kept = append(kept, v)
+			}
+		}
+		out = kept
 	}
 	return out
 }

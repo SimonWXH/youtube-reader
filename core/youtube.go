@@ -48,21 +48,23 @@ type ytChannelsResponse struct {
 	} `json:"error"`
 }
 
-type ytPlaylistResponse struct {
-	Items []struct {
-		Snippet struct {
-			Title       string `json:"title"`
-			Description string `json:"description"`
-			PublishedAt string `json:"publishedAt"`
-			ResourceID  struct {
-				VideoID string `json:"videoId"`
-			} `json:"resourceId"`
-		} `json:"snippet"`
-		ContentDetails struct {
+type ytPlaylistItem struct {
+	Snippet struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		PublishedAt string `json:"publishedAt"`
+		ResourceID  struct {
 			VideoID string `json:"videoId"`
-		} `json:"contentDetails"`
-	} `json:"items"`
-	NextPageToken string `json:"nextPageToken"`
+		} `json:"resourceId"`
+	} `json:"snippet"`
+	ContentDetails struct {
+		VideoID string `json:"videoId"`
+	} `json:"contentDetails"`
+}
+
+type ytPlaylistResponse struct {
+	Items         []ytPlaylistItem `json:"items"`
+	NextPageToken string           `json:"nextPageToken"`
 	Error         *struct {
 		Message string `json:"message"`
 	} `json:"error"`
@@ -258,56 +260,87 @@ func minInt(a, b int) int {
 	return b
 }
 
+// PlaylistPageSize is how many uploads one playlistItems.list call reads. The
+// API charges one quota unit for the call whatever maxResults asks for, so the
+// largest page it allows is also the cheapest per video: 50 uploads for one
+// unit, plus the one unit that hydrating their durations costs.
+const PlaylistPageSize = 50
+
+// playlistItems performs one playlistItems.list request and decodes its page.
+func (y YouTube) playlistItems(ctx context.Context, uploads, token string, maxResults int) (ytPlaylistResponse, error) {
+	var resp ytPlaylistResponse
+	q := url.Values{"part": {"snippet,contentDetails"}, "playlistId": {uploads}, "maxResults": {strconv.Itoa(maxResults)}}
+	if token != "" {
+		q.Set("pageToken", token)
+	}
+	q.Set("key", y.Key)
+	client := y.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, y.baseURL()+"/playlistItems?"+q.Encode(), nil)
+	if err != nil {
+		return resp, err
+	}
+	httpResp, err := client.Do(req)
+	if err != nil {
+		return resp, err
+	}
+	err = json.NewDecoder(httpResp.Body).Decode(&resp)
+	httpResp.Body.Close()
+	if err != nil {
+		return resp, err
+	}
+	if httpResp.StatusCode >= 400 {
+		message := ""
+		if resp.Error != nil {
+			message = resp.Error.Message
+		}
+		return resp, apiError(message, httpResp.StatusCode)
+	}
+	return resp, nil
+}
+
+// playlistVideo turns one playlist item into a video, reporting false for an
+// item that names no video and so can be neither stored nor hydrated.
+func playlistVideo(item ytPlaylistItem) (Video, bool) {
+	videoID := item.ContentDetails.VideoID
+	if videoID == "" {
+		videoID = item.Snippet.ResourceID.VideoID
+	}
+	if videoID == "" {
+		return Video{}, false
+	}
+	return Video{
+		ID:           videoID,
+		Title:        item.Snippet.Title,
+		Description:  item.Snippet.Description,
+		PublishedAt:  item.Snippet.PublishedAt,
+		ThumbnailURL: "https://i.ytimg.com/vi/" + videoID + "/hqdefault.jpg",
+	}, true
+}
+
+// PlaylistVideos reads the uploads a refresh keeps: the newest pages, stopping
+// at the first page that reaches an upload older than the refresh window.
 func (y YouTube) PlaylistVideos(ctx context.Context, uploads string, maxPages int) ([]Video, error) {
 	var out []Video
 	token := ""
 	cutoff := time.Now().Add(-30 * 24 * time.Hour)
 	for page := 0; page < maxPages; page++ {
-		var resp ytPlaylistResponse
-		q := url.Values{"part": {"snippet,contentDetails"}, "playlistId": {uploads}, "maxResults": {"50"}}
-		if token != "" {
-			q.Set("pageToken", token)
-		}
-		q.Set("key", y.Key)
-		client := y.Client
-		if client == nil {
-			client = http.DefaultClient
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, y.baseURL()+"/playlistItems?"+q.Encode(), nil)
+		resp, err := y.playlistItems(ctx, uploads, token, PlaylistPageSize)
 		if err != nil {
 			return nil, err
-		}
-		httpResp, err := client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		err = json.NewDecoder(httpResp.Body).Decode(&resp)
-		httpResp.Body.Close()
-		if err != nil {
-			return nil, err
-		}
-		if httpResp.StatusCode >= 400 {
-			message := ""
-			if resp.Error != nil {
-				message = resp.Error.Message
-			}
-			return nil, apiError(message, httpResp.StatusCode)
 		}
 		stop := false
 		for _, item := range resp.Items {
-			videoID := item.ContentDetails.VideoID
-			if videoID == "" {
-				videoID = item.Snippet.ResourceID.VideoID
-			}
-			if videoID == "" {
+			v, ok := playlistVideo(item)
+			if !ok {
 				continue
 			}
-			published := item.Snippet.PublishedAt
-			if t, err := time.Parse(time.RFC3339, published); err == nil && t.Before(cutoff) {
+			if t, err := time.Parse(time.RFC3339, v.PublishedAt); err == nil && t.Before(cutoff) {
 				stop = true
 				continue
 			}
-			v := Video{ID: videoID, Title: item.Snippet.Title, Description: item.Snippet.Description, PublishedAt: published, ThumbnailURL: "https://i.ytimg.com/vi/" + videoID + "/hqdefault.jpg"}
 			out = append(out, v)
 		}
 		if stop || resp.NextPageToken == "" {
@@ -316,6 +349,25 @@ func (y YouTube) PlaylistVideos(ctx context.Context, uploads string, maxPages in
 		token = resp.NextPageToken
 	}
 	return out, nil
+}
+
+// PlaylistPage reads one page of an uploads playlist, newest first and with no
+// upload-date cutoff, which is what reading a channel's history needs: token
+// names the page, empty reads the newest uploads, and the returned token reads
+// the page before them, empty once the playlist ends. One call is one quota
+// unit whatever the page holds.
+func (y YouTube) PlaylistPage(ctx context.Context, uploads, token string) ([]Video, string, error) {
+	resp, err := y.playlistItems(ctx, uploads, token, PlaylistPageSize)
+	if err != nil {
+		return nil, "", err
+	}
+	out := make([]Video, 0, len(resp.Items))
+	for _, item := range resp.Items {
+		if v, ok := playlistVideo(item); ok {
+			out = append(out, v)
+		}
+	}
+	return out, resp.NextPageToken, nil
 }
 
 func (y YouTube) Hydrate(ctx context.Context, videos []Video) ([]Video, error) {
