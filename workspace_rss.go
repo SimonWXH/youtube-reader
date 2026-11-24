@@ -861,14 +861,16 @@ func (w *Window) importRSSOPML(c *ui.Context) {
 	}
 
 	go func() {
-		res, err := w.app.ImportRSSOPMLPaths(context.Background(), paths)
+		res, importErr := w.app.ImportRSSOPMLPaths(context.Background(), paths)
 		mygo.RunOnMain(func() {
-			if err != nil {
-				errMsg := "Import failed: " + err.Error()
+			_ = w.app.ReloadRSS()
+			if importErr != nil {
+				errMsg := "Import failed: " + importErr.Error()
 				if zh {
-					errMsg = "导入失败：" + err.Error()
+					errMsg = "导入失败：" + importErr.Error()
 				}
 				w.toast(nil, errMsg, true)
+				w.invalidateMainWindow()
 				return
 			}
 
@@ -905,15 +907,16 @@ func (w *Window) importRSSOPML(c *ui.Context) {
 			w.invalidateMainWindow()
 		})
 
-		// Background fetch newly imported feeds without blocking the UI
+		// Background fetch newly imported feeds without blocking the UI. Each feed
+		// gets its own budget so a slow or large file never starves the rest.
 		if len(res.NewFeedIDs) > 0 && w.app.Store != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
 			fetcher := core.NewRSSFetcher(w.app.Store)
 			for _, fid := range res.NewFeedIDs {
+				ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 				if f, err := w.app.Store.GetRSSFeed(ctx, fid); err == nil && f != nil {
 					_, _ = fetcher.FetchFeed(ctx, *f)
 				}
+				cancel()
 			}
 			mygo.RunOnMain(func() {
 				_ = w.app.ReloadRSS()

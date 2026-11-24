@@ -587,7 +587,9 @@ type RSSOPMLImportResult struct {
 
 // ImportRSSOPMLPaths batch imports RSS subscriptions and folders from one or more OPML files.
 // Existing feeds with identical canonical URLs are automatically deduplicated.
-// New feeds and folders are saved to the SQLite store and settings, and in-memory state is refreshed.
+// It is safe to run off the main thread: it writes only the SQLite store and
+// settings, and the caller reloads on the main thread so the frames that read
+// the app never see a half-applied library.
 func (a *App) ImportRSSOPMLPaths(ctx context.Context, paths []string) (RSSOPMLImportResult, error) {
 	if a.Store == nil {
 		return RSSOPMLImportResult{}, errors.New("store not initialized")
@@ -610,20 +612,25 @@ func (a *App) ImportRSSOPMLPaths(ctx context.Context, paths []string) (RSSOPMLIm
 	}
 
 	now := time.Now().UnixMilli()
+	var result RSSOPMLImportResult
 
 	// 1. Fetch current groups and map them by normalized name
 	existingGroups, err := a.Store.ListRSSGroups(ctx, true)
 	if err != nil {
-		return RSSOPMLImportResult{}, err
+		return result, err
 	}
 	groupByName := make(map[string]*core.RSSGroup)
+	activeGroupCount := 0
 	for i := range existingGroups {
 		groupByName[strings.ToLower(strings.TrimSpace(existingGroups[i].Name))] = &existingGroups[i]
+		if !existingGroups[i].Deleted {
+			activeGroupCount++
+		}
 	}
 
 	// Map parsed group IDs to existing or newly created group IDs
 	groupIDMap := make(map[string]string)
-	var groupsImported int
+	var newGroupIDs []string
 
 	for _, g := range allGroups {
 		normName := strings.ToLower(strings.TrimSpace(g.Name))
@@ -631,12 +638,17 @@ func (a *App) ImportRSSOPMLPaths(ctx context.Context, paths []string) (RSSOPMLIm
 			continue
 		}
 		if existing, exists := groupByName[normName]; exists {
-			// Reuse existing group and revive if soft-deleted
+			// Reuse existing group and revive if soft-deleted. Deleting a group
+			// removes it from every feed but leaves its own FeedIDs behind, so a
+			// revived group starts from the memberships this import carries.
 			if existing.Deleted {
 				existing.Deleted = false
 				existing.DeletedAt = 0
+				existing.FeedIDs = nil
 				existing.UpdatedAt = now
-				_ = a.Store.SaveRSSGroup(ctx, *existing)
+				if err := a.Store.SaveRSSGroup(ctx, *existing); err != nil {
+					return result, err
+				}
 			}
 			groupIDMap[g.ID] = existing.ID
 		} else {
@@ -651,28 +663,31 @@ func (a *App) ImportRSSOPMLPaths(ctx context.Context, paths []string) (RSSOPMLIm
 			newGroup := core.RSSGroup{
 				ID:        newID,
 				Name:      g.Name,
-				SortOrder: len(a.RSSGroups) + groupsImported,
+				SortOrder: activeGroupCount,
 				UpdatedAt: now,
 			}
 			if err := a.Store.SaveRSSGroup(ctx, newGroup); err != nil {
-				return RSSOPMLImportResult{}, err
+				return result, err
 			}
+			activeGroupCount++
 			groupByName[normName] = &newGroup
 			groupIDMap[g.ID] = newID
-			groupsImported++
-
-			// Add to Settings.RSSGroupOrder
-			_, _ = a.updateSettings(func(s *core.Settings) bool {
-				s.RSSGroupOrder = append(s.RSSGroupOrder, newID)
-				return true
-			})
+			newGroupIDs = append(newGroupIDs, newID)
+			result.GroupsImported++
 		}
+	}
+
+	if len(newGroupIDs) > 0 {
+		_, _ = a.updateSettings(func(s *core.Settings) bool {
+			s.RSSGroupOrder = append(s.RSSGroupOrder, newGroupIDs...)
+			return true
+		})
 	}
 
 	// 2. Fetch existing feeds to check for duplicates
 	existingFeeds, err := a.Store.ListRSSFeeds(ctx, true)
 	if err != nil {
-		return RSSOPMLImportResult{}, err
+		return result, err
 	}
 	existingFeedMap := make(map[string]core.RSSFeed)
 	for _, f := range existingFeeds {
@@ -680,9 +695,6 @@ func (a *App) ImportRSSOPMLPaths(ctx context.Context, paths []string) (RSSOPMLIm
 		existingFeedMap[core.CanonicalURL(f.FeedURL)] = f
 	}
 
-	var feedsImported int
-	var feedsSkipped int
-	var newFeedIDs []string
 	seenImportFeedIDs := make(map[string]bool)
 
 	for _, f := range allFeeds {
@@ -699,16 +711,6 @@ func (a *App) ImportRSSOPMLPaths(ctx context.Context, paths []string) (RSSOPMLIm
 		}
 		seenImportFeedIDs[fid] = true
 
-		// Check if already subscribed (non-deleted)
-		if existing, ok := existingFeedMap[fid]; ok && !existing.Deleted {
-			feedsSkipped++
-			continue
-		}
-		if existing, ok := existingFeedMap[canonicalURL]; ok && !existing.Deleted {
-			feedsSkipped++
-			continue
-		}
-
 		// Map group IDs
 		var mappedGroupIDs []string
 		for _, gid := range f.GroupIDs {
@@ -719,6 +721,19 @@ func (a *App) ImportRSSOPMLPaths(ctx context.Context, paths []string) (RSSOPMLIm
 			if targetGID != "" && !slices.Contains(mappedGroupIDs, targetGID) {
 				mappedGroupIDs = append(mappedGroupIDs, targetGID)
 			}
+		}
+
+		// Check if already subscribed (non-deleted)
+		existing, subscribed := existingFeedMap[fid]
+		if !subscribed {
+			existing, subscribed = existingFeedMap[canonicalURL]
+		}
+		if subscribed && !existing.Deleted {
+			result.FeedsSkipped++
+			if err := a.addRSSFeedToGroups(ctx, existing, mappedGroupIDs, now); err != nil {
+				return result, err
+			}
+			continue
 		}
 
 		feedToSave := core.RSSFeed{
@@ -732,32 +747,56 @@ func (a *App) ImportRSSOPMLPaths(ctx context.Context, paths []string) (RSSOPMLIm
 		}
 
 		if err := a.Store.SubscribeRSSFeed(ctx, feedToSave); err != nil {
-			return RSSOPMLImportResult{}, err
+			return result, err
+		}
+		if err := a.addRSSFeedToGroups(ctx, feedToSave, mappedGroupIDs, now); err != nil {
+			return result, err
 		}
 
-		// Update group FeedIDs
-		for _, gid := range mappedGroupIDs {
-			if grp, err := a.Store.GetRSSGroup(ctx, gid); err == nil && grp != nil {
-				if !slices.Contains(grp.FeedIDs, fid) {
-					grp.FeedIDs = append(grp.FeedIDs, fid)
-					grp.UpdatedAt = now
-					_ = a.Store.SaveRSSGroup(ctx, *grp)
-				}
-			}
-		}
-
-		newFeedIDs = append(newFeedIDs, fid)
-		feedsImported++
+		result.NewFeedIDs = append(result.NewFeedIDs, fid)
+		result.FeedsImported++
 	}
 
-	_ = a.ReloadRSS()
+	return result, nil
+}
 
-	return RSSOPMLImportResult{
-		FeedsImported:  feedsImported,
-		FeedsSkipped:   feedsSkipped,
-		GroupsImported: groupsImported,
-		NewFeedIDs:     newFeedIDs,
-	}, nil
+// addRSSFeedToGroups makes feed a member of every group in groupIDs on both
+// membership records, the feed's GroupIDs and each group's FeedIDs, so no
+// active group lists a feed whose own GroupIDs omit it.
+func (a *App) addRSSFeedToGroups(ctx context.Context, feed core.RSSFeed, groupIDs []string, now int64) error {
+	if len(groupIDs) == 0 {
+		return nil
+	}
+
+	feedChanged := false
+	for _, gid := range groupIDs {
+		if !slices.Contains(feed.GroupIDs, gid) {
+			feed.GroupIDs = append(feed.GroupIDs, gid)
+			feedChanged = true
+		}
+	}
+	if feedChanged {
+		feed.UpdatedAt = now
+		if err := a.Store.SaveRSSFeed(ctx, feed); err != nil {
+			return err
+		}
+	}
+
+	for _, gid := range groupIDs {
+		grp, err := a.Store.GetRSSGroup(ctx, gid)
+		if err != nil {
+			return err
+		}
+		if grp == nil || slices.Contains(grp.FeedIDs, feed.ID) {
+			continue
+		}
+		grp.FeedIDs = append(grp.FeedIDs, feed.ID)
+		grp.UpdatedAt = now
+		if err := a.Store.SaveRSSGroup(ctx, *grp); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ExportRSSOPMLToFile exports all active RSS subscriptions and groups to a local OPML file.

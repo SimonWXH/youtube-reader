@@ -57,6 +57,17 @@ func writeTestOPML(t *testing.T, dir, filename, content string) string {
 	return p
 }
 
+// importRSSOPMLForTest imports OPML the way the window does: the import writes
+// only the store, then the main thread reloads the in-memory library it draws.
+func importRSSOPMLForTest(t *testing.T, a *App, paths []string) (RSSOPMLImportResult, error) {
+	t.Helper()
+	res, err := a.ImportRSSOPMLPaths(context.Background(), paths)
+	if reloadErr := a.ReloadRSS(); reloadErr != nil {
+		t.Fatalf("ReloadRSS after import: %v", reloadErr)
+	}
+	return res, err
+}
+
 // TestImportRSSOPMLPaths verifies basic batch import of OPML into the RSS workspace store.
 func TestImportRSSOPMLPaths(t *testing.T) {
 	a, _ := setupRSSTestApp(t)
@@ -78,7 +89,7 @@ func TestImportRSSOPMLPaths(t *testing.T) {
 
 	file := writeTestOPML(t, dir, "subs.opml", opmlContent)
 
-	res, err := a.ImportRSSOPMLPaths(context.Background(), []string{file})
+	res, err := importRSSOPMLForTest(t, a, []string{file})
 	if err != nil {
 		t.Fatalf("ImportRSSOPMLPaths failed: %v", err)
 	}
@@ -147,7 +158,7 @@ func TestImportRSSOPMLDeduplication(t *testing.T) {
 
 	file1 := writeTestOPML(t, dir, "first.opml", firstOPML)
 
-	res1, err := a.ImportRSSOPMLPaths(context.Background(), []string{file1})
+	res1, err := importRSSOPMLForTest(t, a, []string{file1})
 	if err != nil {
 		t.Fatalf("import first failed: %v", err)
 	}
@@ -156,7 +167,7 @@ func TestImportRSSOPMLDeduplication(t *testing.T) {
 	}
 
 	// Re-importing exact same OPML file
-	res2, err := a.ImportRSSOPMLPaths(context.Background(), []string{file1})
+	res2, err := importRSSOPMLForTest(t, a, []string{file1})
 	if err != nil {
 		t.Fatalf("import second failed: %v", err)
 	}
@@ -185,7 +196,7 @@ func TestImportRSSOPMLDeduplication(t *testing.T) {
 </opml>`
 
 	file2 := writeTestOPML(t, dir, "second.opml", secondOPML)
-	res3, err := a.ImportRSSOPMLPaths(context.Background(), []string{file2})
+	res3, err := importRSSOPMLForTest(t, a, []string{file2})
 	if err != nil {
 		t.Fatalf("import third failed: %v", err)
 	}
@@ -226,7 +237,7 @@ func TestImportRSSOPMLRevivesSoftDeleted(t *testing.T) {
 </opml>`
 	file := writeTestOPML(t, dir, "feed.opml", opmlContent)
 
-	_, err := a.ImportRSSOPMLPaths(context.Background(), []string{file})
+	_, err := importRSSOPMLForTest(t, a, []string{file})
 	if err != nil {
 		t.Fatalf("initial import failed: %v", err)
 	}
@@ -244,7 +255,7 @@ func TestImportRSSOPMLRevivesSoftDeleted(t *testing.T) {
 	}
 
 	// Re-import OPML
-	res, err := a.ImportRSSOPMLPaths(context.Background(), []string{file})
+	res, err := importRSSOPMLForTest(t, a, []string{file})
 	if err != nil {
 		t.Fatalf("second import failed: %v", err)
 	}
@@ -253,6 +264,119 @@ func TestImportRSSOPMLRevivesSoftDeleted(t *testing.T) {
 	}
 	if len(a.RSSFeeds) != 1 {
 		t.Fatalf("len(a.RSSFeeds) = %d; want 1 revived feed", len(a.RSSFeeds))
+	}
+}
+
+// TestImportRSSOPMLReimportingDeletedGroupKeepsMembershipConsistent reproduces
+// the delete-and-reimport flow: deleting a group leaves its own FeedIDs behind
+// while clearing the feeds' GroupIDs, so re-importing the same file must
+// reconcile both records instead of listing every feed twice.
+func TestImportRSSOPMLReimportingDeletedGroupKeepsMembershipConsistent(t *testing.T) {
+	a, w := setupRSSTestApp(t)
+	dir := t.TempDir()
+
+	opmlContent := `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <body>
+    <outline text="Tech" title="Tech">
+      <outline type="rss" text="Ars Technica" xmlUrl="https://feeds.arstechnica.com/arstechnica/index"/>
+      <outline type="rss" text="The Verge" xmlUrl="https://www.theverge.com/rss/index.xml"/>
+    </outline>
+  </body>
+</opml>`
+	file := writeTestOPML(t, dir, "tech.opml", opmlContent)
+
+	if _, err := importRSSOPMLForTest(t, a, []string{file}); err != nil {
+		t.Fatalf("first import: %v", err)
+	}
+	if len(a.RSSGroups) != 1 || len(a.RSSFeeds) != 2 {
+		t.Fatalf("first import: groups=%d feeds=%d; want 1 group and 2 feeds", len(a.RSSGroups), len(a.RSSFeeds))
+	}
+	if err := a.DeleteRSSGroup(a.RSSGroups[0].ID); err != nil {
+		t.Fatalf("DeleteRSSGroup: %v", err)
+	}
+
+	res, err := importRSSOPMLForTest(t, a, []string{file})
+	if err != nil {
+		t.Fatalf("re-import: %v", err)
+	}
+	if res.FeedsImported != 0 || res.FeedsSkipped != 2 {
+		t.Errorf("re-import result = %+v; want 0 imported and 2 skipped", res)
+	}
+	if len(a.RSSGroups) != 1 {
+		t.Fatalf("re-import groups = %d; want the one revived group", len(a.RSSGroups))
+	}
+
+	group := a.RSSGroups[0]
+	wantIDs := make([]string, 0, len(a.RSSFeeds))
+	for _, f := range a.RSSFeeds {
+		wantIDs = append(wantIDs, f.ID)
+		if !slices.Contains(f.GroupIDs, group.ID) {
+			t.Errorf("feed %q GroupIDs = %v; want membership in %q", f.Title, f.GroupIDs, group.ID)
+		}
+	}
+	gotIDs := slices.Clone(group.FeedIDs)
+	slices.Sort(gotIDs)
+	slices.Sort(wantIDs)
+	if !slices.Equal(gotIDs, wantIDs) {
+		t.Errorf("group FeedIDs = %v; want exactly %v", gotIDs, wantIDs)
+	}
+	if ungrouped := w.rssUngroupedFeeds(); len(ungrouped) != 0 {
+		t.Errorf("sidebar lists %d ungrouped feeds; want 0", len(ungrouped))
+	}
+}
+
+// TestImportRSSOPMLAddsSubscribedFeedsToExistingGroup verifies that a folder
+// named like a group the library already holds adds its feeds to that group,
+// even when the library already subscribes to them outside it.
+func TestImportRSSOPMLAddsSubscribedFeedsToExistingGroup(t *testing.T) {
+	a, w := setupRSSTestApp(t)
+	dir := t.TempDir()
+
+	tech, err := a.CreateRSSGroup("Tech")
+	if err != nil {
+		t.Fatalf("CreateRSSGroup: %v", err)
+	}
+	feed := core.RSSFeed{
+		ID:      core.FeedID("https://news.ycombinator.com/rss"),
+		FeedURL: "https://news.ycombinator.com/rss",
+		Title:   "Hacker News",
+	}
+	if err := a.SubscribeRSSFeed(feed, ""); err != nil {
+		t.Fatalf("SubscribeRSSFeed: %v", err)
+	}
+
+	opmlContent := `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <body>
+    <outline text="tech" title="tech">
+      <outline type="rss" text="Hacker News" xmlUrl="https://news.ycombinator.com/rss"/>
+      <outline type="rss" text="xkcd" xmlUrl="https://xkcd.com/rss.xml"/>
+    </outline>
+  </body>
+</opml>`
+	file := writeTestOPML(t, dir, "tech.opml", opmlContent)
+
+	if _, err := importRSSOPMLForTest(t, a, []string{file}); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	if len(a.RSSGroups) != 1 || a.RSSGroups[0].ID != tech.ID {
+		t.Fatalf("groups = %+v; want only the existing Tech group", a.RSSGroups)
+	}
+	if len(a.RSSFeeds) != 2 {
+		t.Fatalf("feeds = %d; want 2", len(a.RSSFeeds))
+	}
+	for _, f := range a.RSSFeeds {
+		if !slices.Contains(f.GroupIDs, tech.ID) {
+			t.Errorf("feed %q GroupIDs = %v; want membership in Tech", f.Title, f.GroupIDs)
+		}
+		if !slices.Contains(a.RSSGroups[0].FeedIDs, f.ID) {
+			t.Errorf("Tech FeedIDs = %v; want feed %q", a.RSSGroups[0].FeedIDs, f.ID)
+		}
+	}
+	if ungrouped := w.rssUngroupedFeeds(); len(ungrouped) != 0 {
+		t.Errorf("sidebar lists %d ungrouped feeds; want 0", len(ungrouped))
 	}
 }
 
@@ -316,7 +440,7 @@ func TestExportRSSOPMLToFileAndRoundTrip(t *testing.T) {
 	}
 
 	// Import into a2
-	res, err := a2.ImportRSSOPMLPaths(context.Background(), []string{exportPath})
+	res, err := importRSSOPMLForTest(t, a2, []string{exportPath})
 	if err != nil {
 		t.Fatalf("Import into a2 failed: %v", err)
 	}
@@ -457,7 +581,7 @@ func TestLiveScenario1_BatchImportAndSidebarRender(t *testing.T) {
 
 	file := writeTestOPML(t, dir, "feedly.opml", opmlContent)
 
-	res, err := a.ImportRSSOPMLPaths(context.Background(), []string{file})
+	res, err := importRSSOPMLForTest(t, a, []string{file})
 	if err != nil {
 		t.Fatalf("ImportRSSOPMLPaths failed: %v", err)
 	}
@@ -615,7 +739,7 @@ func TestLiveScenario3_ExportAndRoundtripEvidence(t *testing.T) {
 
 	// Round-trip into fresh App instance
 	a2, _ := setupRSSTestApp(t)
-	resRoundtrip, err := a2.ImportRSSOPMLPaths(context.Background(), []string{exportPath})
+	resRoundtrip, err := importRSSOPMLForTest(t, a2, []string{exportPath})
 	if err != nil {
 		t.Fatalf("round-trip import into a2 failed: %v", err)
 	}
@@ -665,7 +789,7 @@ func TestLiveScenario4_WorkspaceIsolationEvidence(t *testing.T) {
 	file := writeTestOPML(t, dir, "isolation.opml", opmlContent)
 
 	// Import into RSS
-	_, err := a.ImportRSSOPMLPaths(context.Background(), []string{file})
+	_, err := importRSSOPMLForTest(t, a, []string{file})
 	if err != nil {
 		t.Fatalf("import failed: %v", err)
 	}
@@ -716,7 +840,7 @@ func TestLiveScenario5_AdversarialOPML(t *testing.T) {
 	// 1. Malformed XML
 	badXML := `<?xml version="1.0"?><opml><head><title>Unclosed`
 	badFile := writeTestOPML(t, dir, "bad.opml", badXML)
-	_, err := a.ImportRSSOPMLPaths(context.Background(), []string{badFile})
+	_, err := importRSSOPMLForTest(t, a, []string{badFile})
 	if err == nil {
 		t.Errorf("expected error on malformed XML, got nil")
 	} else {
@@ -735,7 +859,7 @@ func TestLiveScenario5_AdversarialOPML(t *testing.T) {
   </body>
 </opml>`
 	edgeFile := writeTestOPML(t, dir, "edge.opml", edgeOPML)
-	res, err := a.ImportRSSOPMLPaths(context.Background(), []string{edgeFile})
+	res, err := importRSSOPMLForTest(t, a, []string{edgeFile})
 	if err != nil {
 		t.Fatalf("import edgeOPML failed: %v", err)
 	}
@@ -756,7 +880,7 @@ func TestLiveScenario5_AdversarialOPML(t *testing.T) {
 	// 4. Empty OPML file
 	emptyOPML := `<?xml version="1.0" encoding="UTF-8"?><opml version="2.0"><head/><body/></opml>`
 	emptyFile := writeTestOPML(t, dir, "empty.opml", emptyOPML)
-	resEmpty, err := a.ImportRSSOPMLPaths(context.Background(), []string{emptyFile})
+	resEmpty, err := importRSSOPMLForTest(t, a, []string{emptyFile})
 	if err != nil {
 		t.Errorf("empty OPML failed: %v", err)
 	}
