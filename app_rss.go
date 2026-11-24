@@ -578,6 +578,8 @@ func (a *App) RefetchRSSArticleContent(ctx context.Context, articleID string) (c
 }
 
 // RSSOPMLImportResult summarizes the outcome of importing one or more OPML files.
+// GroupsImported counts the groups the import created or brought back from a
+// tombstone, so a restore is reported rather than silently passing as no change.
 type RSSOPMLImportResult struct {
 	FeedsImported  int
 	FeedsSkipped   int
@@ -659,6 +661,7 @@ func (a *App) ImportRSSOPMLPaths(ctx context.Context, paths []string) (RSSOPMLIm
 				if err := a.Store.SaveRSSGroup(ctx, *existing); err != nil {
 					return result, err
 				}
+				result.GroupsImported++
 			}
 			groupIDMap[g.ID] = existing.ID
 		} else {

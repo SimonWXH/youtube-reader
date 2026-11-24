@@ -300,8 +300,8 @@ func TestImportRSSOPMLReimportingDeletedGroupKeepsMembershipConsistent(t *testin
 	if err != nil {
 		t.Fatalf("re-import: %v", err)
 	}
-	if res.FeedsImported != 0 || res.FeedsSkipped != 2 {
-		t.Errorf("re-import result = %+v; want 0 imported and 2 skipped", res)
+	if res.FeedsImported != 0 || res.FeedsSkipped != 2 || res.GroupsImported != 1 {
+		t.Errorf("re-import result = %+v; want 0 feeds imported, 2 skipped and the revived group counted", res)
 	}
 	if len(a.RSSGroups) != 1 {
 		t.Fatalf("re-import groups = %d; want the one revived group", len(a.RSSGroups))
@@ -706,6 +706,103 @@ func TestOverflowMenuKeepsExportOPMLWithState(t *testing.T) {
 		t.Fatalf("RSS overflow menu %q has no Export OPML…", items)
 	}
 	tt.Key(0, ui.KeyEscape)
+}
+
+// TestRSSSidebarShowsImportedFolderWithoutFeeds verifies that a folder imported
+// from OPML stays reachable in the sidebar even when the file carries no feeds,
+// instead of the sidebar falling back to the empty state.
+func TestRSSSidebarShowsImportedFolderWithoutFeeds(t *testing.T) {
+	a, w := setupRSSTestApp(t)
+	dir := t.TempDir()
+
+	folderOnly := `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <body>
+    <outline text="Reading List" title="Reading List"></outline>
+  </body>
+</opml>`
+	file := writeTestOPML(t, dir, "folders.opml", folderOnly)
+
+	res, err := importRSSOPMLForTest(t, a, []string{file})
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if res.GroupsImported != 1 || res.FeedsImported != 0 {
+		t.Fatalf("result = %+v; want 1 group and 0 feeds", res)
+	}
+	if len(a.RSSGroups) != 1 || len(a.RSSFeeds) != 0 {
+		t.Fatalf("groups=%d feeds=%d; want 1 group and 0 feeds", len(a.RSSGroups), len(a.RSSFeeds))
+	}
+
+	w.selectWorkspace(WorkspaceRSS)
+	tt := ui.NewTester(w.shell, 1280, 808)
+	tt.SetLocale("en")
+	tt.Frame()
+
+	if tt.HasText("No RSS feeds yet") {
+		t.Fatal("RSS sidebar still draws the empty state with an imported folder present")
+	}
+	if err := tt.Click("Reading List"); err != nil {
+		t.Fatalf("click the imported folder row: %v", err)
+	}
+	tt.Frame()
+	if a.Selected != "group:"+a.RSSGroups[0].ID {
+		t.Errorf("Selected = %q; want the imported folder %q", a.Selected, "group:"+a.RSSGroups[0].ID)
+	}
+}
+
+// TestRSSOPMLImportToastWordings checks the toast copy for what an import
+// brought in and for a file the library already holds, including a file whose
+// only change is a folder the import brought back.
+func TestRSSOPMLImportToastWordings(t *testing.T) {
+	cases := []struct {
+		name string
+		res  RSSOPMLImportResult
+		en   string
+		zh   string
+	}{
+		{
+			name: "feeds and groups",
+			res:  RSSOPMLImportResult{FeedsImported: 2, GroupsImported: 1},
+			en:   "Imported 2 feeds and 1 group",
+			zh:   "已导入 2 个订阅源，1 个分组",
+		},
+		{
+			name: "one feed",
+			res:  RSSOPMLImportResult{FeedsImported: 1},
+			en:   "Imported 1 feed",
+			zh:   "已导入 1 个订阅源",
+		},
+		{
+			name: "restored group only",
+			res:  RSSOPMLImportResult{FeedsSkipped: 2, GroupsImported: 1},
+			en:   "Imported 1 group",
+			zh:   "已导入 1 个分组",
+		},
+		{
+			name: "all feeds subscribed",
+			res:  RSSOPMLImportResult{FeedsSkipped: 3},
+			en:   "No new feeds to import (3 already subscribed)",
+			zh:   "未发现新订阅源（3 个已订阅）",
+		},
+		{
+			name: "empty file",
+			res:  RSSOPMLImportResult{},
+			en:   "No new feeds to import",
+			zh:   "未发现新订阅源",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := rssOPMLImportToast(tc.res, false); got != tc.en {
+				t.Errorf("en toast = %q; want %q", got, tc.en)
+			}
+			if got := rssOPMLImportToast(tc.res, true); got != tc.zh {
+				t.Errorf("zh toast = %q; want %q", got, tc.zh)
+			}
+		})
+	}
 }
 
 // TestLiveScenario1_BatchImportAndSidebarRender validates live batch import of hierarchical

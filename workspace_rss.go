@@ -280,7 +280,7 @@ func (w *Window) rssSidebar(c *ui.Context, t mui.Tokens, sidebar ui.Element) {
 			},
 		})
 
-		if w.app == nil || len(w.app.RSSFeeds) == 0 {
+		if w.app == nil || (len(w.app.RSSFeeds) == 0 && len(w.app.RSSGroups) == 0) {
 			ui.Column(c.Key("rss-sidebar-empty")).FillWidth().Padding(mui.Space(4), mui.Space(2)).AlignItems(ui.Center).Gap(mui.Space(2)).Children(func() {
 				ui.Text(c, noFeedsTitle).FontSize(13).TextColor(t.Muted).SingleLine()
 				ui.Text(c, noFeedsDesc).FontSize(11).TextColor(t.Faint).SingleLine()
@@ -871,36 +871,7 @@ func (w *Window) importRSSOPML(c *ui.Context) {
 				return
 			}
 
-			var msg string
-			if zh {
-				switch {
-				case res.FeedsImported > 0 && res.GroupsImported > 0:
-					msg = fmt.Sprintf("已导入 %d 个订阅源，%d 个分组", res.FeedsImported, res.GroupsImported)
-				case res.FeedsImported > 0:
-					msg = fmt.Sprintf("已导入 %d 个订阅源", res.FeedsImported)
-				case res.GroupsImported > 0:
-					msg = fmt.Sprintf("已导入 %d 个分组", res.GroupsImported)
-				default:
-					msg = "未发现新订阅源（已全部订阅）"
-				}
-			} else {
-				switch {
-				case res.FeedsImported > 0 && res.GroupsImported > 0:
-					msg = fmt.Sprintf("Imported %d feed%s and %d group%s",
-						res.FeedsImported, plural(res.FeedsImported),
-						res.GroupsImported, plural(res.GroupsImported))
-				case res.FeedsImported > 0:
-					msg = fmt.Sprintf("Imported %d feed%s",
-						res.FeedsImported, plural(res.FeedsImported))
-				case res.GroupsImported > 0:
-					msg = fmt.Sprintf("Imported %d group%s",
-						res.GroupsImported, plural(res.GroupsImported))
-				default:
-					msg = "No new feeds to import (already subscribed)"
-				}
-			}
-
-			w.toast(nil, msg, false)
+			w.toast(nil, rssOPMLImportToast(res, zh), false)
 			w.invalidateMainWindow()
 		})
 
@@ -927,6 +898,39 @@ func (w *Window) importRSSOPML(c *ui.Context) {
 			}
 		}
 	}()
+}
+
+// rssOPMLImportToast words the outcome of an OPML import: what came in, and
+// when nothing arrived, how much of the file the library already held.
+func rssOPMLImportToast(res RSSOPMLImportResult, zh bool) string {
+	if zh {
+		switch {
+		case res.FeedsImported > 0 && res.GroupsImported > 0:
+			return fmt.Sprintf("已导入 %d 个订阅源，%d 个分组", res.FeedsImported, res.GroupsImported)
+		case res.FeedsImported > 0:
+			return fmt.Sprintf("已导入 %d 个订阅源", res.FeedsImported)
+		case res.GroupsImported > 0:
+			return fmt.Sprintf("已导入 %d 个分组", res.GroupsImported)
+		case res.FeedsSkipped > 0:
+			return fmt.Sprintf("未发现新订阅源（%d 个已订阅）", res.FeedsSkipped)
+		default:
+			return "未发现新订阅源"
+		}
+	}
+	switch {
+	case res.FeedsImported > 0 && res.GroupsImported > 0:
+		return fmt.Sprintf("Imported %d feed%s and %d group%s",
+			res.FeedsImported, plural(res.FeedsImported),
+			res.GroupsImported, plural(res.GroupsImported))
+	case res.FeedsImported > 0:
+		return fmt.Sprintf("Imported %d feed%s", res.FeedsImported, plural(res.FeedsImported))
+	case res.GroupsImported > 0:
+		return fmt.Sprintf("Imported %d group%s", res.GroupsImported, plural(res.GroupsImported))
+	case res.FeedsSkipped > 0:
+		return fmt.Sprintf("No new feeds to import (%d already subscribed)", res.FeedsSkipped)
+	default:
+		return "No new feeds to import"
+	}
 }
 
 func (w *Window) exportRSSOPML(c *ui.Context) {
