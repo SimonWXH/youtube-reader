@@ -380,6 +380,70 @@ func TestImportRSSOPMLAddsSubscribedFeedsToExistingGroup(t *testing.T) {
 	}
 }
 
+// TestImportRSSOPMLKeepsMembershipsAcrossSelectedFiles covers a selection of
+// several OPML files that list the same feed under different folders: the feed
+// must be imported once, every folder must hold it, and exporting from that
+// state must round-trip both memberships.
+func TestImportRSSOPMLKeepsMembershipsAcrossSelectedFiles(t *testing.T) {
+	a, _ := setupRSSTestApp(t)
+	dir := t.TempDir()
+
+	techFile := writeTestOPML(t, dir, "tech.opml", `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <body>
+    <outline text="Tech" title="Tech">
+      <outline type="rss" text="Hacker News" xmlUrl="https://news.ycombinator.com/rss"/>
+    </outline>
+  </body>
+</opml>`)
+	newsFile := writeTestOPML(t, dir, "news.opml", `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <body>
+    <outline text="News" title="News">
+      <outline type="rss" text="Hacker News" xmlUrl="https://news.ycombinator.com/rss"/>
+    </outline>
+  </body>
+</opml>`)
+
+	res, err := importRSSOPMLForTest(t, a, []string{techFile, newsFile})
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if res.FeedsImported != 1 || res.FeedsSkipped != 0 || res.GroupsImported != 2 {
+		t.Fatalf("result = %+v; want 1 feed imported, 0 skipped, 2 groups", res)
+	}
+	if len(a.RSSFeeds) != 1 || len(a.RSSGroups) != 2 {
+		t.Fatalf("feeds=%d groups=%d; want 1 feed in 2 groups", len(a.RSSFeeds), len(a.RSSGroups))
+	}
+
+	feedID := a.RSSFeeds[0].ID
+	for _, g := range a.RSSGroups {
+		if !slices.Contains(a.RSSFeeds[0].GroupIDs, g.ID) {
+			t.Errorf("feed GroupIDs = %v; want membership in %q", a.RSSFeeds[0].GroupIDs, g.Name)
+		}
+		if !slices.Contains(g.FeedIDs, feedID) {
+			t.Errorf("group %q FeedIDs = %v; want %q", g.Name, g.FeedIDs, feedID)
+		}
+	}
+
+	exportPath := filepath.Join(dir, "exported.opml")
+	if err := a.ExportRSSOPMLToFile(exportPath); err != nil {
+		t.Fatalf("ExportRSSOPMLToFile: %v", err)
+	}
+	a2, _ := setupRSSTestApp(t)
+	if _, err := importRSSOPMLForTest(t, a2, []string{exportPath}); err != nil {
+		t.Fatalf("round-trip import: %v", err)
+	}
+	if len(a2.RSSFeeds) != 1 || len(a2.RSSGroups) != 2 {
+		t.Fatalf("round-trip feeds=%d groups=%d; want 1 feed in 2 groups", len(a2.RSSFeeds), len(a2.RSSGroups))
+	}
+	for _, g := range a2.RSSGroups {
+		if len(g.FeedIDs) != 1 || g.FeedIDs[0] != a2.RSSFeeds[0].ID {
+			t.Errorf("round-trip group %q FeedIDs = %v; want exactly the imported feed", g.Name, g.FeedIDs)
+		}
+	}
+}
+
 // TestExportRSSOPMLToFileAndRoundTrip verifies export from database to file,
 // followed by import into another fresh App instance.
 func TestExportRSSOPMLToFileAndRoundTrip(t *testing.T) {

@@ -695,23 +695,35 @@ func (a *App) ImportRSSOPMLPaths(ctx context.Context, paths []string) (RSSOPMLIm
 		existingFeedMap[core.CanonicalURL(f.FeedURL)] = f
 	}
 
-	seenImportFeedIDs := make(map[string]bool)
-
+	importOrder := make([]string, 0, len(allFeeds))
+	importFeeds := make(map[string]*core.RSSFeed)
 	for _, f := range allFeeds {
 		canonicalURL := core.CanonicalURL(f.FeedURL)
 		if canonicalURL == "" {
 			continue
 		}
+		entry, ok := importFeeds[canonicalURL]
+		if !ok {
+			merged := f
+			merged.FeedURL = canonicalURL
+			entry = &merged
+			importFeeds[canonicalURL] = entry
+			importOrder = append(importOrder, canonicalURL)
+		}
+		for _, gid := range f.GroupIDs {
+			if gid != "" && !slices.Contains(entry.GroupIDs, gid) {
+				entry.GroupIDs = append(entry.GroupIDs, gid)
+			}
+		}
+	}
+
+	for _, canonicalURL := range importOrder {
+		f := *importFeeds[canonicalURL]
 		fid := f.ID
 		if fid == "" {
 			fid = core.FeedID(canonicalURL)
 		}
-		if seenImportFeedIDs[fid] {
-			continue
-		}
-		seenImportFeedIDs[fid] = true
 
-		// Map group IDs
 		var mappedGroupIDs []string
 		for _, gid := range f.GroupIDs {
 			targetGID := gid
@@ -723,7 +735,6 @@ func (a *App) ImportRSSOPMLPaths(ctx context.Context, paths []string) (RSSOPMLIm
 			}
 		}
 
-		// Check if already subscribed (non-deleted)
 		existing, subscribed := existingFeedMap[fid]
 		if !subscribed {
 			existing, subscribed = existingFeedMap[canonicalURL]
