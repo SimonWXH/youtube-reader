@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/netimage"
 	"github.com/simon/youtube-reader/core"
 	mui "github.com/simon/youtube-reader/ui"
 )
@@ -78,6 +80,7 @@ func runNotifyOnly(app *App) {
 }
 
 func realMain() {
+	netimage.SetClient(&http.Client{Timeout: 15 * time.Second})
 	app, err := LoadApp()
 	if err != nil {
 		log.Fatal(err)

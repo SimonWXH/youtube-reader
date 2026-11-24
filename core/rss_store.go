@@ -490,6 +490,7 @@ func rowToArticle(r []any) RSSArticle {
 	a.Snippet, _ = r[7].(string)
 	a.ContentHTML, _ = r[8].(string)
 	a.IsFullText = intFromAnyBool(r[9])
+	a.IsDegraded = !a.IsFullText
 	a.HeroImage, _ = r[10].(string)
 	if raw, _ := r[11].(string); raw != "" {
 		a.Blocks = ParseBlocksJSON(raw)

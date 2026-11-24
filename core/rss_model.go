@@ -69,6 +69,12 @@ func (f RSSFeed) DisplayName() string {
 	return f.FeedURL
 }
 
+// IsDegradedContent reports whether the article is displaying degraded fallback summary content
+// rather than full text extracted from the original article.
+func (a RSSArticle) IsDegradedContent() bool {
+	return a.IsDegraded || !a.IsFullText
+}
+
 // RSSGroup represents a folder / category grouping RSS subscription feeds.
 // It is completely decoupled from YouTube ChannelGroup records.
 type RSSGroup struct {
@@ -100,6 +106,7 @@ type RSSArticle struct {
 	Snippet     string         `json:"snippet"`             // 2-line plain-text snippet for list views
 	ContentHTML string         `json:"contentHtml"`         // Full HTML content (local SQLite only)
 	IsFullText  bool           `json:"isFullText"`          // True if full text was extracted; false if degraded to summary
+	IsDegraded  bool           `json:"isDegraded,omitempty"`// True if content degraded to feed summary/fallback
 	HeroImage   string         `json:"heroImage,omitempty"` // Hero/lead image URL
 	Blocks      []ArticleBlock `json:"blocks,omitempty"`    // Structured blocks for native reading view
 	Read        bool           `json:"read"`                // Local read state

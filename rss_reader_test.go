@@ -1740,6 +1740,126 @@ func TestRSSReadingColumnStaysNarrowOnAWideWindow(t *testing.T) {
 	saveRSSReaderScreenshot(t, tt, "06-reader-wide-window.png")
 }
 
+// TestRSSReaderDegradedNoticeClickAndBilingual verifies that when viewing a degraded
+// summary-only article, the banner shows bilingual text and clicking it opens the original link.
+func TestRSSReaderDegradedNoticeClickAndBilingual(t *testing.T) {
+	_, _, tt := rssReaderTestWindow(t)
+
+	row, ok := tt.Find("A Summary Only Post")
+	if !ok {
+		t.Fatal("summary article row not found")
+	}
+	tt.ClickAt(row.X+row.W/2, row.Y+row.H/2)
+	tt.Frame()
+
+	// 1. English check
+	tt.SetLocale("en")
+	tt.Frame()
+	noticeEn, ok := tt.Find("Showing the feed's summary. Open the original article in your browser for the full text.")
+	if !ok {
+		t.Fatalf("English summary notice missing, texts = %v", tt.Texts())
+	}
+	tt.ClickAt(noticeEn.X+noticeEn.W/2, noticeEn.Y+noticeEn.H/2)
+	tt.Frame()
+	if urls := tt.OpenedURLs(); len(urls) != 1 || urls[0] != "https://feeds.example.com/summary-only" {
+		t.Fatalf("opened URLs after clicking English notice banner = %v, want https://feeds.example.com/summary-only", urls)
+	}
+
+	// 2. Chinese check
+	tt.SetLocale("zh")
+	tt.Frame()
+	noticeZh, ok := tt.Find("当前展示摘要，可点击在浏览器中查看原网页")
+	if !ok {
+		t.Fatalf("Chinese summary notice missing, texts = %v", tt.Texts())
+	}
+	tt.ClickAt(noticeZh.X+noticeZh.W/2, noticeZh.Y+noticeZh.H/2)
+	tt.Frame()
+	if urls := tt.OpenedURLs(); len(urls) != 2 || urls[1] != "https://feeds.example.com/summary-only" {
+		t.Fatalf("opened URLs after clicking Chinese notice banner = %v, want https://feeds.example.com/summary-only", urls)
+	}
+}
+
+// TestRSSReaderImageAntiHotlinkAndErrorDegradation verifies that when an image fails with HTTP 403
+// (anti-hotlink) or 404/network error, the reader does not white-screen or panic, renders an elegant
+// placeholder showing the Alt text, allows clicking to open original image in browser, and renders
+// adjacent paragraphs cleanly.
+func TestRSSReaderImageAntiHotlinkAndErrorDegradation(t *testing.T) {
+	a, w := rssReaderTestApp(t)
+	ctx := context.Background()
+	now := time.Now().UnixMilli()
+
+	hotlinkArt := core.RSSArticle{
+		ID:          "art-hotlink-img",
+		FeedID:      "feed-reader",
+		Title:       "Post With Hotlinked Image",
+		Link:        "https://feeds.example.com/hotlink-post",
+		Author:      "Alan Turing",
+		PublishedAt: "2026-11-24T10:00:00Z",
+		Snippet:     "An article with an image protected by anti-hotlinking rules.",
+		ContentHTML: "<p>Intro paragraph</p><img src=\"https://anti-hotlink.example.com/secret.png\" alt=\"Architecture Blueprint\"><p>Outro paragraph</p>",
+		IsFullText:  true,
+		Blocks: []core.ArticleBlock{
+			{Type: core.BlockParagraph, Text: "Intro paragraph before image."},
+			{Type: core.BlockImage, URL: "https://anti-hotlink.example.com/secret.png", Alt: "Architecture Blueprint"},
+			{Type: core.BlockParagraph, Text: "Outro paragraph after image."},
+		},
+		UpdatedAt: now,
+	}
+
+	if err := a.Store.SaveRSSArticles(ctx, []core.RSSArticle{hotlinkArt}); err != nil {
+		t.Fatalf("save article: %v", err)
+	}
+	if err := a.ReloadRSS(); err != nil {
+		t.Fatalf("reload rss: %v", err)
+	}
+
+	tt := ui.NewTester(w.view, 1280, 808)
+	tt.Frame()
+
+	row, ok := tt.Find("Post With Hotlinked Image")
+	if !ok {
+		t.Fatal("hotlink article row not found")
+	}
+	tt.ClickAt(row.X+row.W/2, row.Y+row.H/2)
+	tt.Frame()
+	tt.Frame()
+
+	// Paragraphs before and after must render smoothly without white-screen or blockage
+	if !tt.HasText("Intro paragraph before image.") {
+		t.Fatalf("intro paragraph missing, texts = %v", tt.Texts())
+	}
+	if !tt.HasText("Outro paragraph after image.") {
+		t.Fatalf("outro paragraph missing, texts = %v", tt.Texts())
+	}
+
+	// Alt text must be rendered in the placeholder box
+	if !tt.HasText("Architecture Blueprint") {
+		t.Fatalf("image alt text missing from placeholder, texts = %v", tt.Texts())
+	}
+	if !tt.HasText("Open original image in browser") {
+		t.Fatalf("open image action missing, texts = %v", tt.Texts())
+	}
+
+	// Clicking the placeholder opens the image URL in the browser
+	clickTarget, ok := tt.Find("Open original image in browser")
+	if !ok {
+		t.Fatal("open image target not found")
+	}
+	tt.ClickAt(clickTarget.X+clickTarget.W/2, clickTarget.Y+clickTarget.H/2)
+	tt.Frame()
+
+	if urls := tt.OpenedURLs(); len(urls) != 1 || urls[0] != "https://anti-hotlink.example.com/secret.png" {
+		t.Fatalf("opened URLs = %v, want image URL https://anti-hotlink.example.com/secret.png", urls)
+	}
+
+	// Bilingual check: in Chinese, shows "在浏览器中打开原图"
+	tt.SetLocale("zh")
+	tt.Frame()
+	if !tt.HasText("在浏览器中打开原图") {
+		t.Fatalf("Chinese open image label missing, texts = %v", tt.Texts())
+	}
+}
+
 // saveRSSReaderScreenshot writes the rendered frame to the task's proof
 // directory for visual inspection, outside the repository.
 func saveRSSReaderScreenshot(t *testing.T, tt *ui.Tester, name string) {
