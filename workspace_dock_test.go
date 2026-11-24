@@ -420,8 +420,10 @@ func TestWorkspacePlaceholdersBilingualEmptyStates(t *testing.T) {
 	}
 }
 
-// TestThreeColumnResizableLayoutOnVideoAndRSS verifies that resizing dividers
-// adjusts and persists SidebarWidth and DetailsWidth for both Video and RSS pages.
+// TestThreeColumnResizableLayoutOnVideoAndRSS verifies that each workspace
+// drags the divider it owns: the shared sidebar width on both pages, the
+// details pane width on Videos, and the article list width on RSS, each
+// persisted where the next launch reads it.
 func TestThreeColumnResizableLayoutOnVideoAndRSS(t *testing.T) {
 	a, w := setupWorkspaceTestApp(t)
 	tt := ui.NewTester(w.view, 1280, 808)
@@ -453,21 +455,31 @@ func TestThreeColumnResizableLayoutOnVideoAndRSS(t *testing.T) {
 		t.Fatalf("RSS page sidebarWidth = %v, want %v", w.sidebarWidth, newSidebarWidth)
 	}
 
-	// On RSS page, drag details divider:
-	detailsLine, ok := tt.Find("Resize details pane")
+	// On RSS page, the divider between the list and the reader resizes the
+	// list and leaves the Videos pane's own width alone.
+	listLine, ok := tt.Find("Resize article list")
 	if !ok {
-		t.Fatal("could not find details divider on RSS page")
+		t.Fatal("could not find article list divider on RSS page")
 	}
-	dx := detailsLine.X
-	tt.Press(dx, 150)
-	tt.Move(dx-40, 150)
+	lx := listLine.X
+	tt.Press(lx, 150)
+	tt.Move(lx-40, 150)
 	tt.Frame()
-	tt.Release(dx-40, 150)
+	tt.Release(lx-40, 150)
 	tt.Frame()
 
-	newDetailsWidth := a.Settings.DetailsWidth
-	if newDetailsWidth == defaultDetailsWidth {
-		t.Fatalf("dragging details divider on RSS page did not change DetailsWidth from %v", defaultDetailsWidth)
+	newListWidth := a.Settings.RSSListWidth
+	if newListWidth == defaultRSSListWidth {
+		t.Fatalf("dragging the RSS divider did not change RSSListWidth from %v", defaultRSSListWidth)
+	}
+	if newListWidth >= defaultRSSListWidth {
+		t.Fatalf("dragging left should narrow the list: %v", newListWidth)
+	}
+	if a.Settings.DetailsWidth != defaultDetailsWidth {
+		t.Fatalf("RSS list drag changed DetailsWidth to %v", a.Settings.DetailsWidth)
+	}
+	if got := w.rssLayout.listWidth; got != newListWidth {
+		t.Fatalf("live list width = %v, want %v", got, newListWidth)
 	}
 
 	// Switch back to Videos page, select a video so detail pane opens:
@@ -475,9 +487,9 @@ func TestThreeColumnResizableLayoutOnVideoAndRSS(t *testing.T) {
 	a.SelectedVideoID = "v-1"
 	tt.Frame()
 
-	// Verify details width on Videos page reflects the newly persisted DetailsWidth:
-	if w.detail.width != newDetailsWidth {
-		t.Fatalf("Videos page details width = %v, want %v", w.detail.width, newDetailsWidth)
+	// Verify details width on Videos page keeps the separate DetailsWidth.
+	if w.detail.width != defaultDetailsWidth {
+		t.Fatalf("Videos page details width = %v, want %v", w.detail.width, defaultDetailsWidth)
 	}
 }
 
@@ -553,19 +565,20 @@ func TestRSSFilterStripFitsItsColumn(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		width        int
-		detailsWidth float32
+		listWidth    float32
 		sidebarWidth float32
 		fullSearch   bool
 	}{
 		{name: "design width", width: 1280, fullSearch: true},
+		{name: "design width, widest list", width: 1280, listWidth: maxRSSListWidth, fullSearch: true},
 		{name: "minimum width", width: 960},
-		{name: "minimum width, widest reader", width: 960, detailsWidth: maxDetailsWidth, sidebarWidth: maxSidebarWidth},
+		{name: "minimum width, widest list and sidebar", width: 960, listWidth: maxRSSListWidth, sidebarWidth: maxSidebarWidth},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, w := setupWorkspaceTestApp(t)
 			a.Settings.ActiveWorkspace = WorkspaceRSS
-			if tc.detailsWidth > 0 {
-				a.Settings.DetailsWidth = tc.detailsWidth
+			if tc.listWidth > 0 {
+				a.Settings.RSSListWidth = tc.listWidth
 			}
 			if tc.sidebarWidth > 0 {
 				a.Settings.SidebarWidth = tc.sidebarWidth

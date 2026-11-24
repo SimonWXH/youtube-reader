@@ -111,6 +111,12 @@ type Settings struct {
 	RSSUngroupedOrder []string `json:"rssUngroupedOrder,omitempty"`
 	// RSSExpandedGroups tracks folded/expanded state for RSS groups.
 	RSSExpandedGroups map[string]bool `json:"rssExpandedGroups,omitempty"`
+	// RSSListWidth is the RSS article list column's width, as the user left it
+	// with the list/reader divider. The sidebar keeps its own SidebarWidth and
+	// the reader takes the rest, so one stored width restores the whole RSS
+	// three-column split. It is a local UI preference like SidebarWidth and is
+	// never synced.
+	RSSListWidth float32 `json:"rssListWidth,omitempty"`
 	// NotificationPermissionDenied remembers that macOS refused a
 	// notification, so the Notifications pane can offer System Settings.
 	NotificationPermissionDenied bool `json:"notificationPermissionDenied,omitempty"`

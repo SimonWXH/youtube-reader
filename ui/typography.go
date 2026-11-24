@@ -88,6 +88,17 @@ var (
 	EmptyTitle = TextStyle{Size: 15, LineHeight: 20, Weight: Semibold}
 	// EmptyBody is an empty state's explanation.
 	EmptyBody = TextStyle{Size: 13, LineHeight: 18, Weight: Regular}
+	// ArticleTitle is the reading view's article headline.
+	ArticleTitle = TextStyle{Size: 20, LineHeight: 27, Weight: Semibold, Tracking: -0.2}
+	// ArticleHeading is a section heading inside a reading view's body.
+	ArticleHeading = TextStyle{Size: 16, LineHeight: 23, Weight: Semibold, Tracking: -0.1}
+	// ArticleBody is long-form reading copy, a step larger and looser than
+	// Body so the reading column stays comfortable over a long article.
+	ArticleBody = TextStyle{Size: 14, LineHeight: 23, Weight: Regular}
+	// ArticleQuote is a pull quote in a reading view's body.
+	ArticleQuote = TextStyle{Size: 14, LineHeight: 23, Weight: Regular}
+	// ArticleCode is a code block in a reading view's body.
+	ArticleCode = TextStyle{Family: MonoFont, Size: 12, LineHeight: 19, Weight: Regular}
 	// MonospacePath is a file path in the settings window.
 	MonospacePath = TextStyle{Family: MonoFont, Size: 11.5, LineHeight: 16, Weight: Regular}
 )

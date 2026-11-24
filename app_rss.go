@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"sort"
 	"strings"
@@ -531,4 +532,47 @@ func (a *App) FetchAllRSSFeeds(ctx context.Context, force bool) ([]core.FetchFee
 	}
 	fetcher := core.NewRSSFetcher(a.Store)
 	return fetcher.FetchAllFeeds(ctx, force)
+}
+
+// RefetchRSSArticleContent re-extracts one article's full text from its
+// original page, keeping the feed's own content as the fallback when the
+// extraction fails, and saves it back without touching read or starred state.
+func (a *App) RefetchRSSArticleContent(ctx context.Context, articleID string) (core.RSSArticle, error) {
+	if a.Store == nil {
+		return core.RSSArticle{}, errors.New("store not initialized")
+	}
+	art, err := a.Store.GetRSSArticle(ctx, articleID)
+	if err != nil {
+		return core.RSSArticle{}, err
+	}
+	if art == nil {
+		return core.RSSArticle{}, fmt.Errorf("article %q not found", articleID)
+	}
+	if strings.TrimSpace(art.Link) == "" {
+		return *art, errors.New("article has no link to fetch")
+	}
+
+	client := &http.Client{Timeout: core.DefaultRSSTimeout}
+	contentHTML, blocks, isFullText, hero, _ := core.ExtractFullText(ctx, client, art.Link, art.ContentHTML, art.Snippet)
+	if strings.TrimSpace(contentHTML) == "" {
+		return *art, errors.New("the article page returned no content")
+	}
+
+	art.ContentHTML = contentHTML
+	art.Blocks = blocks
+	art.IsFullText = isFullText
+	if art.HeroImage == "" && hero != "" {
+		art.HeroImage = hero
+	}
+	art.UpdatedAt = time.Now().UnixMilli()
+	if err := a.Store.SaveRSSArticles(ctx, []core.RSSArticle{*art}); err != nil {
+		return core.RSSArticle{}, err
+	}
+	// Read back what the store kept: the upsert never downgrades an article
+	// that already holds full text, so the caller's feedback follows the
+	// stored state rather than this attempt's.
+	if stored, err := a.Store.GetRSSArticle(ctx, articleID); err == nil && stored != nil {
+		return *stored, nil
+	}
+	return *art, nil
 }

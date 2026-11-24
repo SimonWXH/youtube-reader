@@ -129,6 +129,7 @@ func (w *Window) view(c *ui.Context) {
 		d.seeded = true
 		d.width = initialDetailsWidth(settings.DetailsWidth)
 	}
+	w.seedRSSLayout(settings.RSSListWidth)
 
 	selectedID := w.app.SelectedVideoID
 	if w.activeWorkspaceName() != WorkspaceVideos {
@@ -156,7 +157,13 @@ func (w *Window) view(c *ui.Context) {
 
 	fitted := detailWidthForRoom(d.width, w.detailFitWidth(c))
 	shown := w.advanceDetails(c, open, fitted)
-	w.sidebarWidth = boundedSidebarWidth(settings.SidebarWidth, shown, total)
+	// The RSS workspace's reader is adaptive, so the sidebar yields to its
+	// article list and the reader's minimum instead of to a fixed pane width.
+	if w.activeWorkspaceName() == WorkspaceRSS {
+		w.sidebarWidth = boundedRSSSidebarWidth(settings.SidebarWidth, total)
+	} else {
+		w.sidebarWidth = boundedSidebarWidth(settings.SidebarWidth, shown, total)
+	}
 	sidebar := w.sidebarWidth
 	d.shown = shown
 
@@ -344,7 +351,7 @@ func (w *Window) dragSidebar(dx, shown, detailShown, total float32) {
 		w.sidebarDragging = true
 		w.sidebarOvershoot = 0
 	}
-	room := boundedSidebarWidth(maxSidebarWidth, detailShown, total)
+	room := w.sidebarRoom(detailShown, total)
 	want := shown + dx + w.sidebarOvershoot
 	next := clamp(want, minSidebarWidth, room)
 	w.sidebarOvershoot = want - next
@@ -358,7 +365,7 @@ func (w *Window) dragSidebar(dx, shown, detailShown, total float32) {
 // setSidebarWidth commits a divider key's width, keeping it inside the range
 // the split's arrows used: the pane's room bounds the widest it can show.
 func (w *Window) setSidebarWidth(width, detailShown, total float32) {
-	room := boundedSidebarWidth(maxSidebarWidth, detailShown, total)
+	room := w.sidebarRoom(detailShown, total)
 	next := clamp(width, minSidebarWidth, room)
 	if next == w.sidebarWidth {
 		return
@@ -817,6 +824,20 @@ func publishedLabel(stamp string) string {
 
 func youtubeWatchURL(id string) string {
 	return "https://www.youtube.com/watch?v=" + id
+}
+
+// sidebarRoom is the widest the sidebar may be in the active workspace: a
+// video pane's width bounds it, while the RSS reader is adaptive, so that page
+// reserves the article list's and the reader's minimums instead.
+func (w *Window) sidebarRoom(shown, total float32) float32 {
+	if w.activeWorkspaceName() == WorkspaceRSS {
+		limit := maxSidebarWidth
+		if total > 0 {
+			limit = min(limit, total-2*splitDividerWidth()-rssSidebarReserve)
+		}
+		return max(limit, minSidebarWidth)
+	}
+	return boundedSidebarWidth(maxSidebarWidth, shown, total)
 }
 
 // boundedSidebarWidth fits the sidebar beside the pane width that is
