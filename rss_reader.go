@@ -42,7 +42,7 @@ const (
 	rssPreviewRunes  int     = 56
 	rssPreviewLines  int     = 2
 	// rssHeaderInlineActionsMin is the reader width from which the header's
-	// two labelled actions share the metadata's row.
+	// star and its two labelled actions share the metadata's row.
 	rssHeaderInlineActionsMin float32 = 560
 	rssReadingColumn          float32 = 700 // the reading text column's widest
 	rssReaderImageMax         float32 = 560 // the tallest an inline picture may show
@@ -470,7 +470,8 @@ func (w *Window) rssReaderEmpty(c *ui.Context, t mui.Tokens) {
 }
 
 // rssReaderHeader is the fixed article header: its source and date, its title,
-// its author, and the two actions that leave the app's rendering.
+// its author, the star that toggles the article's star, and the two actions
+// that leave the app's rendering.
 func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticle) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	openLabel := "Open in Browser"
@@ -545,7 +546,8 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 
 // rssHeaderInlineActions reports whether the reader is wide enough for the
 // header's actions to share the metadata's row. Below it they take their own
-// row, because two labelled buttons and the date cannot fit side by side.
+// row, because the star, two labelled buttons and the date cannot fit side by
+// side.
 func rssHeaderInlineActions(readerWidth float32) bool {
 	return readerWidth >= rssHeaderInlineActionsMin
 }
