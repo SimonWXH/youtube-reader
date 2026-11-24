@@ -159,7 +159,8 @@ type Window struct {
 	// groupDragOrder is the group order before the drag that is moving one of
 	// them began, so giving that drag up puts the groups back as they were.
 	// nil when no group drag has moved the list.
-	groupDragOrder []string
+	groupDragOrder    []string
+	rssGroupDragOrder []string
 
 	// renamingGroupID is the ID of the group currently being inline-renamed in the sidebar.
 	renamingGroupID   string
@@ -178,6 +179,15 @@ type Window struct {
 	// starts. The app leaves it nil and fetches in the background; a test
 	// records the request instead of starting a lookup that outlives it.
 	onAddedChannel func(channel core.Channel)
+
+	// RSS inline renaming state:
+	renamingRSSGroupID   string
+	renamingRSSGroupName string
+	renamingRSSGroupNew  string
+	renamingRSSFeedID    string
+	renamingRSSFeedName  string
+	rssSidebarMenuOpen   bool
+	addRSSDialog         addRSSDialog
 
 	// settingsWindow is the standalone Settings window and its view state.
 	settingsWindow settingsWindow

@@ -66,6 +66,9 @@ type SidebarRow struct {
 	OnClick        func()
 	OnFoldClick    func()
 	OnContextMenu  func(m *ui.Menu)
+	OnDoubleClick  func() // callback on double click
+	Error          bool   // show warning/failure icon
+	ErrorTooltip   string // tooltip detailing failure reason
 }
 
 // foldRowSurface is the fill behind a fold row's content. A row being renamed
@@ -213,6 +216,9 @@ func (r SidebarRow) Build(c *ui.Context, tokens Tokens) ui.Element {
 				if r.OnClick != nil && btn.Clicked() {
 					r.OnClick()
 				}
+				if r.OnDoubleClick != nil && btn.DoubleClicked() {
+					r.OnDoubleClick()
+				}
 				body = btn
 			}
 		})
@@ -230,6 +236,50 @@ func (r SidebarRow) Build(c *ui.Context, tokens Tokens) ui.Element {
 		})
 
 		return body
+	}
+
+	if r.Renaming {
+		container := ui.Row(c).Key(r.Key+":rename-container").
+			Height(rowHeight).FillWidth().Gap(Space(2)).Padding(0, Space(2)).
+			Radius(RadiusControl).AlignItems(ui.Center).
+			Background(tokens.Sidebar).MarginY(1)
+		container.Children(func() {
+			switch {
+			case r.Channel:
+				ChannelAvatar(c, tokens, r.Avatar, r.Label, SidebarChannelAvatar)
+			case r.Symbol != "":
+				sfsymbols.Symbol(c, r.Symbol).Size(16).Color(tokens.Accent).Element.Role(ui.RoleNone)
+			}
+			input := ui.TextInput(c.Key(r.Key+":rename-input"), r.RenameValue).
+				Height(SidebarRenameFieldHeight).Grow(1).
+				Padding(0, Space(2)).Radius(RadiusControl).
+				Background(tokens.Surface).Border(Hairline, tokens.Border).
+				TextColor(tokens.Text).Label("Rename " + r.Label).
+				FocusRingColor(tokens.Focus).FocusRingOffset(FocusRingGap)
+			Control.Apply(input).FontSize(13)
+			input.DrawOver(func(p *ui.Painter, box ui.Rect) {
+				if input.Focused() {
+					p.Stroke(box, tokens.Focus, RadiusControl, Hairline)
+				}
+			})
+			input.Focus()
+			input.OnShortcut(0, ui.KeyEnter, func() {
+				if r.OnRename != nil && r.RenameValue != nil {
+					r.OnRename(*r.RenameValue)
+				}
+			})
+			input.OnShortcut(0, ui.KeyEscape, func() {
+				if r.OnRenameCancel != nil {
+					r.OnRenameCancel()
+				}
+			})
+			input.OnSubmit(func() {
+				if r.OnRename != nil && r.RenameValue != nil {
+					r.OnRename(*r.RenameValue)
+				}
+			})
+		})
+		return container
 	}
 
 	el := ui.ButtonBase(c).Key(r.Key).
@@ -255,6 +305,12 @@ func (r SidebarRow) Build(c *ui.Context, tokens Tokens) ui.Element {
 		default:
 			Control.Apply(ui.Text(c, r.Label)).SingleLine().Grow(1)
 		}
+		if r.Error {
+			errIcon := sfsymbols.Symbol(c, "exclamationmark.triangle.fill").Size(12).Color(tokens.Warning).Element.Role(ui.RoleNone)
+			if r.ErrorTooltip != "" {
+				errIcon.Tooltip(r.ErrorTooltip)
+			}
+		}
 		if r.Count != "" {
 			Metadata.Apply(ui.Text(c, r.Count)).TextColor(countColor).SingleLine()
 		}
@@ -267,6 +323,9 @@ func (r SidebarRow) Build(c *ui.Context, tokens Tokens) ui.Element {
 			p.Fill(box, tokens.Face(Hover, false, true).Background, RadiusControl)
 		}
 	})
+	if r.OnDoubleClick != nil && el.DoubleClicked() {
+		r.OnDoubleClick()
+	}
 	if r.OnClick != nil && el.Clicked() && !r.Renaming {
 		r.OnClick()
 	}

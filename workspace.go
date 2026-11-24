@@ -149,6 +149,12 @@ func (w *Window) selectWorkspace(target string) {
 	if w.renamingGroupID != "" {
 		w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
 	}
+	if w.renamingRSSGroupID != "" {
+		w.commitRenameRSSGroup(w.renamingRSSGroupID, w.renamingRSSGroupName)
+	}
+	if w.renamingRSSFeedID != "" {
+		w.commitRenameRSSFeed(w.renamingRSSFeedID, w.renamingRSSFeedName)
+	}
 	w.saveWorkspaceState(w.activeWorkspace)
 	w.activeWorkspace = target
 	if w.app != nil {
@@ -276,17 +282,21 @@ func (w *Window) dockMeta(locale, id string) dockItemMeta {
 			Tooltip: tooltip,
 		}
 	case WorkspaceRSS:
+		count := 0
+		if w.app != nil {
+			count = w.app.RSSTotalUnread
+		}
 		title := "RSS"
-		tooltip := "RSS Articles (0 unread)"
+		tooltip := fmt.Sprintf("RSS Articles (%d unread)", count)
 		if zh {
 			title = "RSS 文章"
-			tooltip = "RSS 文章 (0 未读)"
+			tooltip = fmt.Sprintf("RSS 文章 (%d 未读)", count)
 		}
 		return dockItemMeta{
 			ID:      WorkspaceRSS,
 			Symbol:  "newspaper.fill",
 			Title:   title,
-			Count:   "0",
+			Count:   fmt.Sprintf("%d", count),
 			Tooltip: tooltip,
 		}
 	case WorkspaceReadLater:
@@ -424,60 +434,6 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 			}
 		}
 	})
-}
-
-// rssSidebar renders the RSS sources and smart feeds in the sidebar.
-func (w *Window) rssSidebar(c *ui.Context, t mui.Tokens, sidebar ui.Element) {
-	nav := &sidebarNav{w: w, focus: w.sidebarFocus, actions: map[string]func(){}}
-	w.sidebarFocus = ""
-	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
-	feedsHeader := "Feeds"
-	allArticlesLabel := "All articles"
-	starredLabel := "Starred"
-	noFeedsTitle := "No RSS feeds yet"
-	noFeedsDesc := "Articles will appear here once feeds are subscribed."
-	if zh {
-		feedsHeader = "订阅源"
-		allArticlesLabel = "全部文章"
-		starredLabel = "标星文章"
-		noFeedsTitle = "暂无 RSS 订阅"
-		noFeedsDesc = "添加订阅源后，文章将显示在此处。"
-	}
-
-	ui.Scroll(c.Key("rss-sidebar-scroll")).Grow(1).MinHeight(0).Clip().
-		TrackScroll(w.workspaceSidebarScroll(WorkspaceRSS)).
-		Padding(0, mui.Space(2), mui.Space(2)+mui.ScrollBottomInset).Children(func() {
-		sectionHeader(c, t, feedsHeader)
-		nav.row(c, t, mui.SidebarRow{
-			Key: "rss-all", Label: allArticlesLabel, Symbol: "newspaper", Count: "0",
-			Selected: w.app != nil && w.app.Selected == "all",
-			OnClick: func() {
-				if w.app != nil {
-					w.app.Selected = "all"
-				}
-			},
-		})
-		nav.row(c, t, mui.SidebarRow{
-			Key: "rss-starred", Label: starredLabel, Symbol: "star", Count: "0",
-			Selected: w.app != nil && w.app.Selected == "starred",
-			OnClick: func() {
-				if w.app != nil {
-					w.app.Selected = "starred"
-				}
-			},
-		})
-
-		ui.Column(c.Key("rss-sidebar-empty")).FillWidth().Padding(mui.Space(4), mui.Space(2)).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, noFeedsTitle).FontSize(13).TextColor(t.Muted).SingleLine()
-			ui.Text(c, noFeedsDesc).FontSize(11).TextColor(t.Faint).SingleLine()
-		})
-	})
-
-	if nav.focused != "" && nav.focused != w.sidebarKeyboard {
-		w.sidebarKeyboard = ""
-	}
-	sidebar.OnShortcut(0, ui.KeyDown, nav.move(1))
-	sidebar.OnShortcut(0, ui.KeyUp, nav.move(-1))
 }
 
 // readLaterSidebar renders the placeholder sidebar for Read Later.
