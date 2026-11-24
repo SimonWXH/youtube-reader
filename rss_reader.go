@@ -43,6 +43,10 @@ const (
 	rssPreviewLines   int     = 2
 	rssReadingColumn  float32 = 680 // the reading text column's widest
 	rssReaderImageMax float32 = 560 // the tallest an inline picture may show
+	// rssHeaderFeedMin is the least room the header's metadata row leaves the
+	// feed name before giving up the inline layout, so the name and its
+	// separator never shrink to a stub. It is the 24 pt gutter, mui.Space(6).
+	rssHeaderFeedMin float32 = 24
 	// The text size control in the reader's header is a three-segment track
 	// as tall as the header's actions, one segment per body size.
 	rssTextSizeTrackH   float32 = 28
@@ -594,7 +598,8 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 		}
 		if !inline {
 			// A narrow reader gives the size control and the actions their
-			// own rows under the metadata, so neither leaves the pane.
+			// own rows under the metadata, so neither leaves the pane and the
+			// feed name keeps its room.
 			ui.Row(c).FillWidth().Justify(ui.End).Children(func() {
 				w.rssTextSizeControl(c, t)
 			})
@@ -670,16 +675,19 @@ func (w *Window) rssTextSizeControl(c *ui.Context, t mui.Tokens) {
 	}
 }
 
-// rssHeaderRowWidth is the width the header's metadata row needs for its fixed
-// pieces: the date, the text size control, and both actions, as their roles
-// draw them, plus the row's own gaps. The feed name is not counted because it
-// is the row's only shrinkable piece and ellipsizes into what they leave. The
-// re-fetch action is measured at its wider label so a re-fetch never flips the
-// row to the stacked layout.
+// rssHeaderRowWidth is the width the header's metadata row needs to stay
+// inline: the date, the text size control, and both actions, as their roles
+// draw them, the row's own gaps, and the least room the feed name and its
+// separator keep. Below it the row stacks rather than shrinking the feed name
+// to a stub. The re-fetch action is measured at its wider label so a re-fetch
+// never flips the row to the stacked layout.
 func rssHeaderRowWidth(c *ui.Context, feedName, date, openLabel, refetchLabel, refetchingLabel string) float32 {
 	refetch := max(rssHeaderActionWidth(c, refetchLabel), rssHeaderActionWidth(c, refetchingLabel))
 	width := rssTextSizeControlWidth(c) + rssHeaderActionWidth(c, openLabel) + refetch + mui.Space(2)
 	children := 4 // the feed name, the spacer, the size control, and the actions
+	if feedName != "" {
+		width += rssHeaderFeedMin
+	}
 	if date != "" {
 		width += rssTextWidth(c, mui.Metadata, date)
 		children++

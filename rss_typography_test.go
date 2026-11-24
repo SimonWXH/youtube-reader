@@ -22,6 +22,23 @@ func rssTextSizeSegments(t *testing.T, tt *ui.Tester) []ui.AccessInfo {
 	return segments
 }
 
+// rssHeaderNode returns the box of the header's node named name, so a test can
+// measure what the metadata row drew.
+func rssHeaderNode(t *testing.T, tt *ui.Tester, header ui.Rect, name string) (ui.Rect, bool) {
+	t.Helper()
+	for _, info := range tt.AccessAll() {
+		box := info.Bounds
+		if info.Name != name || box.W <= 0 || box.H <= 0 {
+			continue
+		}
+		if box.X >= header.X && box.X+box.W <= header.X+header.W &&
+			box.Y >= header.Y && box.Y+box.H <= header.Y+header.H {
+			return box, true
+		}
+	}
+	return ui.Rect{}, false
+}
+
 // TestRSSTextSizeControlStepsAndPersists walks the reader's three body sizes
 // through the header control: the middle step on a first read, each segment
 // named by the size it sets, the page re-drawn at the chosen step, the choice
@@ -161,8 +178,9 @@ func TestRSSReadingColumnNarrowsWithTheWindow(t *testing.T) {
 
 // TestRSSHeaderSizeControlFitsTheReader checks the control never leaves the
 // pane: on the shipped default window and the widest reader it shares the
-// actions' row, and on the narrowest reader it takes its own row above them,
-// each segment inside the reader.
+// actions' row, and on readers too narrow for it and a readable feed name it
+// takes its own row above them, each segment inside the reader and the feed
+// name never squeezed below its minimum.
 func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -174,6 +192,7 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 	}{
 		{name: "default window", width: 1280, sidebar: defaultSidebarWidth, list: defaultRSSListWidth, reader: 618, inline: true},
 		{name: "widest reader", width: 1280, sidebar: minSidebarWidth, list: minRSSListWidth, reader: 798, inline: true},
+		{name: "band under an inline row", width: 1280, sidebar: maxSidebarWidth, list: defaultRSSListWidth, reader: 558, inline: false},
 		{name: "minimum window", width: 960, sidebar: maxSidebarWidth, list: maxRSSListWidth, reader: rssReaderMinWidth, inline: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -214,6 +233,20 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 			}
 			if action.X+action.W > header.Bounds.X+header.Bounds.W {
 				t.Fatalf("the actions run outside the header: %v in %v", action, header.Bounds)
+			}
+			feed, ok := rssHeaderNode(t, tt, header.Bounds, "The Long Read")
+			if !ok {
+				t.Fatal("the header draws no feed name")
+			}
+			if feed.W < mui.Space(6) {
+				t.Fatalf("the feed name is %v wide, want at least the %v pt gutter", feed.W, mui.Space(6))
+			}
+			sep, ok := rssHeaderNode(t, tt, header.Bounds, "·")
+			if !ok {
+				t.Fatal("the header draws no separator between the feed name and the date")
+			}
+			if sep.X < feed.X+feed.W {
+				t.Fatalf("the separator at %v precedes the feed name %v", sep, feed)
 			}
 		})
 	}
