@@ -161,3 +161,40 @@ func TestNotifyOnlyDeliversAndConsumesHandshakeWithoutWindow(t *testing.T) {
 		t.Fatalf("click routing selected = %q, want channel:ch-alpha", a.Selected)
 	}
 }
+
+func TestDeliverPendingNotificationsConsumesAndPosts(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+
+	plans := []core.NotificationPlan{
+		{ChannelID: "ch-1", ChannelName: "One", Count: 1},
+		{ChannelID: "", ChannelName: "Empty"},
+	}
+	if err := core.WritePendingNotifications(dir, plans); err != nil {
+		t.Fatal(err)
+	}
+
+	var posted []NotificationPlan
+	prevShow := showNotificationForApp
+	showNotificationForApp = func(plan NotificationPlan) error {
+		posted = append(posted, plan)
+		return nil
+	}
+	defer func() { showNotificationForApp = prevShow }()
+
+	count := deliverPendingNotifications(a)
+	if count != 1 {
+		t.Fatalf("deliverPendingNotifications count = %d, want 1", count)
+	}
+	if len(posted) != 1 || posted[0].ChannelID != "ch-1" {
+		t.Fatalf("posted notifications = %+v, want 1 plan with ch-1", posted)
+	}
+	remaining, err := core.ReadPendingNotifications(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("pending notifications were not consumed, remaining: %+v", remaining)
+	}
+}

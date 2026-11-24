@@ -84,7 +84,6 @@ func realMain() {
 	if err := app.ConsumeHandoff(); err != nil {
 		log.Printf("handoff: %v", err)
 	}
-	deliverPendingNotifications(app)
 	// Register before Run so MyGo can deliver a click from an earlier run.
 	registerNotificationClick(app)
 	selectedIndex := -1
@@ -109,6 +108,7 @@ func realMain() {
 		// The status surface lives in the menu bar: one item over the window
 		// and one popover rather than status copy inside the window.
 		window.status = newStatusBar(window)
+		deliverPendingNotifications(app)
 	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)

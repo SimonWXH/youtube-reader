@@ -166,6 +166,15 @@ func TestPendingNotificationsLifecycle(t *testing.T) {
 		t.Fatal("empty write created a handshake file")
 	}
 
+	// Plans with empty ChannelID are filtered out
+	emptyPlan := []NotificationPlan{{ChannelID: "", ChannelName: "Invalid"}}
+	if err := WritePendingNotifications(dir, emptyPlan); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(PendingNotificationsPath(dir)); !os.IsNotExist(err) {
+		t.Fatal("empty ChannelID write created a handshake file")
+	}
+
 	// Consume empty returns nil
 	consumed, err := ConsumePendingNotifications(dir)
 	if err != nil {
@@ -228,5 +237,25 @@ func TestPendingNotificationsLifecycle(t *testing.T) {
 	}
 	if consumedAgain != nil {
 		t.Fatalf("subsequent consume = %+v, want nil", consumedAgain)
+	}
+
+	// Unmarshaled plans with empty ChannelID are filtered upon read and consume
+	rawPayload := `{"plans": [{"channelId": ""}, {"channelId": "ch-valid", "channelName": "Valid", "count": 1}]}`
+	if err := os.WriteFile(PendingNotificationsPath(dir), []byte(rawPayload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	readPlans, err := ReadPendingNotifications(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(readPlans) != 1 || readPlans[0].ChannelID != "ch-valid" {
+		t.Fatalf("read plans = %+v, want 1 valid plan", readPlans)
+	}
+	consumedPlans, err := ConsumePendingNotifications(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(consumedPlans) != 1 || consumedPlans[0].ChannelID != "ch-valid" {
+		t.Fatalf("consumed plans = %+v, want 1 valid plan", consumedPlans)
 	}
 }

@@ -154,15 +154,20 @@ func showNotificationDelivery(conn net.Conn, show func([]NotificationPlan)) {
 	if err := json.Unmarshal(data, &delivery); err != nil {
 		return
 	}
-	plans := make([]NotificationPlan, 0, len(delivery.Plans))
-	for _, plan := range delivery.Plans {
-		if plan.ChannelID != "" {
-			plans = append(plans, plan)
-		}
-	}
+	plans := filterNotificationPlans(delivery.Plans)
 	if len(plans) > 0 {
 		show(plans)
 	}
+}
+
+func filterNotificationPlans(plans []NotificationPlan) []NotificationPlan {
+	filtered := make([]NotificationPlan, 0, len(plans))
+	for _, plan := range plans {
+		if plan.ChannelID != "" {
+			filtered = append(filtered, plan)
+		}
+	}
+	return filtered
 }
 
 // PendingNotificationFileName is the atomic handshake file the helper writes
@@ -179,6 +184,7 @@ func PendingNotificationsPath(dir string) string {
 // file in dir using atomic write and 0600 file permissions. If unconsumed pending
 // plans exist in the handshake file, the new plans are appended so no alerts are dropped.
 func WritePendingNotifications(dir string, plans []NotificationPlan) error {
+	plans = filterNotificationPlans(plans)
 	if len(plans) == 0 {
 		return nil
 	}
@@ -206,7 +212,7 @@ func ReadPendingNotifications(dir string) ([]NotificationPlan, error) {
 	if err := json.Unmarshal(data, &delivery); err != nil {
 		return nil, err
 	}
-	return delivery.Plans, nil
+	return filterNotificationPlans(delivery.Plans), nil
 }
 
 // ConsumePendingNotifications reads and removes the pending notification plans
@@ -229,7 +235,7 @@ func ConsumePendingNotifications(dir string) ([]NotificationPlan, error) {
 	if err := json.Unmarshal(data, &delivery); err != nil {
 		return nil, err
 	}
-	return delivery.Plans, nil
+	return filterNotificationPlans(delivery.Plans), nil
 }
 
 func atomicWriteDeliveryFile(path string, data []byte) error {
