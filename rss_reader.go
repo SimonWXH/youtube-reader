@@ -36,17 +36,13 @@ const (
 	// The hover preview is a light bubble left of the bars: its width, the gap
 	// it keeps from the widest bar, the room it keeps from the rail's ends, and
 	// how many characters of the paragraph it shows.
-	rssPreviewWidth  float32 = 236
-	rssPreviewGap    float32 = 8
-	rssPreviewMargin float32 = 6
-	rssPreviewRunes  int     = 56
-	rssPreviewLines  int     = 2
-	// rssHeaderInlineActionsMin is the reader width from which the header's
-	// star, labelled actions and the text size control share the metadata's row,
-	// with room left for the feed name beside them.
-	rssHeaderInlineActionsMin float32 = 680
-	rssReadingColumn          float32 = 680 // the reading text column's widest
-	rssReaderImageMax         float32 = 560 // the tallest an inline picture may show
+	rssPreviewWidth   float32 = 236
+	rssPreviewGap     float32 = 8
+	rssPreviewMargin  float32 = 6
+	rssPreviewRunes   int     = 56
+	rssPreviewLines   int     = 2
+	rssReadingColumn  float32 = 680 // the reading text column's widest
+	rssReaderImageMax float32 = 560 // the tallest an inline picture may show
 	// The text size control in the reader's header is a three-segment track
 	// as tall as the header's actions, one segment per body size.
 	rssTextSizeTrackH   float32 = 28
@@ -547,7 +543,9 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 	}
 
 	gutter := rssReaderPadding(w.rssLayout.readerWidth - rssTickRailWidth)
-	inline := rssHeaderInlineActions(w.rssLayout.readerWidth)
+	content := w.rssLayout.readerWidth - rssTickRailWidth - 2*gutter
+	date := rssReaderDate(art.PublishedAt)
+	inline := rssHeaderRowWidth(c, feedName, date, openLabel, refetchLabel, refetchingLabel) <= content
 	busy := w.rssRefetchingID == art.ID
 	refetchText := refetchLabel
 	if busy {
@@ -578,7 +576,7 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 			if feedName != "" {
 				mui.Metadata.Apply(ui.Text(c, feedName)).TextColor(t.Accent).SingleLine().Shrink(1)
 			}
-			if date := rssReaderDate(art.PublishedAt); date != "" {
+			if date != "" {
 				if feedName != "" {
 					mui.Metadata.Apply(ui.Text(c, "·")).TextColor(t.Faint).Shrink(0)
 				}
@@ -672,12 +670,52 @@ func (w *Window) rssTextSizeControl(c *ui.Context, t mui.Tokens) {
 	}
 }
 
-// rssHeaderInlineActions reports whether the reader is wide enough for the
-// header's star, size control and actions to share the metadata's row. Below it
-// they take their own rows, because the star, the date, the control, and two
-// labelled buttons cannot fit beside the feed name.
-func rssHeaderInlineActions(readerWidth float32) bool {
-	return readerWidth >= rssHeaderInlineActionsMin
+// rssHeaderRowWidth is the width the header's metadata row needs for its fixed
+// pieces: the date, the text size control, and both actions, as their roles
+// draw them, plus the row's own gaps. The feed name is not counted because it
+// is the row's only shrinkable piece and ellipsizes into what they leave. The
+// re-fetch action is measured at its wider label so a re-fetch never flips the
+// row to the stacked layout.
+func rssHeaderRowWidth(c *ui.Context, feedName, date, openLabel, refetchLabel, refetchingLabel string) float32 {
+	refetch := max(rssHeaderActionWidth(c, refetchLabel), rssHeaderActionWidth(c, refetchingLabel))
+	width := rssTextSizeControlWidth(c) + rssHeaderActionWidth(c, openLabel) + refetch + mui.Space(2)
+	children := 4 // the feed name, the spacer, the size control, and the actions
+	if date != "" {
+		width += rssTextWidth(c, mui.Metadata, date)
+		children++
+		if feedName != "" {
+			width += rssTextWidth(c, mui.Metadata, "·")
+			children++
+		}
+	}
+	return width + float32(children-1)*mui.Space(2)
+}
+
+// rssTextWidth measures one run in the given role, the width it draws at.
+func rssTextWidth(c *ui.Context, style mui.TextStyle, text string) float32 {
+	span := ui.Span{Text: text, Font: style.Family, Size: style.Size, Weight: int(style.Weight), LetterSpacing: style.Tracking}
+	if style.Tabular {
+		span.Features = "tnum"
+	}
+	width, _ := c.MeasureText(0, span)
+	return width
+}
+
+// rssHeaderActionWidth is one header action's width: its label plus the
+// button's padding and hairline border.
+func rssHeaderActionWidth(c *ui.Context, label string) float32 {
+	return rssTextWidth(c, mui.Control, label) + 2*mui.Space(3) + 2*mui.Hairline
+}
+
+// rssTextSizeControlWidth is the size control's width: the track's inset and
+// gaps, and one padded segment per offered size drawing its own A.
+func rssTextSizeControlWidth(c *ui.Context) float32 {
+	width := 2*rssTextSizeInset + float32(len(mui.ArticleSizes)-1)*rssTextSizeGap
+	for _, size := range mui.ArticleSizes {
+		glyph := mui.TextStyle{Size: size, LineHeight: size + 6, Weight: mui.Medium}
+		width += rssTextWidth(c, glyph, "A") + 2*rssTextSizePadX
+	}
+	return width
 }
 
 // rssReaderAction is a 28 pt quiet action in the reader header, sized to its

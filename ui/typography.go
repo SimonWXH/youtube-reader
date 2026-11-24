@@ -105,12 +105,6 @@ var (
 	MonospacePath = TextStyle{Family: MonoFont, Size: 11.5, LineHeight: 16, Weight: Regular}
 )
 
-// ArticleSizes are the body sizes the reading view offers, smallest first,
-// and DefaultArticleSize is the middle one, where a reader starts.
-var ArticleSizes = [...]float32{13, 15, 17}
-
-const DefaultArticleSize float32 = 15
-
 // ArticleType is the reading view's whole type scale for one body size: the
 // headline, section heading, body, quote, and code roles sized from that
 // body, and the vertical rhythm the step sets. One value carries the whole
@@ -131,11 +125,7 @@ type ArticleType struct {
 	HeadingGap float32
 }
 
-// articleStepSize is the 2 pt step between ArticleSizes rungs; the ladder is
-// evenly spaced, so a stored size maps to a rung by rounding.
-const articleStepSize float32 = 2
-
-// articleTypes is the type ladder, one rung per ArticleSizes entry. The body
+// articleTypes is the type ladder, one rung per offered body size. The body
 // grows 2 pt a step with 1.6 times its size for a line (21, 24, 27), the
 // headline sits at 1.6 times the body, a section heading at 1.2, and code a
 // step under the body so code never shouts beside prose. The middle rung is
@@ -173,6 +163,23 @@ var articleTypes = [...]ArticleType{
 	},
 }
 
+// ArticleSizes are the body sizes the reading view offers, smallest first,
+// read from the ladder so a step is defined once, and DefaultArticleSize is
+// the middle one, where a reader starts.
+var (
+	ArticleSizes       = articleSizes()
+	DefaultArticleSize = ArticleSizes[len(ArticleSizes)/2]
+)
+
+// articleSizes lists the ladder's body sizes, smallest first.
+func articleSizes() []float32 {
+	sizes := make([]float32, len(articleTypes))
+	for i, scale := range articleTypes {
+		sizes[i] = scale.Size
+	}
+	return sizes
+}
+
 // ArticleTypeForSize returns the scale of the offered body size nearest size.
 // A size that names no rung, as a first launch's zero does, takes the middle
 // one, so the reading view always has a whole scale to draw with.
@@ -198,12 +205,19 @@ func articleStep(size float32) int {
 	if size <= 0 {
 		return len(articleTypes) / 2
 	}
-	step := int((size-articleTypes[0].Size)/articleStepSize + 0.5)
-	if step < 0 {
-		return 0
-	}
-	if step >= len(articleTypes) {
-		return len(articleTypes) - 1
+	step, best := 0, absFloat32(articleTypes[0].Size-size)
+	for i := 1; i < len(articleTypes); i++ {
+		if diff := absFloat32(articleTypes[i].Size - size); diff <= best {
+			step, best = i, diff
+		}
 	}
 	return step
+}
+
+// absFloat32 is size's distance from zero, for measuring which rung is nearest.
+func absFloat32(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

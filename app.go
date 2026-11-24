@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/simon/youtube-reader/core"
+	mui "github.com/simon/youtube-reader/ui"
 )
 
 type App struct {
@@ -227,7 +228,7 @@ func defaultSettings() core.Settings {
 		SidebarWidth:       defaultSidebarWidth,
 		DetailsWidth:       defaultDetailsWidth,
 		RSSListWidth:       defaultRSSListWidth,
-		RSSReadingFontSize: defaultRSSReadingFontSize,
+		RSSReadingFontSize: mui.DefaultArticleSize,
 		MaxGridColumns:     defaultMaxGridColumns,
 		ExpandedGroups:     map[string]bool{},
 		WorkspaceOrder:     append([]string(nil), DefaultWorkspaceOrder...),

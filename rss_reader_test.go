@@ -532,20 +532,6 @@ func TestRSSReaderColumnAndImageSizing(t *testing.T) {
 			t.Errorf("%s: rssImageSize = %vx%v, want %vx%v", tc.name, gotW, gotH, tc.wantW, tc.wantH)
 		}
 	}
-
-	for _, tc := range []struct {
-		width  float32
-		inline bool
-	}{
-		{width: 320, inline: false},
-		{width: rssHeaderInlineActionsMin - 1, inline: false},
-		{width: rssHeaderInlineActionsMin, inline: true},
-		{width: 900, inline: true},
-	} {
-		if got := rssHeaderInlineActions(tc.width); got != tc.inline {
-			t.Errorf("rssHeaderInlineActions(%v) = %v, want %v", tc.width, got, tc.inline)
-		}
-	}
 }
 
 // TestRSSArticleBlocksAndLink pins the body's fallback chain and the host the

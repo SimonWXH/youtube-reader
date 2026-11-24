@@ -33,9 +33,6 @@ const (
 	minRSSListWidth     float32 = 260
 	maxRSSListWidth     float32 = 480
 	rssReaderMinWidth   float32 = 320
-	// defaultRSSReadingFontSize is the middle of the reader's three body
-	// sizes, where a first launch and a settings file without one start.
-	defaultRSSReadingFontSize = mui.DefaultArticleSize
 
 	defaultMaxGridColumns = 5
 	minMaxGridColumns     = 2

@@ -8,21 +8,27 @@ import "testing"
 // letter. The middle step is the published Article tokens so the reader's
 // default page and the type scale cannot drift apart.
 func TestArticleTypeLadder(t *testing.T) {
-	if len(ArticleSizes) != 3 {
-		t.Fatalf("ArticleSizes = %v, want the three steps", ArticleSizes)
+	wantSizes := []float32{13, 15, 17}
+	if len(ArticleSizes) != len(wantSizes) {
+		t.Fatalf("ArticleSizes = %v, want the three steps %v", ArticleSizes, wantSizes)
+	}
+	for i, want := range wantSizes {
+		if ArticleSizes[i] != want {
+			t.Fatalf("ArticleSizes[%d] = %v, want %v", i, ArticleSizes[i], want)
+		}
 	}
 	if DefaultArticleSize != 15 {
 		t.Fatalf("DefaultArticleSize = %v, want the 15 pt middle step", DefaultArticleSize)
 	}
-	if len(articleTypes) != len(ArticleSizes) {
-		t.Fatalf("the ladder has %d rungs for %d sizes", len(articleTypes), len(ArticleSizes))
+	if len(articleTypes) != len(wantSizes) {
+		t.Fatalf("the ladder has %d rungs for %d sizes", len(articleTypes), len(wantSizes))
 	}
 	for i, scale := range articleTypes {
 		if got := ArticleStep(scale.Size); got != i {
 			t.Fatalf("rung %d maps to step %d", i, got)
 		}
-		if scale.Size != ArticleSizes[i] || scale.Body.Size != ArticleSizes[i] {
-			t.Fatalf("rung %d: size %v, body %v, want %v", i, scale.Size, scale.Body.Size, ArticleSizes[i])
+		if scale.Size != wantSizes[i] || scale.Body.Size != wantSizes[i] {
+			t.Fatalf("rung %d: size %v, body %v, want %v", i, scale.Size, scale.Body.Size, wantSizes[i])
 		}
 		if scale.Body.Weight != Regular || scale.Body.Family != "" {
 			t.Fatalf("rung %d: body %v/%q, want the system face at Regular", i, scale.Body.Weight, scale.Body.Family)
