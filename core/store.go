@@ -43,6 +43,15 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 		`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`,
 		`CREATE TABLE IF NOT EXISTS queue (id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT)`,
 		`CREATE TABLE IF NOT EXISTS notified (video_id TEXT PRIMARY KEY, notified_at INTEGER NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS rss_feeds (id TEXT PRIMARY KEY, feed_url TEXT NOT NULL, site_url TEXT, title TEXT, custom_title TEXT, group_ids TEXT, avatar_url TEXT, etag TEXT, last_modified TEXT, last_fetched_at INTEGER NOT NULL DEFAULT 0, failure_count INTEGER NOT NULL DEFAULT 0, last_error TEXT, last_error_at INTEGER NOT NULL DEFAULT 0, refresh_interval_mins INTEGER NOT NULL DEFAULT 30, updated_at INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE TABLE IF NOT EXISTS rss_groups (id TEXT PRIMARY KEY, name TEXT NOT NULL, feed_ids TEXT, sort_order INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE TABLE IF NOT EXISTS rss_articles (id TEXT PRIMARY KEY, feed_id TEXT NOT NULL, title TEXT NOT NULL, link TEXT, guid TEXT, author TEXT, published_at TEXT, snippet TEXT, content_html TEXT, is_full_text INTEGER NOT NULL DEFAULT 0, hero_image TEXT, blocks_json TEXT, read INTEGER NOT NULL DEFAULT 0, read_at INTEGER NOT NULL DEFAULT 0, starred INTEGER NOT NULL DEFAULT 0, starred_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE INDEX IF NOT EXISTS idx_rss_articles_feed_id ON rss_articles(feed_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_rss_articles_published ON rss_articles(published_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_rss_articles_read ON rss_articles(read)`,
+		`CREATE INDEX IF NOT EXISTS idx_rss_articles_starred ON rss_articles(starred)`,
+		`CREATE TABLE IF NOT EXISTS rss_notes (id TEXT PRIMARY KEY, article_id TEXT NOT NULL, paragraph_index INTEGER NOT NULL, paragraph_hash TEXT, selected_text TEXT, note_text TEXT, updated_at INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE INDEX IF NOT EXISTS idx_rss_notes_article_id ON rss_notes(article_id)`,
 	} {
 		if _, err := db.Execute(ctx, ddl); err != nil {
 			db.Close()
@@ -359,7 +368,7 @@ func (s *Store) DrainQueue(ctx context.Context) ([]json.RawMessage, error) {
 }
 
 func (s *Store) Count(ctx context.Context, table string) int {
-	if table != "videos" && table != "channels" {
+	if table != "videos" && table != "channels" && table != "rss_feeds" && table != "rss_articles" {
 		return 0
 	}
 	rows, err := s.db.Query(ctx, fmt.Sprintf(`SELECT COUNT(*) FROM %s`, table))
