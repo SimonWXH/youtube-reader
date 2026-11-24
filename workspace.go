@@ -527,10 +527,14 @@ func (w *Window) rssMainArea(c *ui.Context, t mui.Tokens, rowWidth float32) {
 
 // rssContent renders Column 2: the RSS middle timeline and search filter bar.
 func (w *Window) rssContent(c *ui.Context, t mui.Tokens) {
+	var articles []core.RSSArticle
+	if w.app != nil {
+		articles = w.app.VisibleRSSArticles()
+	}
 	ui.Column(c).Grow(1).MinWidth(0).Background(t.App).Children(func() {
 		w.rssColumnHeader(c, t)
-		w.rssContentStrip(c, t)
-		w.rssArticlesArea(c, t)
+		w.rssContentStrip(c, t, len(articles))
+		w.rssArticlesArea(c, t, articles)
 	})
 }
 
@@ -646,18 +650,13 @@ func (w *Window) rssColumnHeader(c *ui.Context, t mui.Tokens) {
 }
 
 // rssContentStrip renders the filter and search bar for RSS articles.
-func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens) {
+func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens, visibleCount int) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	searchLabel := "Search articles"
 	unreadLabel := "Unread"
 	if zh {
 		searchLabel = "搜索文章"
 		unreadLabel = "未读"
-	}
-
-	visibleCount := 0
-	if w.app != nil {
-		visibleCount = len(w.app.VisibleRSSArticles())
 	}
 
 	var countText string
@@ -724,13 +723,7 @@ func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens) {
 }
 
 // rssArticlesArea renders the scrollable list of article item rows or the empty state.
-func (w *Window) rssArticlesArea(c *ui.Context, t mui.Tokens) {
-	if w.app == nil {
-		w.rssEmptyState(c, t)
-		return
-	}
-
-	articles := w.app.VisibleRSSArticles()
+func (w *Window) rssArticlesArea(c *ui.Context, t mui.Tokens, articles []core.RSSArticle) {
 	if len(articles) == 0 {
 		w.rssEmptyState(c, t)
 		return
@@ -802,7 +795,7 @@ func (w *Window) rssArticleItemRow(c *ui.Context, t mui.Tokens, art core.RSSArti
 				if !art.Read {
 					dot := ui.ButtonBase(c).Key("rss-unread-dot:"+art.ID).
 						Size(6, 6).Radius(mui.RadiusCheck).Background(t.Accent).
-						Label("Unread").Cursor(ui.CursorPointer)
+						Label("Unread: " + art.Title).Cursor(ui.CursorPointer)
 					if dot.Clicked() {
 						dotClicked = true
 						_ = w.app.MarkRSSArticleRead(art.ID, true)
@@ -840,7 +833,10 @@ func (w *Window) rssArticleItemRow(c *ui.Context, t mui.Tokens, art core.RSSArti
 				mui.CardTitle.Apply(ui.Text(c, art.Title)).TextColor(titleColor).MaxLines(2).Wrap()
 
 				// Line 3-4: 2-line plain text snippet
-				snippet := CleanArticleSnippet(art.Snippet, art.ContentHTML, 200)
+				snippet := art.Snippet
+				if strings.TrimSpace(snippet) == "" {
+					snippet = core.CleanSnippet(art.ContentHTML, "", 200)
+				}
 				if snippet != "" {
 					snippetColor := t.Muted
 					if art.Read {
@@ -926,18 +922,6 @@ func FormatArticleDate(raw string, now time.Time) string {
 		return t.Format("Jan 2")
 	}
 	return t.Format("Jan 2, 2006")
-}
-
-// CleanArticleSnippet cleans and bounds the snippet to maxRunes, collapsing extra whitespace/newlines.
-func CleanArticleSnippet(snippet, content string, maxRunes int) string {
-	if maxRunes <= 0 {
-		maxRunes = 200
-	}
-	raw := snippet
-	if strings.TrimSpace(raw) == "" {
-		raw = content
-	}
-	return core.CleanSnippet(raw, "", maxRunes)
 }
 
 // rssEmptyState renders the empty article timeline.

@@ -82,68 +82,6 @@ func TestFormatArticleDate(t *testing.T) {
 	}
 }
 
-func TestCleanArticleSnippet(t *testing.T) {
-	tests := []struct {
-		name     string
-		snippet  string
-		content  string
-		maxRunes int
-		want     string
-	}{
-		{
-			name:     "both empty",
-			snippet:  "",
-			content:  "",
-			maxRunes: 200,
-			want:     "",
-		},
-		{
-			name:     "fallback to content",
-			snippet:  "",
-			content:  "<p>Hello from full content body</p>",
-			maxRunes: 200,
-			want:     "Hello from full content body",
-		},
-		{
-			name:     "strip HTML tags and whitespace collapse",
-			snippet:  "<div><p>Paragraph 1</p>\n\n<p>Paragraph <b>2</b></p></div>",
-			content:  "",
-			maxRunes: 200,
-			want:     "Paragraph 1 Paragraph 2",
-		},
-		{
-			name:     "decode HTML entities",
-			snippet:  "AT&amp;T announced &quot;Project X&quot; &lt;tech&gt; &amp; more",
-			content:  "",
-			maxRunes: 200,
-			want:     `AT&T announced "Project X" <tech> & more`,
-		},
-		{
-			name:     "truncation with ellipsis",
-			snippet:  "The quick brown fox jumps over the lazy dog repeatedly and effortlessly.",
-			content:  "",
-			maxRunes: 20,
-			want:     "The quick brown fox ...",
-		},
-		{
-			name:     "short text not truncated",
-			snippet:  "Short summary",
-			content:  "",
-			maxRunes: 50,
-			want:     "Short summary",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := CleanArticleSnippet(tc.snippet, tc.content, tc.maxRunes)
-			if got != tc.want {
-				t.Errorf("CleanArticleSnippet() = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
 func TestRSSArticlesModelAndStoreIntegration(t *testing.T) {
 	dir := t.TempDir()
 	a := newTestApp(t, dir)
@@ -406,7 +344,8 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 			ID:          "art-3",
 			FeedID:      "f-tech",
 			Title:       "Rust 2026 Edition Announced",
-			Snippet:     "New async primitives and memory safety improvements.",
+			Snippet:     "",
+			ContentHTML: "<p>New async primitives and <b>memory safety</b> improvements.</p>",
 			PublishedAt: time.Now().Add(-10 * time.Hour).Format(time.RFC3339),
 			Read:        false,
 			UpdatedAt:   now,
@@ -457,9 +396,17 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 		}
 	}
 
+	// Rows without a stored snippet show plain text derived from ContentHTML
+	if !tt.HasText("New async primitives and memory safety improvements.") {
+		t.Errorf("expected snippet fallback from ContentHTML to render as plain text: %v", tt.Texts())
+	}
+
 	// Verify unread dot exists for unread items and does not exist for read items
-	if _, ok := tt.Find("Unread"); !ok {
-		t.Errorf("Unread indicator dot or label not found")
+	if _, ok := tt.Find("Unread: Quantum Computing Advances"); !ok {
+		t.Errorf("unread dot missing for unread article art-1")
+	}
+	if _, ok := tt.Find("Unread: Minimalism in Scandinavian Design"); ok {
+		t.Errorf("read article art-2 should not render an unread dot")
 	}
 
 	// 5. Click an article item to select it
@@ -501,13 +448,23 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 
 	// 7. Click unread dot on art-1 to mark as read
 	unreadCountBefore := a.RSSUnreadCount("")
-	if err := a.MarkRSSArticleRead("art-1", true); err != nil {
-		t.Fatal(err)
+	if err := tt.Click("Unread: Quantum Computing Advances"); err != nil {
+		t.Fatalf("click unread dot: %v", err)
 	}
 	tt.Frame()
 	unreadCountAfter := a.RSSUnreadCount("")
 	if unreadCountAfter != unreadCountBefore-1 {
 		t.Fatalf("unread count = %d, want %d", unreadCountAfter, unreadCountBefore-1)
+	}
+	if a.SelectedRSSArticleID != "art-2" {
+		t.Fatalf("clicking the dot should not change selection, SelectedRSSArticleID = %q", a.SelectedRSSArticleID)
+	}
+	storedDot, err := a.Store.GetRSSArticle(ctx, "art-1")
+	if err != nil || storedDot == nil || !storedDot.Read {
+		t.Fatalf("art-1 should be persisted as read after dot click: %v %+v", err, storedDot)
+	}
+	if _, ok := tt.Find("Unread: Quantum Computing Advances"); ok {
+		t.Errorf("unread dot should disappear after marking art-1 read")
 	}
 	if !tt.HasText("1 unread") {
 		t.Fatalf("header should update to '1 unread': texts = %v", tt.Texts())
@@ -523,14 +480,19 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 	}
 
 	// 9. Context menu right-click mark as read
-	if err := tt.RightClick("Quantum Computing Advances"); err == nil {
-		if err := tt.ChooseMenuItem("Mark as Read"); err == nil {
-			tt.Frame()
-			stored, _ := a.Store.GetRSSArticle(ctx, "art-1")
-			if stored == nil || !stored.Read {
-				t.Errorf("art-1 should be marked read via context menu")
-			}
-		}
+	if err := tt.RightClick("Quantum Computing Advances"); err != nil {
+		t.Fatalf("right-click article row: %v", err)
+	}
+	if err := tt.ChooseMenuItem("Mark as Read"); err != nil {
+		t.Fatalf("choose 'Mark as Read': %v", err)
+	}
+	tt.Frame()
+	storedMenu, err := a.Store.GetRSSArticle(ctx, "art-1")
+	if err != nil || storedMenu == nil || !storedMenu.Read {
+		t.Fatalf("art-1 should be marked read via context menu: %v %+v", err, storedMenu)
+	}
+	if !tt.HasText("1 unread") {
+		t.Errorf("header should show '1 unread' after context-menu read: texts = %v", tt.Texts())
 	}
 
 	// 10. Search filtering in UI
@@ -834,18 +796,17 @@ func TestRSSScenariosEndToEnd(t *testing.T) {
 			t.Errorf("store did not persist Read=true and ReadAt > 0: %+v", stored)
 		}
 
-		if err := tt.RightClick("Next-Gen Quantum Processors Exceed 1000 Qubits with High Fidelity"); err == nil {
-			if err := tt.ChooseMenuItem("Mark as Unread"); err == nil {
-				tt.Frame()
-			}
+		if err := tt.RightClick("Next-Gen Quantum Processors Exceed 1000 Qubits with High Fidelity"); err != nil {
+			t.Fatalf("right-click article row: %v", err)
 		}
-
-		_ = a.MarkRSSArticleRead("art-101", false)
+		if err := tt.ChooseMenuItem("Mark as Unread"); err != nil {
+			t.Fatalf("choose 'Mark as Unread': %v", err)
+		}
 		tt.Frame()
 
-		storedUnread, _ := a.Store.GetRSSArticle(ctx, "art-101")
-		if storedUnread == nil || storedUnread.Read {
-			t.Errorf("store did not persist Read=false: %+v", storedUnread)
+		storedUnread, err := a.Store.GetRSSArticle(ctx, "art-101")
+		if err != nil || storedUnread == nil || storedUnread.Read {
+			t.Fatalf("store did not persist Read=false after context menu: %v %+v", err, storedUnread)
 		}
 		if !tt.HasText("3 unread") {
 			t.Errorf("header should restore '3 unread', texts = %v", tt.Texts())
