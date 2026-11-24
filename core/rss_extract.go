@@ -2,8 +2,6 @@ package core
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"html"
 	"io"
 	"net/http"
@@ -11,7 +9,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/PuerkitoBio/goquery"
@@ -23,9 +20,6 @@ const (
 	// for an extracted article to be considered valid full text. Content with
 	// fewer runes smoothly degrades to the feed's original summary.
 	MinFullTextLength = 100
-
-	// DefaultImageTimeout is the maximum duration allowed when checking an image resource.
-	DefaultImageTimeout = 10 * time.Second
 )
 
 var (
@@ -356,34 +350,4 @@ func ExtractFullText(ctx context.Context, client *http.Client, pageURL string, f
 	}
 	isFullText = false
 	return contentHTML, blocks, false, heroImage, nil
-}
-
-// CheckImageAccess checks whether an image URL is accessible over HTTP,
-// returning true if the image responds with a 2xx status code.
-// It verifies against anti-hotlinking (HTTP 403), missing resources (HTTP 404),
-// and connection timeouts.
-func CheckImageAccess(ctx context.Context, client *http.Client, imageURL string) (bool, int, error) {
-	if strings.TrimSpace(imageURL) == "" {
-		return false, 0, errors.New("empty image URL")
-	}
-	if client == nil {
-		client = &http.Client{Timeout: DefaultImageTimeout}
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
-	if err != nil {
-		return false, 0, err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) YouTubeReader/1.0")
-	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return false, 0, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return true, resp.StatusCode, nil
-	}
-	return false, resp.StatusCode, fmt.Errorf("HTTP %d", resp.StatusCode)
 }

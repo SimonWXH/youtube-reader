@@ -561,7 +561,6 @@ func (a *App) RefetchRSSArticleContent(ctx context.Context, articleID string) (c
 	art.ContentHTML = contentHTML
 	art.Blocks = blocks
 	art.IsFullText = isFullText
-	art.IsDegraded = !isFullText
 	if art.HeroImage == "" && hero != "" {
 		art.HeroImage = hero
 	}

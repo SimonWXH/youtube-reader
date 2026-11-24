@@ -334,7 +334,6 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 			Snippet:     snippet,
 			ContentHTML: contentHTML,
 			IsFullText:  isFullText,
-			IsDegraded:  !isFullText,
 			HeroImage:   heroImage,
 			Blocks:      blocks,
 			Read:        false, // Will not overwrite if already read in DB
