@@ -152,3 +152,110 @@ func waitForNotificationSocket(dir string) error {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// TestPendingNotificationsLifecycle verifies writing, appending, reading, and
+// atomic consuming of pending notification plans.
+func TestPendingNotificationsLifecycle(t *testing.T) {
+	dir := t.TempDir()
+
+	// Empty write is no-op
+	if err := WritePendingNotifications(dir, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(PendingNotificationsPath(dir)); !os.IsNotExist(err) {
+		t.Fatal("empty write created a handshake file")
+	}
+
+	// Plans with empty ChannelID are filtered out
+	emptyPlan := []NotificationPlan{{ChannelID: "", ChannelName: "Invalid"}}
+	if err := WritePendingNotifications(dir, emptyPlan); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(PendingNotificationsPath(dir)); !os.IsNotExist(err) {
+		t.Fatal("empty ChannelID write created a handshake file")
+	}
+
+	// Consume empty returns nil
+	consumed, err := ConsumePendingNotifications(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if consumed != nil {
+		t.Fatalf("consume on empty = %+v, want nil", consumed)
+	}
+
+	batch1 := []NotificationPlan{
+		{ChannelID: "ch-1", ChannelName: "One", Count: 2, NewestTitle: "Video 1"},
+	}
+	if err := WritePendingNotifications(dir, batch1); err != nil {
+		t.Fatal(err)
+	}
+
+	// Check file mode 0600
+	fi, err := os.Stat(PendingNotificationsPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("file mode = %o, want 0600", fi.Mode().Perm())
+	}
+
+	// Read without consuming
+	read, err := ReadPendingNotifications(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(read) != 1 || read[0].ChannelID != "ch-1" {
+		t.Fatalf("read = %+v, want %+v", read, batch1)
+	}
+
+	// Write batch 2 appends
+	batch2 := []NotificationPlan{
+		{ChannelID: "ch-2", ChannelName: "Two", Count: 1, NewestTitle: "Video 2"},
+	}
+	if err := WritePendingNotifications(dir, batch2); err != nil {
+		t.Fatal(err)
+	}
+
+	// Consume returns both batches and deletes file
+	consumed, err = ConsumePendingNotifications(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(consumed) != 2 || consumed[0].ChannelID != "ch-1" || consumed[1].ChannelID != "ch-2" {
+		t.Fatalf("consumed = %+v, want 2 plans", consumed)
+	}
+
+	if _, err := os.Stat(PendingNotificationsPath(dir)); !os.IsNotExist(err) {
+		t.Fatal("handshake file was not removed after consume")
+	}
+
+	// Subsequent consume returns nil
+	consumedAgain, err := ConsumePendingNotifications(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if consumedAgain != nil {
+		t.Fatalf("subsequent consume = %+v, want nil", consumedAgain)
+	}
+
+	// Unmarshaled plans with empty ChannelID are filtered upon read and consume
+	rawPayload := `{"plans": [{"channelId": ""}, {"channelId": "ch-valid", "channelName": "Valid", "count": 1}]}`
+	if err := os.WriteFile(PendingNotificationsPath(dir), []byte(rawPayload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	readPlans, err := ReadPendingNotifications(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(readPlans) != 1 || readPlans[0].ChannelID != "ch-valid" {
+		t.Fatalf("read plans = %+v, want 1 valid plan", readPlans)
+	}
+	consumedPlans, err := ConsumePendingNotifications(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(consumedPlans) != 1 || consumedPlans[0].ChannelID != "ch-valid" {
+		t.Fatalf("consumed plans = %+v, want 1 valid plan", consumedPlans)
+	}
+}

@@ -275,10 +275,3 @@ func TestCommitHelperResultLeavesRefreshAndHandoffOwnership(t *testing.T) {
 	}
 }
 
-func TestEscapeAppleScript(t *testing.T) {
-	got := escapeAppleScript("2 new videos\nA \"quote\" \\ path")
-	want := "2 new videos\\nA \\\"quote\\\" \\\\ path"
-	if got != want {
-		t.Fatalf("escaped = %q, want %q", got, want)
-	}
-}

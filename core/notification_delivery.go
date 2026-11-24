@@ -15,8 +15,8 @@ import (
 // notificationSocketName is the local socket a running app listens on for the
 // notifications the background helper must display itself. macOS attributes a
 // notification to, and only lets a click route back to, the process that posted
-// it, so the helper hands its plans to the app instead of posting them through
-// osascript, which Notification Center attributes to Script Editor.
+// it, so the helper hands its plans to the app instead of an external runner,
+// which Notification Center would attribute to another application.
 const notificationSocketName = "notifications.sock"
 
 // notificationDeliveryTimeout bounds the local socket handshake. Both ends run
@@ -26,7 +26,7 @@ const notificationDeliveryTimeout = 2 * time.Second
 
 // maxNotificationSocketPath is the longest usable socket path. macOS keeps a
 // Unix socket path in a 104-byte sun_path; a longer data directory falls back
-// to AppleScript notifications instead of failing the app's socket.
+// to pending notifications instead of failing the app's socket.
 const maxNotificationSocketPath = 104
 
 // maxNotificationDeliveryBytes caps one delivery read off the socket: a plan
@@ -48,7 +48,7 @@ func NotificationSocketPath(dir string) string {
 // DeliverNotifications hands plans to the running app, which shows them as
 // YouTube Reader and routes a click through its own notification IDs. It
 // reports an error when no app is listening, and never launches the app: a
-// closed app keeps the plain AppleScript path so nothing pulls its window up.
+// closed app uses the pending notification fallback so nothing pulls its window up.
 func DeliverNotifications(dir string, plans []NotificationPlan) error {
 	if len(plans) == 0 {
 		return nil
@@ -154,13 +154,123 @@ func showNotificationDelivery(conn net.Conn, show func([]NotificationPlan)) {
 	if err := json.Unmarshal(data, &delivery); err != nil {
 		return
 	}
-	plans := make([]NotificationPlan, 0, len(delivery.Plans))
-	for _, plan := range delivery.Plans {
-		if plan.ChannelID != "" {
-			plans = append(plans, plan)
-		}
-	}
+	plans := filterNotificationPlans(delivery.Plans)
 	if len(plans) > 0 {
 		show(plans)
 	}
+}
+
+func filterNotificationPlans(plans []NotificationPlan) []NotificationPlan {
+	filtered := make([]NotificationPlan, 0, len(plans))
+	for _, plan := range plans {
+		if plan.ChannelID != "" {
+			filtered = append(filtered, plan)
+		}
+	}
+	return filtered
+}
+
+// PendingNotificationFileName is the atomic handshake file the helper writes
+// when the app is not running, so the app can consume and post the notifications
+// when launched with --notify-only.
+const PendingNotificationFileName = "notification-pending.json"
+
+// PendingNotificationsPath returns the full path to the pending notifications handshake file.
+func PendingNotificationsPath(dir string) string {
+	return filepath.Join(dir, PendingNotificationFileName)
+}
+
+// WritePendingNotifications writes pending notification plans to the handshake
+// file in dir using atomic write and 0600 file permissions. If unconsumed pending
+// plans exist in the handshake file, the new plans are appended so no alerts are dropped.
+func WritePendingNotifications(dir string, plans []NotificationPlan) error {
+	plans = filterNotificationPlans(plans)
+	if len(plans) == 0 {
+		return nil
+	}
+	existing, _ := ReadPendingNotifications(dir)
+	allPlans := append(existing, plans...)
+	data, err := json.MarshalIndent(NotificationDelivery{Plans: allPlans}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWriteDeliveryFile(PendingNotificationsPath(dir), data)
+}
+
+// ReadPendingNotifications reads unconsumed pending notification plans from dir
+// without deleting the handshake file.
+func ReadPendingNotifications(dir string) ([]NotificationPlan, error) {
+	path := PendingNotificationsPath(dir)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var delivery NotificationDelivery
+	if err := json.Unmarshal(data, &delivery); err != nil {
+		return nil, err
+	}
+	return filterNotificationPlans(delivery.Plans), nil
+}
+
+// ConsumePendingNotifications reads and removes the pending notification plans
+// from dir in an atomic step.
+func ConsumePendingNotifications(dir string) ([]NotificationPlan, error) {
+	path := PendingNotificationsPath(dir)
+	tmpPath := filepath.Join(dir, fmt.Sprintf(".pending-consume-%d.tmp", time.Now().UnixNano()))
+	if err := os.Rename(path, tmpPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer os.Remove(tmpPath)
+	data, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return nil, err
+	}
+	var delivery NotificationDelivery
+	if err := json.Unmarshal(data, &delivery); err != nil {
+		return nil, err
+	}
+	return filterNotificationPlans(delivery.Plans), nil
+}
+
+func atomicWriteDeliveryFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".pending-*.tmp")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(name, path); err != nil {
+		return err
+	}
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }

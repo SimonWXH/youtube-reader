@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -33,11 +32,15 @@ func notificationTestRun(t *testing.T, dir string, plans []core.NotificationPlan
 
 // TestPostHelperNotificationsPrefersTheRunningApp proves a running app shows
 // the notification itself, so it is attributed to YouTube Reader and its click
-// opens the channel there instead of Script Editor.
+// opens the channel there directly.
 func TestPostHelperNotificationsPrefersTheRunningApp(t *testing.T) {
 	var delivered bool
-	var scripts []string
-	previousDeliver, previousOSA := deliverNotificationsForHelper, osascriptForHelper
+	var launchedBundle string
+	var pendingWritten bool
+
+	prevDeliver := deliverNotificationsForHelper
+	prevWrite := writePendingNotificationsForHelper
+	prevLaunch := launchNotifyOnlyForHelper
 	deliverNotificationsForHelper = func(dir string, plans []core.NotificationPlan) error {
 		delivered = true
 		if len(plans) != 1 || plans[0].ChannelID != "ch-1" {
@@ -45,51 +48,96 @@ func TestPostHelperNotificationsPrefersTheRunningApp(t *testing.T) {
 		}
 		return nil
 	}
-	osascriptForHelper = func(script string) error {
-		scripts = append(scripts, script)
+	writePendingNotificationsForHelper = func(dir string, plans []core.NotificationPlan) error {
+		pendingWritten = true
 		return nil
 	}
-	defer func() { deliverNotificationsForHelper, osascriptForHelper = previousDeliver, previousOSA }()
+	launchNotifyOnlyForHelper = func(bundlePath string) error {
+		launchedBundle = bundlePath
+		return nil
+	}
+	defer func() {
+		deliverNotificationsForHelper = prevDeliver
+		writePendingNotificationsForHelper = prevWrite
+		launchNotifyOnlyForHelper = prevLaunch
+	}()
 
 	postHelperNotifications(t.TempDir(), []core.NotificationPlan{{ChannelID: "ch-1", ChannelName: "One", Count: 1}})
 	if !delivered {
 		t.Fatal("the running app was not handed the notification")
 	}
-	if len(scripts) != 0 {
-		t.Fatalf("osascript also posted: %q", scripts)
+	if pendingWritten {
+		t.Fatal("pending notifications were written even though app was running")
+	}
+	if launchedBundle != "" {
+		t.Fatalf("app was launched even though it was running: %q", launchedBundle)
 	}
 }
 
-// TestPostHelperNotificationsFallsBackToPlainAppleScript proves a closed app
-// still gets notified, by a plain display notification that never names the app
-// bundle, so the refresh cannot pull its window up (PR #24).
-func TestPostHelperNotificationsFallsBackToPlainAppleScript(t *testing.T) {
-	var scripts []string
-	previousDeliver, previousOSA := deliverNotificationsForHelper, osascriptForHelper
+// TestPostHelperNotificationsFallsBackToPendingNotifyOnly proves a closed app
+// has its notifications written to the pending handshake file and is launched
+// hidden with --notify-only.
+func TestPostHelperNotificationsFallsBackToPendingNotifyOnly(t *testing.T) {
+	var launchedBundle string
+	prevDeliver := deliverNotificationsForHelper
+	prevResolve := resolveAppBundleForHelper
+	prevLaunch := launchNotifyOnlyForHelper
 	deliverNotificationsForHelper = func(dir string, plans []core.NotificationPlan) error {
 		return os.ErrClosed
 	}
-	osascriptForHelper = func(script string) error {
-		scripts = append(scripts, script)
+	resolveAppBundleForHelper = func() (string, error) {
+		return "/Applications/YouTube Reader.app", nil
+	}
+	launchNotifyOnlyForHelper = func(bundlePath string) error {
+		launchedBundle = bundlePath
 		return nil
 	}
-	defer func() { deliverNotificationsForHelper, osascriptForHelper = previousDeliver, previousOSA }()
+	defer func() {
+		deliverNotificationsForHelper = prevDeliver
+		resolveAppBundleForHelper = prevResolve
+		launchNotifyOnlyForHelper = prevLaunch
+	}()
 
-	postHelperNotifications(t.TempDir(), []core.NotificationPlan{
+	dir := t.TempDir()
+	plans := []core.NotificationPlan{
 		{ChannelID: "ch-1", ChannelName: "A \"quoted\" channel", Count: 2, NewestTitle: "Newest video"},
 		{ChannelID: "ch-2", ChannelName: "Two", Count: 1},
-	})
-	if len(scripts) != 2 {
-		t.Fatalf("osascript calls = %d, want 2", len(scripts))
 	}
-	want := `display notification "2 new videos\nNewest video" with title "A \"quoted\" channel" subtitle "New videos" sound name "default"`
-	if scripts[0] != want {
-		t.Fatalf("script = %q, want %q", scripts[0], want)
+	postHelperNotifications(dir, plans)
+
+	if launchedBundle != "/Applications/YouTube Reader.app" {
+		t.Fatalf("launched bundle = %q, want /Applications/YouTube Reader.app", launchedBundle)
 	}
-	for _, script := range scripts {
-		if strings.Contains(script, "tell application") {
-			t.Fatalf("script targets an application, which can launch the main app: %q", script)
-		}
+
+	pending, err := core.ReadPendingNotifications(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 2 || pending[0].ChannelID != "ch-1" || pending[1].ChannelID != "ch-2" {
+		t.Fatalf("pending notifications = %+v, want %+v", pending, plans)
+	}
+}
+
+// TestAppBundleForExecutable proves that an executable inside an .app bundle
+// correctly resolves its enclosing bundle path.
+func TestAppBundleForExecutable(t *testing.T) {
+	dir := t.TempDir()
+	appPath := filepath.Join(dir, "YouTube Reader.app")
+	contentsDir := filepath.Join(appPath, "Contents")
+	resourcesDir := filepath.Join(contentsDir, "Resources")
+	if err := os.MkdirAll(resourcesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	helperExe := filepath.Join(resourcesDir, "ytreader-helper")
+
+	got := appBundleForExecutable(helperExe)
+	if got != appPath {
+		t.Fatalf("appBundleForExecutable(%q) = %q, want %q", helperExe, got, appPath)
+	}
+
+	// Non-bundle path returns empty string
+	if gotStandalone := appBundleForExecutable("/tmp/bin/ytreader-helper"); gotStandalone != "" {
+		t.Fatalf("standalone exe resolved to %q, want empty", gotStandalone)
 	}
 }
 
@@ -159,5 +207,77 @@ func TestHelperNotificationsReachTheRunningApp(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the running app never received the helper's notification")
+	}
+}
+
+// TestIntegratedClosedAppToDeliveryCompleted drives the entire integration path:
+// when the app is not running (socket unavailable), helper detects this, writes
+// the handshake file, and executes the notify-only launch hook, which consumes
+// the handshake file and posts the notifications to the native delivery stand-in.
+func TestIntegratedClosedAppToDeliveryCompleted(t *testing.T) {
+	dir := t.TempDir()
+
+	// 1. Stand-in for native delivery (the app's UNUserNotificationCenter poster)
+	var nativeDelivered []core.NotificationPlan
+	nativePoster := func(plan core.NotificationPlan) error {
+		nativeDelivered = append(nativeDelivered, plan)
+		return nil
+	}
+
+	// 2. Seams for helper
+	prevDeliver := deliverNotificationsForHelper
+	prevResolve := resolveAppBundleForHelper
+	prevLaunch := launchNotifyOnlyForHelper
+
+	// App socket is not listening (simulating app not running)
+	deliverNotificationsForHelper = func(dir string, plans []core.NotificationPlan) error {
+		return os.ErrClosed
+	}
+	resolveAppBundleForHelper = func() (string, error) {
+		return "/Applications/YouTube Reader.app", nil
+	}
+
+	var launchedBundle string
+	launchNotifyOnlyForHelper = func(bundlePath string) error {
+		launchedBundle = bundlePath
+		// Stand-in for --notify-only app launch:
+		// It consumes the pending handshake file and calls nativePoster
+		plans, err := core.ConsumePendingNotifications(dir)
+		if err != nil {
+			return err
+		}
+		for _, plan := range plans {
+			if err := nativePoster(plan); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	defer func() {
+		deliverNotificationsForHelper = prevDeliver
+		resolveAppBundleForHelper = prevResolve
+		launchNotifyOnlyForHelper = prevLaunch
+	}()
+
+	// 3. Helper discovers new videos while app is closed
+	plans := []core.NotificationPlan{
+		{ChannelID: "ch-prime", ChannelName: "Prime Channel", Count: 5, NewestTitle: "Epic Video"},
+	}
+	postHelperNotifications(dir, plans)
+
+	// 4. Assertions:
+	// App bundle was resolved and launched with --notify-only
+	if launchedBundle != "/Applications/YouTube Reader.app" {
+		t.Fatalf("launched bundle = %q, want /Applications/YouTube Reader.app", launchedBundle)
+	}
+
+	// Native delivery received the notification
+	if len(nativeDelivered) != 1 || nativeDelivered[0].ChannelID != "ch-prime" {
+		t.Fatalf("native delivery received %+v, want %+v", nativeDelivered, plans)
+	}
+
+	// Handshake file was consumed and removed
+	if _, err := os.Stat(core.PendingNotificationsPath(dir)); !os.IsNotExist(err) {
+		t.Fatal("handshake file still exists after delivery completed")
 	}
 }

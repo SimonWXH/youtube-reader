@@ -102,3 +102,99 @@ func TestPostNotificationRecordsOnlyPermissionRefusals(t *testing.T) {
 		})
 	}
 }
+
+// TestNotifyOnlyDeliversAndConsumesHandshakeWithoutWindow proves that when the
+// app is invoked with --notify-only, it consumes the pending handshake file
+// and delivers the native notifications through the existing app postNotification
+// path without instantiating any Window.
+func TestNotifyOnlyDeliversAndConsumesHandshakeWithoutWindow(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+
+	plans := []core.NotificationPlan{
+		{ChannelID: "ch-alpha", ChannelName: "Alpha", Count: 3, NewestTitle: "Alpha Video"},
+		{ChannelID: "ch-beta", ChannelName: "Beta", Count: 1, NewestTitle: "Beta Video"},
+	}
+	if err := core.WritePendingNotifications(dir, plans); err != nil {
+		t.Fatal(err)
+	}
+
+	var delivered []NotificationPlan
+	prevShow := showNotificationForApp
+	showNotificationForApp = func(plan NotificationPlan) error {
+		delivered = append(delivered, plan)
+		return nil
+	}
+	defer func() { showNotificationForApp = prevShow }()
+
+	var loopRan bool
+	prevLoop := runNotifyOnlyLoop
+	runNotifyOnlyLoop = func(fn func()) error {
+		loopRan = true
+		fn()
+		return nil
+	}
+	defer func() { runNotifyOnlyLoop = prevLoop }()
+
+	runNotifyOnly(a)
+
+	if !loopRan {
+		t.Fatal("runNotifyOnlyLoop was not called")
+	}
+	if len(delivered) != 2 || delivered[0].ChannelID != "ch-alpha" || delivered[1].ChannelID != "ch-beta" {
+		t.Fatalf("delivered notifications = %+v, want %+v", delivered, plans)
+	}
+
+	// Verify handshake file was removed
+	remaining, err := core.ReadPendingNotifications(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("pending notifications were not consumed, remaining: %+v", remaining)
+	}
+
+	// Prove that cold-start click on the delivered notification routes to channel
+	notificationClickHandler(a)(core.ChannelNotificationID("ch-alpha"))
+	if a.Selected != "channel:ch-alpha" {
+		t.Fatalf("click routing selected = %q, want channel:ch-alpha", a.Selected)
+	}
+}
+
+func TestDeliverPendingNotificationsConsumesAndPosts(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+
+	plans := []core.NotificationPlan{
+		{ChannelID: "ch-1", ChannelName: "One", Count: 1},
+		{ChannelID: "", ChannelName: "Empty"},
+	}
+	if err := core.WritePendingNotifications(dir, plans); err != nil {
+		t.Fatal(err)
+	}
+
+	var posted []NotificationPlan
+	prevShow := showNotificationForApp
+	showNotificationForApp = func(plan NotificationPlan) error {
+		posted = append(posted, plan)
+		return nil
+	}
+	defer func() { showNotificationForApp = prevShow }()
+
+	count := deliverPendingNotifications(a)
+	if count != 1 {
+		t.Fatalf("deliverPendingNotifications count = %d, want 1", count)
+	}
+	if len(posted) != 1 || posted[0].ChannelID != "ch-1" {
+		t.Fatalf("posted notifications = %+v, want 1 plan with ch-1", posted)
+	}
+	remaining, err := core.ReadPendingNotifications(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("pending notifications were not consumed, remaining: %+v", remaining)
+	}
+}

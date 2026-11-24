@@ -26,14 +26,65 @@ type refreshFunc func(context.Context, core.YouTube, core.Settings, core.SyncSta
 var refreshForHelper refreshFunc = core.RefreshYoutube
 var networkAvailableForHelper = core.NetworkAvailable
 
-// Notification scripts run through this seam so tests can assert what the
-// helper would ask osascript to do without launching a real process.
-var osascriptForHelper = func(script string) error {
-	cmd := exec.Command("osascript", "-e", script)
+// Notification delivery seams so tests can assert what the helper does
+// without launching a real process or modifying real directories.
+var writePendingNotificationsForHelper = func(dir string, plans []core.NotificationPlan) error {
+	return core.WritePendingNotifications(dir, plans)
+}
+
+// launchNotifyOnlyForHelper launches the app bundle hidden in the background
+// with --notify-only using macOS open: open -g -j -a "<bundlePath>" --args --notify-only.
+var launchNotifyOnlyForHelper = func(bundlePath string) error {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+	cmd := exec.Command("open", "-g", "-j", "-a", bundlePath, "--args", "--notify-only")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("osascript: %w: %s", err, out)
+		return fmt.Errorf("open --notify-only: %w: %s", err, string(out))
 	}
 	return nil
+}
+
+// appBundleForExecutable walks up the path from exe looking for an enclosing
+// .app directory bundle (e.g. YouTube Reader.app/Contents/Resources/ytreader-helper).
+func appBundleForExecutable(exe string) string {
+	dir := filepath.Dir(exe)
+	for dir != "/" && dir != "." && dir != filepath.Dir(dir) {
+		if strings.HasSuffix(dir, ".app") {
+			if fi, err := os.Stat(filepath.Join(dir, "Contents")); err == nil && fi.IsDir() {
+				return dir
+			}
+		}
+		dir = filepath.Dir(dir)
+	}
+	return ""
+}
+
+// resolveAppBundleForHelper finds the actual installation bundle path of YouTube Reader.
+// It prioritizes the enclosing bundle of the current helper executable, followed by
+// standard application paths.
+var resolveAppBundleForHelper = func() (string, error) {
+	exe, err := os.Executable()
+	if err == nil {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = resolved
+		}
+		if bundle := appBundleForExecutable(exe); bundle != "" {
+			return bundle, nil
+		}
+	}
+	candidates := []string{
+		"/Applications/YouTube Reader.app",
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		candidates = append(candidates, filepath.Join(home, "Applications", "YouTube Reader.app"))
+	}
+	for _, path := range candidates {
+		if fi, err := os.Stat(path); err == nil && fi.IsDir() {
+			return path, nil
+		}
+	}
+	return "", errors.New("cannot resolve YouTube Reader.app bundle path")
 }
 
 // deliverNotificationsForHelper is the socket the running app listens on. It
@@ -252,52 +303,32 @@ func isWouldBlock(err error) bool {
 	return errors.Is(err, syscall.EWOULDBLOCK)
 }
 
-// postHelperNotifications shows the plans a background refresh produced
-// without pulling the main window up. A running app owns the notification:
-// it shows it as YouTube Reader, and a click opens the channel there. With the
-// app closed the plans go out as plain AppleScript notifications, which have
-// no click callback and never target the app bundle (PR #24), so a refresh
-// never launches the app it is meant to stay clear of.
+// postHelperNotifications delivers the plans a background refresh produced
+// without pulling the main window up. When the app is running and listening on
+// its socket, the helper hands the plans over directly. When the app is closed,
+// the helper writes the plans to a pending handshake file and launches the app
+// bundle with --notify-only in the background (open -g -j), so the app itself
+// posts native notifications under its own identity without creating a window
+// or stealing focus.
 func postHelperNotifications(dir string, plans []core.NotificationPlan) {
 	if len(plans) == 0 {
 		return
 	}
-	if err := deliverNotificationsForHelper(dir, plans); err != nil {
-		for _, plan := range plans {
-			if err := postPlainNotification(plan); err != nil {
-				log.Printf("notification: %v", err)
-			}
-		}
+	if err := deliverNotificationsForHelper(dir, plans); err == nil {
+		return
 	}
-}
-
-// postPlainNotification posts one notification for an app that is not running.
-// macOS attributes it to Script Editor, so it carries no notification ID and
-// no click routing; naming the app bundle here would launch its window.
-func postPlainNotification(plan core.NotificationPlan) error {
-	if runtime.GOOS != "darwin" {
-		return nil
+	if err := writePendingNotificationsForHelper(dir, plans); err != nil {
+		log.Printf("notification pending write: %v", err)
+		return
 	}
-	body := fmt.Sprintf("%d new video%s", plan.Count, plural(plan.Count))
-	if plan.NewestTitle != "" {
-		body += "\n" + plan.NewestTitle
+	bundle, err := resolveAppBundleForHelper()
+	if err != nil {
+		log.Printf("notification bundle resolve: %v", err)
+		return
 	}
-	script := fmt.Sprintf("display notification \"%s\" with title \"%s\" subtitle \"New videos\" sound name \"default\"", escapeAppleScript(body), escapeAppleScript(plan.ChannelName))
-	return osascriptForHelper(script)
-}
-
-func escapeAppleScript(s string) string {
-	s = strings.ReplaceAll(s, "\\", "\\\\")
-	s = strings.ReplaceAll(s, "\"", "\\\"")
-	s = strings.ReplaceAll(s, "\r", "\\r")
-	return strings.ReplaceAll(s, "\n", "\\n")
-}
-
-func plural(n int) string {
-	if n == 1 {
-		return ""
+	if err := launchNotifyOnlyForHelper(bundle); err != nil {
+		log.Printf("notification launch notify-only: %v", err)
 	}
-	return "s"
 }
 
 func main() {
