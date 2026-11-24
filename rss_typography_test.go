@@ -47,7 +47,7 @@ func TestRSSTextSizeControlStepsAndPersists(t *testing.T) {
 	a, w, tt := rssReaderTestWindow(t)
 	openRSSReaderTickArticle(t, tt)
 
-	if got := w.readingType().Size; got != mui.DefaultArticleSize {
+	if got := w.readingType().Body.Size; got != mui.DefaultArticleSize {
 		t.Fatalf("a first read opens at %v pt, want %v", got, mui.DefaultArticleSize)
 	}
 	segments := rssTextSizeSegments(t, tt)
@@ -70,7 +70,7 @@ func TestRSSTextSizeControlStepsAndPersists(t *testing.T) {
 		t.Fatalf("click the smallest step: %v", err)
 	}
 	tt.Frame()
-	if got := w.readingType().Size; got != 13 {
+	if got := w.readingType().Body.Size; got != 13 {
 		t.Fatalf("after choosing the smallest step the reader draws at %v pt, want 13", got)
 	}
 	if got := a.settingsSnapshot().RSSReadingFontSize; got != 13 {
@@ -89,7 +89,7 @@ func TestRSSTextSizeControlStepsAndPersists(t *testing.T) {
 		t.Fatalf("click the largest step: %v", err)
 	}
 	tt.Frame()
-	if got := w.readingType().Size; got != 17 {
+	if got := w.readingType().Body.Size; got != 17 {
 		t.Fatalf("after choosing the largest step the reader draws at %v pt, want 17", got)
 	}
 	disk = loadSettingsFile(t, a.Dir)
@@ -103,7 +103,7 @@ func TestRSSTextSizeControlStepsAndPersists(t *testing.T) {
 	reopened.selectWorkspace(WorkspaceRSS)
 	reopenedTT := ui.NewTester(reopened.view, 1280, 808)
 	reopenedTT.Frame()
-	if got := reopened.readingType().Size; got != 17 {
+	if got := reopened.readingType().Body.Size; got != 17 {
 		t.Fatalf("relaunched reader draws at %v pt, want the saved 17", got)
 	}
 }
@@ -141,7 +141,7 @@ func TestRSSReadingScaleRedrawsTheBody(t *testing.T) {
 		t.Fatalf("paragraph heights %v do not grow with the type ladder", heights)
 	}
 	// The setting is the step on screen, not a stale default.
-	if got := w.readingType().Size; got != 17 {
+	if got := w.readingType().Body.Size; got != 17 {
 		t.Fatalf("reader ends at %v pt, want 17", got)
 	}
 }

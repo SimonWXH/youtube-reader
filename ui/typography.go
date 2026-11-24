@@ -107,11 +107,10 @@ var (
 
 // ArticleType is the reading view's whole type scale for one body size: the
 // headline, section heading, body, quote, and code roles sized from that
-// body, and the vertical rhythm the step sets. One value carries the whole
-// page, so a size change never leaves a role or a gap at the old step.
+// body, and the vertical rhythm the step sets. The body's size is the step,
+// and one value carries the whole page, so a size change never leaves a role
+// or a gap at the old step.
 type ArticleType struct {
-	// Size is the body's point size, the step the scale is built from.
-	Size  float32
 	Title TextStyle
 	// Heading is a section heading inside the body; a first-level heading
 	// takes Title, the article's own size.
@@ -132,7 +131,6 @@ type ArticleType struct {
 // the published Article tokens.
 var articleTypes = [...]ArticleType{
 	{
-		Size:       13,
 		Title:      TextStyle{Size: 21, LineHeight: 27, Weight: Semibold, Tracking: -0.2},
 		Heading:    TextStyle{Size: 16, LineHeight: 22, Weight: Semibold, Tracking: -0.1},
 		Body:       TextStyle{Size: 13, LineHeight: 21, Weight: Regular},
@@ -142,7 +140,6 @@ var articleTypes = [...]ArticleType{
 		HeadingGap: Space(1.5),
 	},
 	{
-		Size:       15,
 		Title:      ArticleTitle,
 		Heading:    ArticleHeading,
 		Body:       ArticleBody,
@@ -152,7 +149,6 @@ var articleTypes = [...]ArticleType{
 		HeadingGap: Space(2),
 	},
 	{
-		Size:       17,
 		Title:      TextStyle{Size: 27, LineHeight: 34, Weight: Semibold, Tracking: -0.2},
 		Heading:    TextStyle{Size: 20, LineHeight: 28, Weight: Semibold, Tracking: -0.1},
 		Body:       TextStyle{Size: 17, LineHeight: 27, Weight: Regular},
@@ -175,7 +171,7 @@ var (
 func articleSizes() []float32 {
 	sizes := make([]float32, len(articleTypes))
 	for i, scale := range articleTypes {
-		sizes[i] = scale.Size
+		sizes[i] = scale.Body.Size
 	}
 	return sizes
 }
@@ -190,7 +186,7 @@ func ArticleTypeForSize(size float32) ArticleType {
 // NormalizeArticleSize turns a stored body size into the offered rung nearest
 // it, for the settings file and the size control to agree on what is saved.
 func NormalizeArticleSize(size float32) float32 {
-	return articleTypes[articleStep(size)].Size
+	return articleTypes[articleStep(size)].Body.Size
 }
 
 // ArticleStep returns the place, from the smallest, of the offered size nearest
@@ -205,9 +201,9 @@ func articleStep(size float32) int {
 	if size <= 0 {
 		return len(articleTypes) / 2
 	}
-	step, best := 0, absFloat32(articleTypes[0].Size-size)
+	step, best := 0, absFloat32(articleTypes[0].Body.Size-size)
 	for i := 1; i < len(articleTypes); i++ {
-		if diff := absFloat32(articleTypes[i].Size - size); diff <= best {
+		if diff := absFloat32(articleTypes[i].Body.Size - size); diff <= best {
 			step, best = i, diff
 		}
 	}

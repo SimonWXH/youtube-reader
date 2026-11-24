@@ -24,11 +24,11 @@ func TestArticleTypeLadder(t *testing.T) {
 		t.Fatalf("the ladder has %d rungs for %d sizes", len(articleTypes), len(wantSizes))
 	}
 	for i, scale := range articleTypes {
-		if got := ArticleStep(scale.Size); got != i {
+		if got := ArticleStep(scale.Body.Size); got != i {
 			t.Fatalf("rung %d maps to step %d", i, got)
 		}
-		if scale.Size != wantSizes[i] || scale.Body.Size != wantSizes[i] {
-			t.Fatalf("rung %d: size %v, body %v, want %v", i, scale.Size, scale.Body.Size, wantSizes[i])
+		if scale.Body.Size != wantSizes[i] {
+			t.Fatalf("rung %d: body %v, want %v", i, scale.Body.Size, wantSizes[i])
 		}
 		if scale.Body.Weight != Regular || scale.Body.Family != "" {
 			t.Fatalf("rung %d: body %v/%q, want the system face at Regular", i, scale.Body.Weight, scale.Body.Family)
@@ -88,9 +88,9 @@ func TestArticleTypeForSize(t *testing.T) {
 		{"a negative size", -3, 1, 15},
 	} {
 		scale := ArticleTypeForSize(tc.size)
-		if scale.Size != tc.want || ArticleStep(scale.Size) != tc.index {
+		if scale.Body.Size != tc.want || ArticleStep(scale.Body.Size) != tc.index {
 			t.Errorf("%s: ArticleTypeForSize(%v) = step %d at %v, want step %d at %v",
-				tc.name, tc.size, ArticleStep(scale.Size), scale.Size, tc.index, tc.want)
+				tc.name, tc.size, ArticleStep(scale.Body.Size), scale.Body.Size, tc.index, tc.want)
 		}
 		if got := NormalizeArticleSize(tc.size); got != tc.want {
 			t.Errorf("%s: NormalizeArticleSize(%v) = %v, want %v", tc.name, tc.size, got, tc.want)

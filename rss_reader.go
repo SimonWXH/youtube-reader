@@ -645,7 +645,7 @@ func rssTextSizeStepLabel(index int, size float32, zh bool) string {
 // scale in the same frame and saves the choice.
 func (w *Window) rssTextSizeControl(c *ui.Context, t mui.Tokens) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
-	selected := mui.ArticleStep(w.readingType().Size)
+	selected := mui.ArticleStep(w.readingType().Body.Size)
 	parts := ui.SegmentedBase(c.Key("rss-text-size"), &selected, len(mui.ArticleSizes))
 	track := parts.Track.Height(rssTextSizeTrackH).Shrink(0).Padding(rssTextSizeInset).Gap(rssTextSizeGap).
 		Radius(mui.RadiusControl).Background(t.SurfaceAlt).Border(mui.Hairline, t.Border).
