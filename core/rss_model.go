@@ -107,8 +107,6 @@ type RSSArticle struct {
 	Starred     bool           `json:"starred"`             // Local star / favorite state
 	StarredAt   int64          `json:"starredAt,omitempty"` // Timestamp when starred (msec)
 	UpdatedAt   int64          `json:"updatedAt"`           // Millisecond timestamp
-	Deleted     bool           `json:"deleted,omitempty"`   // Tombstone flag
-	DeletedAt   int64          `json:"deletedAt,omitempty"` // Deletion millisecond timestamp
 }
 
 // RSSReadRecord holds cross-device read status for an article.

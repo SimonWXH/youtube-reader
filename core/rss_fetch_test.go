@@ -601,3 +601,35 @@ func TestDiscoverFeedURLResolvesRelativeFeedLink(t *testing.T) {
 		t.Fatalf("expected a single probe of the input directory URL, got %v", requested)
 	}
 }
+
+func TestDiscoverFeedURLRejectsFailedProbes(t *testing.T) {
+	ctx := context.Background()
+
+	notFound := &http.Client{Transport: &mockTransport{
+		roundTripFunc: func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusNotFound,
+				Status:     "404 Not Found",
+				Header:     http.Header{"Content-Type": []string{"text/html"}},
+				Body:       io.NopCloser(strings.NewReader("<html><body>not found</body></html>")),
+			}, nil
+		},
+	}}
+	if found, err := DiscoverFeedURL(ctx, notFound, "https://example.com/blog/"); err == nil {
+		t.Fatalf("404 response must not be reported as a discovered feed, got %q", found)
+	}
+
+	noFeed := &http.Client{Transport: &mockTransport{
+		roundTripFunc: func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+				Body:       io.NopCloser(strings.NewReader("<html><head><title>Plain page</title></head><body>No feed here</body></html>")),
+			}, nil
+		},
+	}}
+	if found, err := DiscoverFeedURL(ctx, noFeed, "https://example.com/blog/"); err == nil {
+		t.Fatalf("a page without a declared feed must return an error, got %q", found)
+	}
+}

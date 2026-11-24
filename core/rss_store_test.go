@@ -87,6 +87,63 @@ func TestRSSStoreFeedCRUDAndTombstone(t *testing.T) {
 	}
 }
 
+func TestSaveRSSFeedMetadataDoesNotReviveTombstone(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+
+	now := time.Now().UnixMilli()
+	feed := RSSFeed{
+		ID:        "feed:tombstone-preserved",
+		FeedURL:   "https://example.com/rss",
+		Title:     "Original Title",
+		UpdatedAt: now,
+	}
+	if err := store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteRSSFeed(ctx, feed.ID, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// A background refresh holds a snapshot taken before the deletion and saves it after.
+	stale := feed
+	stale.Title = "Title From Refresh"
+	stale.UpdatedAt = now + 5000
+	if err := store.SaveRSSFeed(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	active, err := store.ListRSSFeeds(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("metadata save must not revive a deleted feed, got %+v", active)
+	}
+	got, err := store.GetRSSFeed(ctx, feed.ID)
+	if err != nil || got == nil {
+		t.Fatalf("GetRSSFeed failed: %v", err)
+	}
+	if !got.Deleted || got.DeletedAt == 0 {
+		t.Fatalf("tombstone must survive metadata saves, got %+v", got)
+	}
+	if got.Title != "Title From Refresh" {
+		t.Fatalf("metadata updates should still apply to deleted feeds, got %q", got.Title)
+	}
+
+	// Only the explicit subscription path revives a feed.
+	if err := store.SubscribeRSSFeed(ctx, feed); err != nil {
+		t.Fatalf("SubscribeRSSFeed failed: %v", err)
+	}
+	active, err = store.ListRSSFeeds(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 1 || active[0].ID != feed.ID || active[0].Deleted || active[0].DeletedAt != 0 {
+		t.Fatalf("re-subscribe must revive the feed, got %+v", active)
+	}
+}
+
 func TestRSSStoreGroupCRUDAndTombstone(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
@@ -223,58 +280,55 @@ func TestRSSStoreArticleIdempotencyPreservesReadAndStarred(t *testing.T) {
 	}
 }
 
-func TestRSSStoreRetentionNeverDeletesUnreadOrStarred(t *testing.T) {
+func TestRSSStoreRetentionNeverPurgesUnreadOrStarred(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
 
 	feedID := "feed:test-retention"
 	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	body := "<p>body</p>"
 
 	articles := []RSSArticle{
-		// 1. Unread, old (published 60 days ago) -> MUST NOT be deleted
 		{
 			ID:          "art-unread-old",
 			FeedID:      feedID,
 			Title:       "Unread Old Article",
+			ContentHTML: body,
 			PublishedAt: now.Add(-60 * 24 * time.Hour).Format(time.RFC3339),
 			Read:        false,
-			Starred:     false,
 		},
-		// 2. Starred, old (published 60 days ago, read) -> MUST NOT be deleted
 		{
 			ID:          "art-starred-old",
 			FeedID:      feedID,
 			Title:       "Starred Old Article",
+			ContentHTML: body,
 			PublishedAt: now.Add(-60 * 24 * time.Hour).Format(time.RFC3339),
 			Read:        true,
 			Starred:     true,
 		},
-		// 3. Read, old (published 60 days ago, not starred) -> MUST BE DELETED
 		{
 			ID:          "art-read-old",
 			FeedID:      feedID,
 			Title:       "Read Old Article",
+			ContentHTML: body,
 			PublishedAt: now.Add(-60 * 24 * time.Hour).Format(time.RFC3339),
 			Read:        true,
-			Starred:     false,
 		},
-		// 4. Read, recent (published 2 days ago, not starred) -> KEPT if within limit
 		{
 			ID:          "art-read-recent",
 			FeedID:      feedID,
 			Title:       "Read Recent Article",
+			ContentHTML: body,
 			PublishedAt: now.Add(-2 * 24 * time.Hour).Format(time.RFC3339),
 			Read:        true,
-			Starred:     false,
 		},
-		// 5. Unread, recent (published 2 days ago) -> MUST NOT be deleted
 		{
 			ID:          "art-unread-recent",
 			FeedID:      feedID,
 			Title:       "Unread Recent Article",
+			ContentHTML: body,
 			PublishedAt: now.Add(-2 * 24 * time.Hour).Format(time.RFC3339),
 			Read:        false,
-			Starred:     false,
 		},
 	}
 
@@ -282,27 +336,132 @@ func TestRSSStoreRetentionNeverDeletesUnreadOrStarred(t *testing.T) {
 		t.Fatalf("SaveRSSArticles failed: %v", err)
 	}
 
-	// Retention policy: max 1 read article, older than 30 days
-	deletedCount, err := store.CleanOldRSSArticles(ctx, feedID, 1, 30*24*time.Hour, now)
+	// Over the read cap by one: only the oldest read, unstarred article may be purged.
+	purgedCount, err := store.CleanOldRSSArticles(ctx, feedID, 1, 30*24*time.Hour, now)
 	if err != nil {
 		t.Fatalf("CleanOldRSSArticles failed: %v", err)
 	}
-	if deletedCount != 1 {
-		t.Fatalf("expected exactly 1 article deleted, got %d", deletedCount)
+	if purgedCount != 1 {
+		t.Fatalf("expected exactly 1 article purged, got %d", purgedCount)
 	}
 
-	// Verify each article's survival
 	for _, id := range []string{"art-unread-old", "art-starred-old", "art-read-recent", "art-unread-recent"} {
 		a, err := store.GetRSSArticle(ctx, id)
 		if err != nil || a == nil {
-			t.Fatalf("protected article %q was mistakenly deleted!", id)
+			t.Fatalf("protected article %q was mistakenly purged", id)
+		}
+		if a.ContentHTML != body {
+			t.Fatalf("protected article %q lost its content, got %q", id, a.ContentHTML)
 		}
 	}
 
-	// Verify only art-read-old was deleted
-	deletedArt, _ := store.GetRSSArticle(ctx, "art-read-old")
-	if deletedArt != nil {
-		t.Fatalf("expected art-read-old to be deleted, but still exists")
+	old, err := store.GetRSSArticle(ctx, "art-read-old")
+	if err != nil || old == nil {
+		t.Fatalf("purged article metadata must survive, got %+v (err %v)", old, err)
+	}
+	if old.ContentHTML != "" || len(old.Blocks) != 0 || old.IsFullText {
+		t.Fatalf("purged article body should be cleared, got %+v", old)
+	}
+	if !old.Read {
+		t.Fatalf("purged article must keep its read state")
+	}
+}
+
+func TestRSSStoreRetentionOnlyPurgesAboveCap(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+
+	feedID := "feed:test-retention-under-cap"
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	body := "<p>body</p>"
+
+	var articles []RSSArticle
+	for _, age := range []int{90, 60, 31} {
+		articles = append(articles, RSSArticle{
+			ID:          "art-below-" + string(rune('a'+age)),
+			FeedID:      feedID,
+			Title:       "Old Read Article",
+			ContentHTML: body,
+			PublishedAt: now.Add(-time.Duration(age) * 24 * time.Hour).Format(time.RFC3339),
+			Read:        true,
+		})
+	}
+	if err := store.SaveRSSArticles(ctx, articles); err != nil {
+		t.Fatal(err)
+	}
+
+	purgedCount, err := store.CleanOldRSSArticles(ctx, feedID, 500, 30*24*time.Hour, now)
+	if err != nil {
+		t.Fatalf("CleanOldRSSArticles failed: %v", err)
+	}
+	if purgedCount != 0 {
+		t.Fatalf("age alone must never purge articles below the cap, purged %d", purgedCount)
+	}
+
+	for _, a := range articles {
+		got, err := store.GetRSSArticle(ctx, a.ID)
+		if err != nil || got == nil || got.ContentHTML != body {
+			t.Fatalf("below-cap article %q lost content: %+v", a.ID, got)
+		}
+	}
+}
+
+func TestRSSStoreRetentionPreservesReadStateAcrossRefetch(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+
+	feedID := "feed:test-retention-refetch"
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+
+	articles := []RSSArticle{
+		{
+			ID:          "art-refetch-old",
+			FeedID:      feedID,
+			Title:       "Old Read Article",
+			ContentHTML: "<p>old body</p>",
+			PublishedAt: now.Add(-60 * 24 * time.Hour).Format(time.RFC3339),
+			Read:        true,
+			ReadAt:      now.Add(-59 * 24 * time.Hour).UnixMilli(),
+		},
+		{
+			ID:          "art-refetch-new",
+			FeedID:      feedID,
+			Title:       "New Read Article",
+			ContentHTML: "<p>new body</p>",
+			PublishedAt: now.Add(-1 * 24 * time.Hour).Format(time.RFC3339),
+			Read:        true,
+		},
+	}
+	if err := store.SaveRSSArticles(ctx, articles); err != nil {
+		t.Fatal(err)
+	}
+
+	if purgedCount, err := store.CleanOldRSSArticles(ctx, feedID, 1, 30*24*time.Hour, now); err != nil || purgedCount != 1 {
+		t.Fatalf("expected 1 article purged, got %d (err %v)", purgedCount, err)
+	}
+
+	// The feed still publishes the article, so the next refresh re-saves it as unread.
+	if err := store.SaveRSSArticles(ctx, []RSSArticle{{
+		ID:          "art-refetch-old",
+		FeedID:      feedID,
+		Title:       "Old Read Article",
+		ContentHTML: "<p>refreshed body</p>",
+		PublishedAt: now.Add(-60 * 24 * time.Hour).Format(time.RFC3339),
+		Read:        false,
+		UpdatedAt:   now.UnixMilli(),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.GetRSSArticle(ctx, "art-refetch-old")
+	if err != nil || got == nil {
+		t.Fatalf("GetRSSArticle failed: %v", err)
+	}
+	if !got.Read || got.ReadAt == 0 {
+		t.Fatalf("a refresh must not turn a purged read article back into unread: %+v", got)
+	}
+	if got.ContentHTML != "<p>refreshed body</p>" {
+		t.Fatalf("refresh should refill the purged body, got %q", got.ContentHTML)
 	}
 }
 
@@ -564,16 +723,16 @@ func TestDeleteRSSFeedSoftDeleteArticles(t *testing.T) {
 	if err != nil || unstarred == nil {
 		t.Fatalf("GetRSSArticle unstarred failed: %v", err)
 	}
-	if unstarred.Deleted {
-		t.Fatalf("soft-deleting a feed must not tombstone its articles, got deleted=true")
+	if unstarred.ContentHTML == "" {
+		t.Fatalf("soft-deleting a feed must keep article content so the feed can be revived")
 	}
 
 	starred, err := store.GetRSSArticle(ctx, "art:test-softdel:starred")
 	if err != nil || starred == nil {
 		t.Fatalf("GetRSSArticle starred failed: %v", err)
 	}
-	if starred.Deleted {
-		t.Fatalf("starred article should NOT be deleted, got deleted=true")
+	if starred.ContentHTML == "" {
+		t.Fatalf("starred article content should be preserved")
 	}
 
 	unreadList, err := store.ListRSSArticles(ctx, RSSArticleFilter{UnreadOnly: true})
@@ -602,11 +761,9 @@ func TestDeleteRSSFeedSoftDeleteArticles(t *testing.T) {
 
 	// Re-subscribing the same feed must restore its previously fetched articles
 	// with their read/starred state intact.
-	feed.Deleted = false
-	feed.DeletedAt = 0
 	feed.UpdatedAt = now + 1000
-	if err := store.SaveRSSFeed(ctx, feed); err != nil {
-		t.Fatalf("SaveRSSFeed re-subscribe failed: %v", err)
+	if err := store.SubscribeRSSFeed(ctx, feed); err != nil {
+		t.Fatalf("SubscribeRSSFeed re-subscribe failed: %v", err)
 	}
 
 	restored, err := store.ListRSSArticles(ctx, RSSArticleFilter{})

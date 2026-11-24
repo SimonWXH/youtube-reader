@@ -428,8 +428,9 @@ func getHeader(h http.Header, key string) string {
 	return ""
 }
 
-// DiscoverFeedURL probes a website's HTML for RSS/Atom/JSON Feed links,
-// or returns the original URL if it already appears to be a direct feed.
+// DiscoverFeedURL probes a website's HTML for RSS/Atom/JSON Feed links.
+// It returns the canonical feed URL, or an error when the probe fails or the
+// page declares no feed.
 func DiscoverFeedURL(ctx context.Context, client *http.Client, targetURL string) (string, error) {
 	canonical := CanonicalURL(targetURL)
 	if canonical == "" {
@@ -462,6 +463,10 @@ func DiscoverFeedURL(ctx context.Context, client *http.Client, targetURL string)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("feed discovery failed for %s: HTTP %s", requestURL, resp.Status)
+	}
+
 	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
 	if strings.Contains(contentType, "xml") || strings.Contains(contentType, "json") {
 		return canonical, nil
@@ -469,7 +474,7 @@ func DiscoverFeedURL(ctx context.Context, client *http.Client, targetURL string)
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
-		return canonical, nil
+		return "", fmt.Errorf("feed discovery failed for %s: %w", requestURL, err)
 	}
 
 	var foundFeed string
@@ -492,5 +497,5 @@ func DiscoverFeedURL(ctx context.Context, client *http.Client, targetURL string)
 	if foundFeed != "" {
 		return CanonicalURL(foundFeed), nil
 	}
-	return canonical, nil
+	return "", fmt.Errorf("no RSS/Atom/JSON feed found at %s", requestURL)
 }

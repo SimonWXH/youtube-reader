@@ -15,7 +15,8 @@ import (
 // RSS FEEDS STORAGE
 // ======================================================================================
 
-// SaveRSSFeed inserts or updates an RSS subscription feed in the local store.
+// SaveRSSFeed inserts or updates RSS feed metadata. It never clears an existing
+// tombstone; re-subscribing goes through SubscribeRSSFeed.
 func (s *Store) SaveRSSFeed(ctx context.Context, f RSSFeed) error {
 	groupJSON, _ := json.Marshal(f.GroupIDs)
 	sql := `INSERT INTO rss_feeds(
@@ -37,15 +38,24 @@ func (s *Store) SaveRSSFeed(ctx context.Context, f RSSFeed) error {
 		last_error=excluded.last_error,
 		last_error_at=excluded.last_error_at,
 		refresh_interval_mins=excluded.refresh_interval_mins,
-		updated_at=excluded.updated_at,
-		deleted=excluded.deleted,
-		deleted_at=excluded.deleted_at`
+		updated_at=excluded.updated_at`
 
 	_, err := s.db.Execute(ctx, sql,
 		f.ID, f.FeedURL, f.SiteURL, f.Title, f.CustomTitle, string(groupJSON), f.AvatarURL,
 		f.ETag, f.LastModified, f.LastFetchedAt, f.FailureCount, f.LastError, f.LastErrorAt,
 		f.RefreshIntervalMins, f.UpdatedAt, boolInt(f.Deleted), f.DeletedAt,
 	)
+	return err
+}
+
+// SubscribeRSSFeed records a user subscription, reviving a previously soft-deleted feed.
+func (s *Store) SubscribeRSSFeed(ctx context.Context, f RSSFeed) error {
+	f.Deleted = false
+	f.DeletedAt = 0
+	if err := s.SaveRSSFeed(ctx, f); err != nil {
+		return err
+	}
+	_, err := s.db.Execute(ctx, `UPDATE rss_feeds SET deleted = 0, deleted_at = 0 WHERE id = ?`, f.ID)
 	return err
 }
 
@@ -227,8 +237,8 @@ func (s *Store) SaveRSSArticles(ctx context.Context, articles []RSSArticle) erro
 	upsertSQL := `INSERT INTO rss_articles(
 		id, feed_id, title, link, guid, author, published_at, snippet,
 		content_html, is_full_text, hero_image, blocks_json,
-		read, read_at, starred, starred_at, updated_at, deleted, deleted_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		read, read_at, starred, starred_at, updated_at
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	ON CONFLICT(id) DO UPDATE SET
 		feed_id=excluded.feed_id,
 		title=excluded.title,
@@ -257,7 +267,6 @@ func (s *Store) SaveRSSArticles(ctx context.Context, articles []RSSArticle) erro
 				a.ID, a.FeedID, a.Title, a.Link, a.GUID, a.Author, a.PublishedAt, a.Snippet,
 				a.ContentHTML, boolInt(a.IsFullText), a.HeroImage, blocksJSON,
 				boolInt(a.Read), a.ReadAt, boolInt(a.Starred), a.StarredAt, a.UpdatedAt,
-				boolInt(a.Deleted), a.DeletedAt,
 			},
 		})
 	}
@@ -271,7 +280,7 @@ func (s *Store) GetRSSArticle(ctx context.Context, id string) (*RSSArticle, erro
 	rows, err := s.db.Query(ctx, `SELECT
 		id, feed_id, title, link, guid, author, published_at, snippet,
 		content_html, is_full_text, hero_image, blocks_json,
-		read, read_at, starred, starred_at, updated_at, deleted, deleted_at
+		read, read_at, starred, starred_at, updated_at
 	FROM rss_articles WHERE id = ?`, id)
 	if err != nil {
 		return nil, err
@@ -298,8 +307,6 @@ func (s *Store) ListRSSArticles(ctx context.Context, filter RSSArticleFilter) ([
 	var where []string
 	var args []any
 
-	where = append(where, "deleted = 0")
-
 	if filter.FeedID != "" {
 		where = append(where, "feed_id = ?")
 		args = append(args, filter.FeedID)
@@ -321,7 +328,7 @@ func (s *Store) ListRSSArticles(ctx context.Context, filter RSSArticleFilter) ([
 	query := `SELECT
 		id, feed_id, title, link, guid, author, published_at, snippet,
 		content_html, is_full_text, hero_image, blocks_json,
-		read, read_at, starred, starred_at, updated_at, deleted, deleted_at
+		read, read_at, starred, starred_at, updated_at
 	FROM rss_articles`
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
@@ -372,96 +379,59 @@ func (s *Store) SetRSSArticleStarred(ctx context.Context, id string, starred boo
 	return err
 }
 
-// DeleteRSSArticle deletes an article. If hard is false, marks deleted with a tombstone.
-func (s *Store) DeleteRSSArticle(ctx context.Context, id string, hard bool) error {
-	now := time.Now().UnixMilli()
-	if hard {
-		_, err := s.db.Execute(ctx, `DELETE FROM rss_articles WHERE id = ?`, id)
-		return err
-	}
-	_, err := s.db.Execute(ctx, `UPDATE rss_articles SET deleted = 1, deleted_at = ?, updated_at = ? WHERE id = ?`, now, now, id)
-	return err
-}
-
-// CleanOldRSSArticles cleans up old articles for a feed according to retention limits.
+// CleanOldRSSArticles purges the bodies of old read articles for a feed once the feed
+// exceeds its read-article cap.
 //
-// ABSOLUTE RETENTION SAFETY INVARIANTS:
-// 1. UNREAD articles (`read = 0`) are PERMANENTLY RETAINED and NEVER deleted.
-// 2. STARRED articles (`starred = 1`) are PERMANENTLY RETAINED and NEVER deleted.
-// 3. ONLY articles matching `read = 1 AND starred = 0 AND deleted = 0` are eligible.
+// RETENTION POLICY:
+// An article is purged only when BOTH hold: the feed has more read, unstarred articles
+// than maxReadArticles, AND the article was published before the retention cutoff.
+// Unread and starred articles are never touched. Purged rows keep their metadata and
+// read state so a later refresh cannot resurrect them as unread.
 func (s *Store) CleanOldRSSArticles(ctx context.Context, feedID string, maxReadArticles int, olderThan time.Duration, now time.Time) (int64, error) {
-	// First, check how many eligible read articles exist for this feed
-	countQuery := `SELECT COUNT(*) FROM rss_articles WHERE feed_id = ? AND read = 1 AND starred = 0 AND deleted = 0`
-	rows, err := s.db.Query(ctx, countQuery, feedID)
+	if maxReadArticles <= 0 || olderThan <= 0 {
+		return 0, nil
+	}
+
+	rows, err := s.db.Query(ctx, `SELECT COUNT(*) FROM rss_articles WHERE feed_id = ? AND read = 1 AND starred = 0`, feedID)
 	if err != nil || len(rows.Values) == 0 {
 		return 0, err
 	}
-	eligibleCount, _ := int64FromAny(rows.Values[0][0])
-	if eligibleCount == 0 {
+	excess, _ := int64FromAny(rows.Values[0][0])
+	excess -= int64(maxReadArticles)
+	if excess <= 0 {
 		return 0, nil
 	}
 
-	cutoffDate := ""
-	if olderThan > 0 {
-		cutoffDate = now.Add(-olderThan).Format(time.RFC3339)
+	cutoffDate := now.Add(-olderThan).UTC().Format(time.RFC3339)
+	candidateQuery := fmt.Sprintf(`SELECT id FROM rss_articles
+	WHERE feed_id = ? AND read = 1 AND starred = 0 AND published_at < ?
+	ORDER BY published_at ASC, id ASC
+	LIMIT %d`, excess)
+	candidateRows, err := s.db.Query(ctx, candidateQuery, feedID, cutoffDate)
+	if err != nil {
+		return 0, err
 	}
 
-	var deleteIDs []string
-
-	// Check condition A: older than cutoff
-	if cutoffDate != "" {
-		ageQuery := `SELECT id FROM rss_articles
-		WHERE feed_id = ? AND read = 1 AND starred = 0 AND deleted = 0 AND published_at < ?`
-		ageRows, err := s.db.Query(ctx, ageQuery, feedID, cutoffDate)
-		if err == nil {
-			for _, r := range ageRows.Values {
-				if id, ok := r[0].(string); ok && id != "" {
-					deleteIDs = append(deleteIDs, id)
-				}
-			}
+	var purgeIDs []string
+	for _, r := range candidateRows.Values {
+		if id, ok := r[0].(string); ok && id != "" {
+			purgeIDs = append(purgeIDs, id)
 		}
 	}
-
-	// Check condition B: exceeding maxReadArticles count
-	if maxReadArticles > 0 && int(eligibleCount) > maxReadArticles {
-		excessQuery := fmt.Sprintf(`SELECT id FROM rss_articles
-		WHERE feed_id = ? AND read = 1 AND starred = 0 AND deleted = 0
-		ORDER BY published_at DESC, id DESC
-		LIMIT -1 OFFSET %d`, maxReadArticles)
-		excessRows, err := s.db.Query(ctx, excessQuery, feedID)
-		if err == nil {
-			for _, r := range excessRows.Values {
-				if id, ok := r[0].(string); ok && id != "" {
-					deleteIDs = append(deleteIDs, id)
-				}
-			}
-		}
-	}
-
-	if len(deleteIDs) == 0 {
+	if len(purgeIDs) == 0 {
 		return 0, nil
 	}
 
-	// Deduplicate IDs
-	unique := make(map[string]bool, len(deleteIDs))
-	var uniqueIDs []string
-	for _, id := range deleteIDs {
-		if !unique[id] {
-			unique[id] = true
-			uniqueIDs = append(uniqueIDs, id)
-		}
-	}
-
-	// Execute deletion in a transaction
-	placeholders := make([]string, len(uniqueIDs))
-	args := make([]any, len(uniqueIDs))
-	for i, id := range uniqueIDs {
+	placeholders := make([]string, len(purgeIDs))
+	args := make([]any, len(purgeIDs))
+	for i, id := range purgeIDs {
 		placeholders[i] = "?"
 		args[i] = id
 	}
 
-	delQuery := fmt.Sprintf(`DELETE FROM rss_articles WHERE id IN (%s) AND read = 1 AND starred = 0`, strings.Join(placeholders, ","))
-	res, err := s.db.Execute(ctx, delQuery, args...)
+	purgeQuery := fmt.Sprintf(`UPDATE rss_articles SET content_html = '', blocks_json = '', is_full_text = 0
+	WHERE id IN (%s) AND read = 1 AND starred = 0`, strings.Join(placeholders, ","))
+	res, err := s.db.Execute(ctx, purgeQuery, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -489,8 +459,6 @@ func rowToArticle(r []any) RSSArticle {
 	a.Starred = intFromAnyBool(r[14])
 	a.StarredAt, _ = int64FromAny(r[15])
 	a.UpdatedAt, _ = int64FromAny(r[16])
-	a.Deleted = intFromAnyBool(r[17])
-	a.DeletedAt, _ = int64FromAny(r[18])
 	return a
 }
 
