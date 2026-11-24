@@ -36,12 +36,15 @@ func TestCapMemoryAppliesTheAuditedLimit(t *testing.T) {
 	if previous != 0 {
 		t.Fatalf("previous limit = %d, want the injected 0", previous)
 	}
-	if len(*limits) != 1 || (*limits)[0] != memoryLimitBytes {
-		t.Fatalf("limits = %v, want one call with %d", *limits, memoryLimitBytes)
+	const (
+		wantLimit          int64 = 192 << 20
+		pictureCacheBudget int64 = 128 << 20
+	)
+	if len(*limits) != 1 || (*limits)[0] != wantLimit {
+		t.Fatalf("limits = %v, want one call with %d", *limits, wantLimit)
 	}
-	const pictureCacheBudget = 128 << 20
-	if memoryLimitBytes <= pictureCacheBudget {
-		t.Fatalf("memoryLimitBytes = %d, must leave the %d picture cache room to live", memoryLimitBytes, pictureCacheBudget)
+	if (*limits)[0] <= pictureCacheBudget {
+		t.Fatalf("applied limit = %d, must leave the %d picture cache room to live", (*limits)[0], pictureCacheBudget)
 	}
 }
 
