@@ -1057,7 +1057,9 @@ func (w *Window) rssBlock(c *ui.Context, t mui.Tokens, art core.RSSArticle, bloc
 }
 
 // rssImageBlock is one inline picture in the reading body, held in a neutral
-// frame while it comes and captioned when the feed supplies a caption.
+// frame while it comes and captioned when the feed supplies a caption. A
+// picture that never comes - an anti-hotlink 403, a 404, a timeout - leaves a
+// bordered placeholder naming it by its alt text rather than a blank frame.
 func (w *Window) rssImageBlock(c *ui.Context, t mui.Tokens, key string, block core.ArticleBlock, readerWidth float32, hero bool) ui.Element {
 	url := strings.TrimSpace(block.URL)
 	if url == "" {
@@ -1094,6 +1096,9 @@ func (w *Window) rssImageBlock(c *ui.Context, t mui.Tokens, key string, block co
 			altLabel = imageFailedText
 		}
 
+		// The frame is the picture's way out, so it becomes a link rather than
+		// the image role it was built with: RoleLink takes Return but leaves
+		// Space to the reading view, as every other reader link does.
 		frame.MinHeight(mui.Space(24)).Padding(mui.Space(4), mui.Space(4)).
 			Background(t.SurfaceAlt).Border(1, t.BorderSoft).
 			Cursor(ui.CursorPointer).Tooltip(url).Role(ui.RoleLink).
