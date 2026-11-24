@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -154,6 +155,27 @@ func TestAppRSSFeedSubscriptionAndMoving(t *testing.T) {
 	}
 	if a.HasRSSFeed(feed2.ID) {
 		t.Fatal("feed2 should have been deleted")
+	}
+
+	// 5. Duplicate subscription with empty CustomTitle preserves custom title and group hygiene
+	resubFeed := core.RSSFeed{
+		ID:      feed1.ID,
+		FeedURL: feed1.FeedURL,
+		Title:   "Remote Title Changed",
+	}
+	if err := a.SubscribeRSSFeed(resubFeed, g1.ID); err != nil {
+		t.Fatalf("re-subscribing feed1 to g1 failed: %v", err)
+	}
+	if a.RSSFeedByID(feed1.ID).DisplayName() != "Custom Example 1" {
+		t.Fatalf("expected custom title preserved, got %q", a.RSSFeedByID(feed1.ID).DisplayName())
+	}
+	g1Final := a.RSSGroupByID(g1.ID)
+	g2Final := a.RSSGroupByID(g2.ID)
+	if !slices.Contains(g1Final.FeedIDs, feed1.ID) {
+		t.Fatalf("expected g1 to contain feed1, got %v", g1Final.FeedIDs)
+	}
+	if slices.Contains(g2Final.FeedIDs, feed1.ID) {
+		t.Fatalf("expected g2 to NOT contain feed1, got %v", g2Final.FeedIDs)
 	}
 }
 

@@ -563,6 +563,7 @@ func (w *Window) renderRSSFeedRow(c *ui.Context, t mui.Tokens, f core.RSSFeed, g
 						defer cancel()
 						_, _ = w.app.FetchRSSFeed(ctx, f.ID)
 						mygo.RunOnMain(func() {
+							_ = w.app.ReloadRSS()
 							w.invalidateMainWindow()
 						})
 					}()

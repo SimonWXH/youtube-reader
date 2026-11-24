@@ -296,8 +296,27 @@ func (a *App) SubscribeRSSFeed(feed core.RSSFeed, groupID string) error {
 
 	if a.Store != nil {
 		ctx := context.Background()
+		if feed.CustomTitle == "" {
+			if existing, err := a.Store.GetRSSFeed(ctx, feed.ID); err == nil && existing != nil {
+				feed.CustomTitle = existing.CustomTitle
+			}
+		}
 		if err := a.Store.SubscribeRSSFeed(ctx, feed); err != nil {
 			return err
+		}
+		groups, _ := a.Store.ListRSSGroups(ctx, false)
+		for _, g := range groups {
+			if g.ID != groupID && slices.Contains(g.FeedIDs, feed.ID) {
+				var kept []string
+				for _, fid := range g.FeedIDs {
+					if fid != feed.ID {
+						kept = append(kept, fid)
+					}
+				}
+				g.FeedIDs = kept
+				g.UpdatedAt = now
+				_ = a.Store.SaveRSSGroup(ctx, g)
+			}
 		}
 		if groupID != "" {
 			if g, err := a.Store.GetRSSGroup(ctx, groupID); err == nil && g != nil {
@@ -489,9 +508,7 @@ func (a *App) FetchRSSFeed(ctx context.Context, feedID string) (*core.FetchFeedR
 	}
 
 	fetcher := core.NewRSSFetcher(a.Store)
-	res, fetchErr := fetcher.FetchFeed(ctx, *feed)
-	_ = a.ReloadRSS()
-	return res, fetchErr
+	return fetcher.FetchFeed(ctx, *feed)
 }
 
 // FetchAllRSSFeeds fetches all subscribed feeds with bounded concurrency.
@@ -500,7 +517,5 @@ func (a *App) FetchAllRSSFeeds(ctx context.Context, force bool) ([]core.FetchFee
 		return nil, errors.New("store not initialized")
 	}
 	fetcher := core.NewRSSFetcher(a.Store)
-	res, err := fetcher.FetchAllFeeds(ctx, force)
-	_ = a.ReloadRSS()
-	return res, err
+	return fetcher.FetchAllFeeds(ctx, force)
 }

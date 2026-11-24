@@ -73,6 +73,7 @@ type addRSSDialogCopy struct {
 	articleCountSuffix  string
 	addedToast          string
 	addedUngroupedToast string
+	movedToast          string
 	errSave             string
 }
 
@@ -97,6 +98,7 @@ func addRSSDialogCopyIn(locale string) addRSSDialogCopy {
 			articleCountSuffix:  "篇可用文章",
 			addedToast:          "已添加订阅：%s 到 %s",
 			addedUngroupedToast: "已添加订阅：%s",
+			movedToast:          "已将 %s 移至 %s",
 			errSave:             "保存订阅源失败，请重试。",
 		}
 	}
@@ -119,6 +121,7 @@ func addRSSDialogCopyIn(locale string) addRSSDialogCopy {
 		articleCountSuffix:  "articles found",
 		addedToast:          "Subscribed to %s in %s",
 		addedUngroupedToast: "Subscribed to %s",
+		movedToast:          "Moved %s to %s",
 		errSave:             "Failed to save feed. Please try again.",
 	}
 }
@@ -259,6 +262,35 @@ func (w *Window) submitAddRSSDialog(c *ui.Context) {
 		targetGroupID = newGroup.ID
 	}
 
+	if w.app != nil && w.app.HasRSSFeed(feed.ID) {
+		existing := w.app.RSSFeedByID(feed.ID)
+		currentGroupID := ""
+		if len(existing.GroupIDs) > 0 {
+			currentGroupID = existing.GroupIDs[0]
+		}
+		if currentGroupID != targetGroupID {
+			if err := w.app.MoveRSSFeedToGroup(feed.ID, targetGroupID); err != nil {
+				w.toast(c, words.errSave, true)
+				return
+			}
+			targetGroupName := words.ungrouped
+			if targetGroupID != "" {
+				if g := w.app.RSSGroupByID(targetGroupID); g.Name != "" {
+					targetGroupName = g.Name
+				}
+			}
+			w.toast(c, fmt.Sprintf(words.movedToast, existing.DisplayName(), targetGroupName), false)
+		} else {
+			w.toast(c, fmt.Sprintf(words.alreadySubscribed, existing.DisplayName()), false)
+		}
+		if targetGroupID != "" {
+			_ = w.app.SetRSSGroupCollapsed(targetGroupID, false)
+		}
+		w.app.SelectDestination("feed:" + feed.ID)
+		w.closeAddRSSDialog(c)
+		return
+	}
+
 	if err := w.app.SubscribeRSSFeed(feed, targetGroupID); err != nil {
 		w.toast(c, words.errSave, true)
 		return
@@ -283,12 +315,15 @@ func (w *Window) submitAddRSSDialog(c *ui.Context) {
 		w.toast(c, fmt.Sprintf(words.addedToast, feed.DisplayName(), targetGroupName), false)
 	}
 
+	w.app.SelectDestination("feed:" + feed.ID)
+
 	// Trigger initial background fetch
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 		_, _ = w.app.FetchRSSFeed(ctx, feed.ID)
 		mygo.RunOnMain(func() {
+			_ = w.app.ReloadRSS()
 			w.invalidateMainWindow()
 		})
 	}()
@@ -408,10 +443,14 @@ func (w *Window) addRSSDialogHelper(c *ui.Context, t mui.Tokens, words addRSSDia
 		return row
 	case addRSSDialogNotFound:
 		msg := words.notFound
-		if d.errMessage != "" {
+		if msg == "" {
 			msg = d.errMessage
 		}
-		return mui.Helper.Apply(ui.Text(c, msg)).TextColor(t.Danger).SingleLine().Height(addRSSDialogHelperLine)
+		el := ui.Text(c, msg)
+		if d.errMessage != "" {
+			el.Tooltip(d.errMessage)
+		}
+		return mui.Helper.Apply(el).TextColor(t.Danger).SingleLine().Height(addRSSDialogHelperLine)
 	case addRSSDialogInvalid:
 		return mui.Helper.Apply(ui.Text(c, words.invalidURL)).TextColor(t.Danger).SingleLine().Height(addRSSDialogHelperLine)
 	default:

@@ -28,7 +28,7 @@ func (s *Store) SaveRSSFeed(ctx context.Context, f RSSFeed) error {
 		feed_url=excluded.feed_url,
 		site_url=COALESCE(NULLIF(excluded.site_url, ''), rss_feeds.site_url),
 		title=COALESCE(NULLIF(excluded.title, ''), rss_feeds.title),
-		custom_title=excluded.custom_title,
+		custom_title=COALESCE(NULLIF(excluded.custom_title, ''), rss_feeds.custom_title),
 		group_ids=excluded.group_ids,
 		avatar_url=COALESCE(NULLIF(excluded.avatar_url, ''), rss_feeds.avatar_url),
 		etag=COALESCE(NULLIF(excluded.etag, ''), rss_feeds.etag),
@@ -426,8 +426,7 @@ func (s *Store) RSSTotalUnreadCount(ctx context.Context) (int, error) {
 
 // RSSStarredCount returns the total number of starred articles.
 func (s *Store) RSSStarredCount(ctx context.Context) (int, error) {
-	rows, err := s.db.Query(ctx, `SELECT COUNT(*) FROM rss_articles
-	WHERE starred = 1 AND feed_id NOT IN (SELECT id FROM rss_feeds WHERE deleted = 1)`)
+	rows, err := s.db.Query(ctx, `SELECT COUNT(*) FROM rss_articles WHERE starred = 1`)
 	if err != nil || len(rows.Values) == 0 {
 		return 0, err
 	}

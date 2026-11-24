@@ -758,6 +758,13 @@ func TestDeleteRSSFeedSoftDeleteArticles(t *testing.T) {
 	if len(starredList) != 1 || starredList[0].ID != "art:test-softdel:starred" {
 		t.Fatalf("expected 1 starred article preserved, got %+v", starredList)
 	}
+	starredCnt, err := store.RSSStarredCount(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if starredCnt != len(starredList) {
+		t.Fatalf("expected RSSStarredCount (%d) to match starredList (%d)", starredCnt, len(starredList))
+	}
 
 	// Re-subscribing the same feed must restore its previously fetched articles
 	// with their read/starred state intact.
@@ -869,5 +876,42 @@ func TestRSSStoreRetentionDoesNotRepurgePurgedRows(t *testing.T) {
 		if !got.Read {
 			t.Fatalf("article %q lost its read state", id)
 		}
+	}
+}
+
+func TestRSSStoreSaveFeedPreservesCustomTitle(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+
+	feed := RSSFeed{
+		ID:          "feed:custom-title-test",
+		FeedURL:     "https://example.com/feed.xml",
+		Title:       "Original Title",
+		CustomTitle: "User Custom Name",
+		UpdatedAt:   1000,
+	}
+	if err := store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatalf("initial SaveRSSFeed failed: %v", err)
+	}
+
+	incoming := RSSFeed{
+		ID:        feed.ID,
+		FeedURL:   feed.FeedURL,
+		Title:     "Updated Site Title",
+		UpdatedAt: 2000,
+	}
+	if err := store.SaveRSSFeed(ctx, incoming); err != nil {
+		t.Fatalf("subsequent SaveRSSFeed failed: %v", err)
+	}
+
+	saved, err := store.GetRSSFeed(ctx, feed.ID)
+	if err != nil || saved == nil {
+		t.Fatalf("GetRSSFeed failed: %v", err)
+	}
+	if saved.CustomTitle != "User Custom Name" {
+		t.Fatalf("CustomTitle = %q, want %q", saved.CustomTitle, "User Custom Name")
+	}
+	if saved.Title != "Updated Site Title" {
+		t.Fatalf("Title = %q, want %q", saved.Title, "Updated Site Title")
 	}
 }
