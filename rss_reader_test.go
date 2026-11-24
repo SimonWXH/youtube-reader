@@ -1877,6 +1877,10 @@ func TestRSSReaderImageAntiHotlinkAndErrorDegradation(t *testing.T) {
 	if urls := tt.OpenedURLs(); len(urls) != 1 || urls[0] != "https://anti-hotlink.example.com/secret.png" {
 		t.Fatalf("opened URLs after Enter on the placeholder = %v, want image URL https://anti-hotlink.example.com/secret.png", urls)
 	}
+	tt.Key(0, ui.KeySpace)
+	if urls := tt.OpenedURLs(); len(urls) != 1 {
+		t.Fatalf("Space on the placeholder opened %v, want only the Enter's image URL", urls)
+	}
 
 	// Clicking the placeholder opens the image URL in the browser
 	clickTarget, ok := tt.Find("Open original image in browser")

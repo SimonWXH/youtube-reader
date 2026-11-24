@@ -1096,7 +1096,7 @@ func (w *Window) rssImageBlock(c *ui.Context, t mui.Tokens, key string, block co
 
 		frame.MinHeight(mui.Space(24)).Padding(mui.Space(4), mui.Space(4)).
 			Background(t.SurfaceAlt).Border(1, t.BorderSoft).
-			Cursor(ui.CursorPointer).Tooltip(url).
+			Cursor(ui.CursorPointer).Tooltip(url).Role(ui.RoleLink).
 			Focusable().FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
 			OnClick(func() { c.OpenURL(url) }).
 			OnShortcut(0, ui.KeyEnter, func() { c.OpenURL(url) })
