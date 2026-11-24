@@ -908,20 +908,26 @@ func (w *Window) importRSSOPML(c *ui.Context) {
 		})
 
 		// Background fetch newly imported feeds without blocking the UI. Each feed
-		// gets its own budget so a slow or large file never starves the rest.
+		// gets its own budget, only a bounded number fetch at once, and the window
+		// reloads as each one returns instead of waiting for the whole batch.
 		if len(res.NewFeedIDs) > 0 && w.app.Store != nil {
 			fetcher := core.NewRSSFetcher(w.app.Store)
+			slots := make(chan struct{}, core.DefaultRSSConcurrency)
 			for _, fid := range res.NewFeedIDs {
-				ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-				if f, err := w.app.Store.GetRSSFeed(ctx, fid); err == nil && f != nil {
-					_, _ = fetcher.FetchFeed(ctx, *f)
-				}
-				cancel()
+				go func(fid string) {
+					slots <- struct{}{}
+					defer func() { <-slots }()
+					ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+					defer cancel()
+					if f, err := w.app.Store.GetRSSFeed(ctx, fid); err == nil && f != nil {
+						_, _ = fetcher.FetchFeed(ctx, *f)
+					}
+					mygo.RunOnMain(func() {
+						_ = w.app.ReloadRSS()
+						w.invalidateMainWindow()
+					})
+				}(fid)
 			}
-			mygo.RunOnMain(func() {
-				_ = w.app.ReloadRSS()
-				w.invalidateMainWindow()
-			})
 		}
 	}()
 }

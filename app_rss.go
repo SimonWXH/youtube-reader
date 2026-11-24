@@ -622,9 +622,19 @@ func (a *App) ImportRSSOPMLPaths(ctx context.Context, paths []string) (RSSOPMLIm
 	groupByName := make(map[string]*core.RSSGroup)
 	activeGroupCount := 0
 	for i := range existingGroups {
+		if existingGroups[i].Deleted {
+			continue
+		}
 		groupByName[strings.ToLower(strings.TrimSpace(existingGroups[i].Name))] = &existingGroups[i]
+		activeGroupCount++
+	}
+	for i := range existingGroups {
 		if !existingGroups[i].Deleted {
-			activeGroupCount++
+			continue
+		}
+		normName := strings.ToLower(strings.TrimSpace(existingGroups[i].Name))
+		if _, exists := groupByName[normName]; !exists {
+			groupByName[normName] = &existingGroups[i]
 		}
 	}
 

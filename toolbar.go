@@ -234,10 +234,8 @@ func (w *Window) overflowMenu(m *ui.Menu) {
 			w.importOPML(w.frame)
 		}
 	}
-	if w.activeWorkspaceName() == WorkspaceRSS {
-		if m.Item("Export OPML…").Chosen() {
-			w.exportRSSOPML(w.frame)
-		}
+	if m.Item("Export OPML…").Disabled(w.activeWorkspaceName() != WorkspaceRSS).Chosen() {
+		w.exportRSSOPML(w.frame)
 	}
 	if m.Item("Export Favorites…").Chosen() {
 		w.exportFavorites(w.frame)

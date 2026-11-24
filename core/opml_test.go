@@ -309,6 +309,48 @@ func TestParseRSSOPMLFaultTolerance(t *testing.T) {
 	}
 }
 
+// TestParseRSSOPMLURLlessOutlinesMakeNoFolder verifies that a feed stub that lost
+// its xmlUrl, and an outline carrying only an htmlUrl, import as nothing rather
+// than as an empty folder, while a genuinely empty folder still imports.
+func TestParseRSSOPMLURLlessOutlinesMakeNoFolder(t *testing.T) {
+	opmlData := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <body>
+    <outline text="Dev" title="Dev">
+      <outline type="rss" text="Website Home"/>
+      <outline class="rss" text="Site Link" htmlUrl="https://example.com"/>
+      <outline text="Feed Schema" xmlUrl="https://example.com/feed.xml"/>
+    </outline>
+    <outline text="Later" title="Later"></outline>
+  </body>
+</opml>`)
+
+	parsed, err := ParseRSSOPML(opmlData)
+	if err != nil {
+		t.Fatalf("ParseRSSOPML failed: %v", err)
+	}
+
+	var names []string
+	for _, g := range parsed.Groups {
+		names = append(names, g.Name)
+	}
+	if len(names) != 2 || names[0] != "Dev" || names[1] != "Later" {
+		t.Errorf("groups = %v; want [Dev Later]", names)
+	}
+	if len(parsed.Feeds) != 1 {
+		t.Fatalf("feeds = %d; want 1", len(parsed.Feeds))
+	}
+	if parsed.Feeds[0].FeedURL != "https://example.com/feed.xml" {
+		t.Errorf("feed URL = %q; want https://example.com/feed.xml", parsed.Feeds[0].FeedURL)
+	}
+	if len(parsed.Feeds[0].GroupIDs) != 1 || parsed.Feeds[0].GroupIDs[0] != parsed.Groups[0].ID {
+		t.Errorf("feed GroupIDs = %v; want the Dev group only", parsed.Feeds[0].GroupIDs)
+	}
+	if len(parsed.Groups[1].FeedIDs) != 0 {
+		t.Errorf("empty folder FeedIDs = %v; want none", parsed.Groups[1].FeedIDs)
+	}
+}
+
 // TestExportRSSOPMLRoundTrip verifies exporting subscriptions to OPML and parsing them back.
 func TestExportRSSOPMLRoundTrip(t *testing.T) {
 	now := int64(1700000000000)

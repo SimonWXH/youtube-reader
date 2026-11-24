@@ -444,6 +444,64 @@ func TestImportRSSOPMLKeepsMembershipsAcrossSelectedFiles(t *testing.T) {
 	}
 }
 
+// TestImportRSSOPMLPrefersActiveGroupOverTombstone covers a library that holds a
+// deleted group and a new active group with the same name: a folder of that
+// name must join the active group instead of reviving the tombstone into a
+// second group of the same name.
+func TestImportRSSOPMLPrefersActiveGroupOverTombstone(t *testing.T) {
+	a, _ := setupRSSTestApp(t)
+	dir := t.TempDir()
+
+	for _, name := range []string{"A", "B", "Tech"} {
+		if _, err := a.CreateRSSGroup(name); err != nil {
+			t.Fatalf("CreateRSSGroup(%q): %v", name, err)
+		}
+	}
+	for _, g := range slices.Clone(a.RSSGroups) {
+		if err := a.DeleteRSSGroup(g.ID); err != nil {
+			t.Fatalf("DeleteRSSGroup(%q): %v", g.Name, err)
+		}
+	}
+	active, err := a.CreateRSSGroup("Tech")
+	if err != nil {
+		t.Fatalf("CreateRSSGroup Tech: %v", err)
+	}
+
+	opmlContent := `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <body>
+    <outline text="Tech" title="Tech">
+      <outline type="rss" text="Hacker News" xmlUrl="https://news.ycombinator.com/rss"/>
+    </outline>
+  </body>
+</opml>`
+	file := writeTestOPML(t, dir, "tech.opml", opmlContent)
+
+	if _, err := importRSSOPMLForTest(t, a, []string{file}); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	if len(a.RSSGroups) != 1 || a.RSSGroups[0].ID != active.ID {
+		t.Fatalf("groups = %+v; want only the active Tech group %q", a.RSSGroups, active.ID)
+	}
+	if len(a.RSSFeeds) != 1 {
+		t.Fatalf("feeds = %d; want 1", len(a.RSSFeeds))
+	}
+	if !slices.Contains(a.RSSFeeds[0].GroupIDs, active.ID) {
+		t.Errorf("feed GroupIDs = %v; want membership in the active Tech group", a.RSSFeeds[0].GroupIDs)
+	}
+	if !slices.Contains(a.RSSGroups[0].FeedIDs, a.RSSFeeds[0].ID) {
+		t.Errorf("Tech FeedIDs = %v; want the imported feed", a.RSSGroups[0].FeedIDs)
+	}
+	stored, err := a.Store.ListRSSGroups(context.Background(), false)
+	if err != nil {
+		t.Fatalf("ListRSSGroups: %v", err)
+	}
+	if len(stored) != 1 || stored[0].ID != active.ID {
+		t.Errorf("stored active groups = %+v; want only %q", stored, active.ID)
+	}
+}
+
 // TestExportRSSOPMLToFileAndRoundTrip verifies export from database to file,
 // followed by import into another fresh App instance.
 func TestExportRSSOPMLToFileAndRoundTrip(t *testing.T) {
@@ -615,6 +673,39 @@ func TestRSSEmptyStateImportButton(t *testing.T) {
 		t.Fatal("empty state missing 导入 OPML… button")
 	}
 	saveOPMLEvidenceScreenshot(t, tt, "evidence_empty_state_zh.png")
+}
+
+// TestOverflowMenuKeepsExportOPMLWithState checks that Export OPML… stays in
+// the toolbar overflow in every workspace and is dimmed outside the RSS one,
+// matching the File menu and the overflow's dimmed-not-hidden contract.
+func TestOverflowMenuKeepsExportOPMLWithState(t *testing.T) {
+	_, w := setupRSSTestApp(t)
+	w.selectWorkspace(WorkspaceVideos)
+
+	tt := ui.NewTester(w.shell, 1280, 808)
+	tt.SetLocale("en")
+	tt.Frame()
+
+	if err := tt.Click("More"); err != nil {
+		t.Fatalf("open the overflow menu in Videos: %v", err)
+	}
+	if items := tt.Menu(); !slices.Contains(items, "Export OPML…") {
+		t.Fatalf("overflow menu %q has no Export OPML…", items)
+	}
+	if err := tt.ChooseMenuItem("Export OPML…"); err == nil {
+		t.Fatal("Export OPML… is enabled outside the RSS workspace")
+	}
+
+	tt.Key(0, ui.KeyEscape)
+	w.selectWorkspace(WorkspaceRSS)
+	tt.Frame()
+	if err := tt.Click("More"); err != nil {
+		t.Fatalf("open the overflow menu in RSS: %v", err)
+	}
+	if items := tt.Menu(); !slices.Contains(items, "Export OPML…") {
+		t.Fatalf("RSS overflow menu %q has no Export OPML…", items)
+	}
+	tt.Key(0, ui.KeyEscape)
 }
 
 // TestLiveScenario1_BatchImportAndSidebarRender validates live batch import of hierarchical
@@ -931,7 +1022,10 @@ func TestLiveScenario5_AdversarialOPML(t *testing.T) {
 	if res.FeedsImported != 2 {
 		t.Errorf("FeedsImported = %d; want 2 (valid feeds only)", res.FeedsImported)
 	}
-	advReport.WriteString(fmt.Sprintf("2. Scheme Normalization & Missing URLs: Imported %d valid feeds, skipped missing xmlUrl\n", res.FeedsImported))
+	if res.GroupsImported != 1 {
+		t.Errorf("GroupsImported = %d; want 1 (the Dev & Tech folder, no phantom for the URL-less rss outline)", res.GroupsImported)
+	}
+	advReport.WriteString(fmt.Sprintf("2. Scheme Normalization & Missing URLs: Imported %d valid feeds and %d group, skipped missing xmlUrl\n", res.FeedsImported, res.GroupsImported))
 
 	// Verify feeds were normalized
 	for _, f := range a.RSSFeeds {
