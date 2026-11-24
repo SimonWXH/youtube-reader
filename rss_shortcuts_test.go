@@ -502,6 +502,68 @@ func TestRSSKeyboardTogglesStar(t *testing.T) {
 	}
 }
 
+// TestRSSStarredCountDropsWhenTheFeedIsUnsubscribed checks the sidebar's
+// Starred count keeps matching the Starred list after a starred article's feed
+// is unsubscribed, while the starred row stays in the store for a later
+// re-subscribe.
+func TestRSSStarredCountDropsWhenTheFeedIsUnsubscribed(t *testing.T) {
+	a, _, tt := rssShortcutFixture(t, 2)
+	ctx := context.Background()
+
+	tt.Key(0, ui.KeyJ)
+	tt.Frame()
+	tt.Key(0, ui.KeyS)
+	tt.Frame()
+	if a.RSSStarredTotal != 1 {
+		t.Fatalf("starred total = %d, want 1", a.RSSStarredTotal)
+	}
+
+	if err := a.DeleteRSSFeed("feed-shortcuts"); err != nil {
+		t.Fatalf("unsubscribe the feed: %v", err)
+	}
+	if a.RSSStarredTotal != 0 {
+		t.Fatalf("starred total after unsubscribing = %d, want 0", a.RSSStarredTotal)
+	}
+
+	a.Selected = "starred"
+	if err := a.ReloadRSS(); err != nil {
+		t.Fatalf("reload rss: %v", err)
+	}
+	tt.Frame()
+	visible := a.VisibleRSSArticles()
+	if len(visible) != 0 {
+		t.Fatalf("the Starred list still shows %v", visible)
+	}
+	if a.RSSStarredTotal != len(visible) {
+		t.Fatalf("starred count = %d, want it to match the %d listed articles", a.RSSStarredTotal, len(visible))
+	}
+	if !tt.HasText("No Articles") {
+		t.Fatalf("the empty Starred destination should say so, texts = %v", tt.Texts())
+	}
+
+	stored, err := a.Store.GetRSSArticle(ctx, "art-00")
+	if err != nil || stored == nil || !stored.Starred {
+		t.Fatalf("the store dropped the starred row: %v %+v", err, stored)
+	}
+
+	resub := core.RSSFeed{
+		ID:        "feed-shortcuts",
+		FeedURL:   "https://feeds.example.com/rss.xml",
+		Title:     "Shortcut Feed",
+		UpdatedAt: time.Now().UnixMilli(),
+	}
+	if err := a.Store.SubscribeRSSFeed(ctx, resub); err != nil {
+		t.Fatalf("re-subscribe the feed: %v", err)
+	}
+	if err := a.ReloadRSS(); err != nil {
+		t.Fatalf("reload rss: %v", err)
+	}
+	tt.Frame()
+	if a.RSSStarredTotal != 1 || len(a.VisibleRSSArticles()) != 1 {
+		t.Fatalf("after re-subscribing: starred count %d, listed %d, want 1 and 1", a.RSSStarredTotal, len(a.VisibleRSSArticles()))
+	}
+}
+
 // TestRSSKeyboardOpensTheArticleInBrowser checks Cmd+O hands the open
 // article's own link to the system browser, and does nothing without one.
 func TestRSSKeyboardOpensTheArticleInBrowser(t *testing.T) {

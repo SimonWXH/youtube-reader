@@ -424,9 +424,10 @@ func (s *Store) RSSTotalUnreadCount(ctx context.Context) (int, error) {
 	return cnt, nil
 }
 
-// RSSStarredCount returns the total number of starred articles.
+// RSSStarredCount returns the total number of starred articles in active feeds.
 func (s *Store) RSSStarredCount(ctx context.Context) (int, error) {
-	rows, err := s.db.Query(ctx, `SELECT COUNT(*) FROM rss_articles WHERE starred = 1`)
+	rows, err := s.db.Query(ctx, `SELECT COUNT(*) FROM rss_articles
+	WHERE starred = 1 AND feed_id NOT IN (SELECT id FROM rss_feeds WHERE deleted = 1)`)
 	if err != nil || len(rows.Values) == 0 {
 		return 0, err
 	}
