@@ -1822,7 +1822,6 @@ func TestRSSReaderImageAntiHotlinkAndErrorDegradation(t *testing.T) {
 	}
 	tt.ClickAt(row.X+row.W/2, row.Y+row.H/2)
 	tt.Frame()
-	tt.Frame()
 
 	// Paragraphs before and after must render smoothly without white-screen or blockage
 	if !tt.HasText("Intro paragraph before image.") {
@@ -1832,9 +1831,15 @@ func TestRSSReaderImageAntiHotlinkAndErrorDegradation(t *testing.T) {
 		t.Fatalf("outro paragraph missing, texts = %v", tt.Texts())
 	}
 
-	// Alt text must be rendered in the placeholder box
-	if !tt.HasText("Architecture Blueprint") {
-		t.Fatalf("image alt text missing from placeholder, texts = %v", tt.Texts())
+	// The picture resolves off the frame's path, so render until its failure
+	// reaches the placeholder instead of assuming it has landed by now.
+	deadline := time.Now().Add(5 * time.Second)
+	for !tt.HasText("Architecture Blueprint") {
+		if time.Now().After(deadline) {
+			t.Fatalf("image alt text missing from placeholder, texts = %v", tt.Texts())
+		}
+		tt.Frame()
+		time.Sleep(5 * time.Millisecond)
 	}
 	if !tt.HasText("Open original image in browser") {
 		t.Fatalf("open image action missing, texts = %v", tt.Texts())
