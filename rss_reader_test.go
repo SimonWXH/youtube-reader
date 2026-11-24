@@ -1834,15 +1834,15 @@ func TestRSSReaderImageAntiHotlinkAndErrorDegradation(t *testing.T) {
 	// The picture resolves off the frame's path, so render until its failure
 	// reaches the placeholder instead of assuming it has landed by now.
 	deadline := time.Now().Add(5 * time.Second)
-	for !tt.HasText("Architecture Blueprint") {
+	for !tt.HasText("Open original image in browser") {
 		if time.Now().After(deadline) {
-			t.Fatalf("image alt text missing from placeholder, texts = %v", tt.Texts())
+			t.Fatalf("image failure placeholder missing, texts = %v", tt.Texts())
 		}
 		tt.Frame()
 		time.Sleep(5 * time.Millisecond)
 	}
-	if !tt.HasText("Open original image in browser") {
-		t.Fatalf("open image action missing, texts = %v", tt.Texts())
+	if !tt.HasText("Architecture Blueprint") {
+		t.Fatalf("image alt text missing from placeholder, texts = %v", tt.Texts())
 	}
 
 	// Clicking the placeholder opens the image URL in the browser
