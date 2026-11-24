@@ -22,26 +22,13 @@ func rssTextSizeSegments(t *testing.T, tt *ui.Tester) []ui.AccessInfo {
 	return segments
 }
 
-// openRSSReadingArticle opens the full-text article in the reader, so a test
-// can read the body it laid out.
-func openRSSReadingArticle(t *testing.T, tt *ui.Tester) {
-	t.Helper()
-	row, ok := tt.Find("The Quiet Return of the Open Feed")
-	if !ok {
-		t.Fatal("article row not found")
-	}
-	tt.ClickAt(row.X+row.W/2, row.Y+row.H/2)
-	tt.Frame()
-	tt.Frame()
-}
-
 // TestRSSTextSizeControlStepsAndPersists walks the reader's three body sizes
 // through the header control: the middle step on a first read, each segment
 // named by the size it sets, the page re-drawn at the chosen step, the choice
 // written to settings.json, and a relaunch reading it back.
 func TestRSSTextSizeControlStepsAndPersists(t *testing.T) {
 	a, w, tt := rssReaderTestWindow(t)
-	openRSSReadingArticle(t, tt)
+	openRSSReaderTickArticle(t, tt)
 
 	if got := w.readingType().Size; got != defaultRSSReadingFontSize {
 		t.Fatalf("a first read opens at %v pt, want %v", got, defaultRSSReadingFontSize)
@@ -108,7 +95,7 @@ func TestRSSTextSizeControlStepsAndPersists(t *testing.T) {
 // column's cap at every step.
 func TestRSSReadingScaleRedrawsTheBody(t *testing.T) {
 	_, w, tt := rssReaderTestWindow(t)
-	openRSSReadingArticle(t, tt)
+	openRSSReaderTickArticle(t, tt)
 	if len(w.rssReader.ticks) < 2 {
 		t.Fatal("the body laid out no blocks")
 	}
@@ -150,7 +137,7 @@ func TestRSSReadingColumnNarrowsWithTheWindow(t *testing.T) {
 	a.Settings.RSSListWidth = maxRSSListWidth
 	tt := ui.NewTester(w.view, 960, 808)
 	tt.Frame()
-	openRSSReadingArticle(t, tt)
+	openRSSReaderTickArticle(t, tt)
 
 	available := w.rssLayout.readerWidth - rssTickRailWidth
 	want := available - 2*rssReaderPadding(available)
@@ -194,7 +181,7 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 			}
 			tt := ui.NewTester(w.view, tc.width, 808)
 			tt.Frame()
-			openRSSReadingArticle(t, tt)
+			openRSSReaderTickArticle(t, tt)
 
 			if got := rssHeaderInlineActions(w.rssLayout.readerWidth); got != tc.inline {
 				t.Fatalf("inline actions = %v at a %v pt reader, want %v", got, w.rssLayout.readerWidth, tc.inline)
@@ -236,7 +223,7 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 func TestRSSReadingSizeBilingualNames(t *testing.T) {
 	_, _, tt := rssReaderTestWindow(t)
 	tt.SetLocale("zh")
-	openRSSReadingArticle(t, tt)
+	openRSSReaderTickArticle(t, tt)
 	segments := rssTextSizeSegments(t, tt)
 	if len(segments) != len(mui.ArticleSizes) {
 		t.Fatalf("the size control has %d segments, want %d", len(segments), len(mui.ArticleSizes))
