@@ -19,6 +19,10 @@ func TestCanonicalURL(t *testing.T) {
 		{"https://example.com/feed/?utm_source=twitter&utm_medium=social&key=value#section", "https://example.com/feed?key=value"},
 		{"https://example.com/blog/?fbclid=xyz123", "https://example.com/blog"},
 		{"https://example.com/", "https://example.com/"},
+		{"daringfireball.net", "https://daringfireball.net"},
+		{"tonsky.me/", "https://tonsky.me/"},
+		{"//example.com/rss", "https://example.com/rss"},
+		{"example.com/feed/", "https://example.com/feed"},
 	}
 	for _, c := range cases {
 		got := CanonicalURL(c.input)
@@ -36,18 +40,31 @@ func TestFeedIDAndArticleIDDeterministic(t *testing.T) {
 	if id1 != id2 {
 		t.Fatalf("FeedID should be deterministic for normalized URLs, got %q vs %q", id1, id2)
 	}
-	if !strings.HasPrefix(id1, "feed:") {
-		t.Fatalf("FeedID must have 'feed:' prefix, got %q", id1)
+	const expectedFeedID = "feed:7a775db75c1d6d17"
+	if id1 != expectedFeedID {
+		t.Fatalf("FeedID(%q) = %q; want %q from independent sha256 oracle", url1, id1, expectedFeedID)
 	}
 
 	dedupKey := "https://example.com/item/1"
-	artID1 := ArticleID(id1, dedupKey)
-	artID2 := ArticleID(id1, dedupKey)
-	if artID1 != artID2 {
-		t.Fatalf("ArticleID must be deterministic, got %q vs %q", artID1, artID2)
+	artID := ArticleID(id1, dedupKey)
+	const expectedArticleID = "art:feed:7a775db75c1d6d17:5979e94e88f5d47b"
+	if artID != expectedArticleID {
+		t.Fatalf("ArticleID(%q, %q) = %q; want %q from independent sha256 oracle", id1, dedupKey, artID, expectedArticleID)
 	}
-	if !strings.HasPrefix(artID1, "art:feed:") {
-		t.Fatalf("ArticleID must have 'art:feed:' prefix, got %q", artID1)
+}
+
+func TestBlocksJSONEmptyHandling(t *testing.T) {
+	if got := EncodeBlocksJSON(nil); got != "" {
+		t.Fatalf("EncodeBlocksJSON(nil) = %q; want empty string", got)
+	}
+	if got := EncodeBlocksJSON([]ArticleBlock{}); got != "" {
+		t.Fatalf("EncodeBlocksJSON([]) = %q; want empty string", got)
+	}
+	if got := ParseBlocksJSON(""); got != nil {
+		t.Fatalf("ParseBlocksJSON(\"\") = %v; want nil", got)
+	}
+	if got := ParseBlocksJSON("[]"); got != nil {
+		t.Fatalf("ParseBlocksJSON(\"[]\") = %v; want nil", got)
 	}
 }
 

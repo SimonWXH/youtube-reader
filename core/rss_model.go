@@ -342,6 +342,11 @@ func CanonicalURL(rawURL string) string {
 	if raw == "" {
 		return ""
 	}
+	if strings.HasPrefix(raw, "//") {
+		raw = "https:" + raw
+	} else if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		return raw
@@ -413,7 +418,7 @@ func ParagraphHash(blockType BlockType, text, u string) string {
 
 // ParseBlocksJSON deserializes JSON-encoded blocks.
 func ParseBlocksJSON(raw string) []ArticleBlock {
-	if raw == "" {
+	if raw == "" || raw == "[]" {
 		return nil
 	}
 	var blocks []ArticleBlock
@@ -426,11 +431,11 @@ func ParseBlocksJSON(raw string) []ArticleBlock {
 // EncodeBlocksJSON serializes blocks into a JSON string.
 func EncodeBlocksJSON(blocks []ArticleBlock) string {
 	if len(blocks) == 0 {
-		return "[]"
+		return ""
 	}
 	data, err := json.Marshal(blocks)
 	if err != nil {
-		return "[]"
+		return ""
 	}
 	return string(data)
 }

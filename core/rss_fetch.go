@@ -472,7 +472,7 @@ func DiscoverFeedURL(ctx context.Context, client *http.Client, targetURL string)
 	})
 
 	if foundFeed != "" {
-		return foundFeed, nil
+		return CanonicalURL(foundFeed), nil
 	}
 	return canonical, nil
 }

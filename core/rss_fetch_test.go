@@ -424,4 +424,12 @@ func TestDiscoverFeedURL(t *testing.T) {
 	if discovered != "https://example.com/rss.xml" {
 		t.Fatalf("expected discovered URL 'https://example.com/rss.xml', got %q", discovered)
 	}
+
+	discoveredSchemeless, err := DiscoverFeedURL(ctx, client, "example.com/blog/")
+	if err != nil {
+		t.Fatalf("DiscoverFeedURL with schemeless input failed: %v", err)
+	}
+	if discoveredSchemeless != "https://example.com/rss.xml" {
+		t.Fatalf("expected discovered URL 'https://example.com/rss.xml' for schemeless input, got %q", discoveredSchemeless)
+	}
 }

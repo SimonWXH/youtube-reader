@@ -438,3 +438,161 @@ func TestRSSStoreMigrationCompatibility(t *testing.T) {
 		t.Fatalf("Count for rss_feeds should be 1, got %d", store.Count(ctx, "rss_feeds"))
 	}
 }
+
+func TestSaveRSSArticlesPreservesFullTextOnRefresh(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+
+	now := time.Now().UnixMilli()
+	feed := RSSFeed{
+		ID:        "feed:test-fulltext",
+		FeedURL:   "https://example.com/rss",
+		Title:     "Test Feed",
+		UpdatedAt: now,
+	}
+	if err := store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatal(err)
+	}
+
+	initialArticle := RSSArticle{
+		ID:          "art:test-fulltext:1",
+		FeedID:      feed.ID,
+		Title:       "Sample Article",
+		Link:        "https://example.com/post/1",
+		ContentHTML: "<article><p>Comprehensive full text article body here.</p></article>",
+		IsFullText:  true,
+		Blocks: []ArticleBlock{
+			{Type: BlockParagraph, Text: "Comprehensive full text article body here.", Hash: "hash123"},
+		},
+		UpdatedAt: now,
+	}
+
+	if err := store.SaveRSSArticles(ctx, []RSSArticle{initialArticle}); err != nil {
+		t.Fatalf("initial SaveRSSArticles failed: %v", err)
+	}
+
+	got, err := store.GetRSSArticle(ctx, initialArticle.ID)
+	if err != nil || got == nil {
+		t.Fatalf("GetRSSArticle failed: %v", err)
+	}
+	if !got.IsFullText || got.ContentHTML != initialArticle.ContentHTML || len(got.Blocks) != 1 {
+		t.Fatalf("expected full text and blocks preserved initially, got: %+v", got)
+	}
+
+	refreshedSummaryArticle := RSSArticle{
+		ID:          initialArticle.ID,
+		FeedID:      feed.ID,
+		Title:       "Sample Article",
+		Link:        "https://example.com/post/1",
+		Snippet:     "Summary snippet",
+		ContentHTML: "<p>Short summary from feed.</p>",
+		IsFullText:  false,
+		Blocks:      nil,
+		UpdatedAt:   now + 1000,
+	}
+
+	if err := store.SaveRSSArticles(ctx, []RSSArticle{refreshedSummaryArticle}); err != nil {
+		t.Fatalf("refresh SaveRSSArticles failed: %v", err)
+	}
+
+	gotAfter, err := store.GetRSSArticle(ctx, initialArticle.ID)
+	if err != nil || gotAfter == nil {
+		t.Fatalf("GetRSSArticle after refresh failed: %v", err)
+	}
+	if !gotAfter.IsFullText {
+		t.Fatalf("IsFullText should remain true, got false")
+	}
+	if gotAfter.ContentHTML != initialArticle.ContentHTML {
+		t.Fatalf("ContentHTML was overwritten by summary: got %q, want %q", gotAfter.ContentHTML, initialArticle.ContentHTML)
+	}
+	if len(gotAfter.Blocks) != 1 || gotAfter.Blocks[0].Text != initialArticle.Blocks[0].Text {
+		t.Fatalf("Blocks were wiped by summary refresh: got %+v", gotAfter.Blocks)
+	}
+}
+
+func TestDeleteRSSFeedSoftDeleteArticles(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+
+	now := time.Now().UnixMilli()
+	feed := RSSFeed{
+		ID:        "feed:test-softdel",
+		FeedURL:   "https://example.com/rss",
+		Title:     "Soft Delete Test Feed",
+		UpdatedAt: now,
+	}
+	if err := store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatal(err)
+	}
+
+	articles := []RSSArticle{
+		{
+			ID:          "art:test-softdel:unstarred",
+			FeedID:      feed.ID,
+			Title:       "Unstarred Article",
+			Link:        "https://example.com/post/1",
+			ContentHTML: "<p>Post 1</p>",
+			Starred:     false,
+			Read:        false,
+			UpdatedAt:   now,
+		},
+		{
+			ID:          "art:test-softdel:starred",
+			FeedID:      feed.ID,
+			Title:       "Starred Article",
+			Link:        "https://example.com/post/2",
+			ContentHTML: "<p>Post 2</p>",
+			Starred:     true,
+			StarredAt:   now,
+			Read:        false,
+			UpdatedAt:   now,
+		},
+	}
+	if err := store.SaveRSSArticles(ctx, articles); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.DeleteRSSFeed(ctx, feed.ID, false); err != nil {
+		t.Fatalf("DeleteRSSFeed soft failed: %v", err)
+	}
+
+	unstarred, err := store.GetRSSArticle(ctx, "art:test-softdel:unstarred")
+	if err != nil || unstarred == nil {
+		t.Fatalf("GetRSSArticle unstarred failed: %v", err)
+	}
+	if !unstarred.Deleted || unstarred.DeletedAt == 0 {
+		t.Fatalf("unstarred article should be soft deleted, got deleted=%v, deleted_at=%d", unstarred.Deleted, unstarred.DeletedAt)
+	}
+
+	starred, err := store.GetRSSArticle(ctx, "art:test-softdel:starred")
+	if err != nil || starred == nil {
+		t.Fatalf("GetRSSArticle starred failed: %v", err)
+	}
+	if starred.Deleted {
+		t.Fatalf("starred article should NOT be deleted, got deleted=true")
+	}
+
+	unreadList, err := store.ListRSSArticles(ctx, RSSArticleFilter{UnreadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unreadList) != 0 {
+		t.Fatalf("expected 0 unread articles from soft-deleted feeds, got %d", len(unreadList))
+	}
+
+	allList, err := store.ListRSSArticles(ctx, RSSArticleFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allList) != 0 {
+		t.Fatalf("expected 0 general articles from soft-deleted feeds, got %d", len(allList))
+	}
+
+	starredList, err := store.ListRSSArticles(ctx, RSSArticleFilter{StarredOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(starredList) != 1 || starredList[0].ID != "art:test-softdel:starred" {
+		t.Fatalf("expected 1 starred article preserved, got %+v", starredList)
+	}
+}

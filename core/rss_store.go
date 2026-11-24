@@ -100,7 +100,11 @@ func (s *Store) DeleteRSSFeed(ctx context.Context, id string, hard bool) error {
 		_, err := s.db.Transaction(ctx, stmts)
 		return err
 	}
-	_, err := s.db.Execute(ctx, `UPDATE rss_feeds SET deleted = 1, deleted_at = ?, updated_at = ? WHERE id = ?`, now, now, id)
+	stmts := []sqlite.Statement{
+		{SQL: `UPDATE rss_feeds SET deleted = 1, deleted_at = ?, updated_at = ? WHERE id = ?`, Args: []any{now, now, id}},
+		{SQL: `UPDATE rss_articles SET deleted = 1, deleted_at = ?, updated_at = ? WHERE feed_id = ? AND starred = 0 AND deleted = 0`, Args: []any{now, now, id}},
+	}
+	_, err := s.db.Transaction(ctx, stmts)
 	return err
 }
 
@@ -234,10 +238,16 @@ func (s *Store) SaveRSSArticles(ctx context.Context, articles []RSSArticle) erro
 		author=excluded.author,
 		published_at=excluded.published_at,
 		snippet=excluded.snippet,
-		content_html=COALESCE(NULLIF(excluded.content_html, ''), rss_articles.content_html),
+		content_html=CASE
+			WHEN rss_articles.is_full_text = 1 AND excluded.is_full_text = 0 THEN rss_articles.content_html
+			ELSE COALESCE(NULLIF(excluded.content_html, ''), rss_articles.content_html)
+		END,
 		is_full_text=MAX(rss_articles.is_full_text, excluded.is_full_text),
 		hero_image=COALESCE(NULLIF(excluded.hero_image, ''), rss_articles.hero_image),
-		blocks_json=COALESCE(NULLIF(excluded.blocks_json, ''), rss_articles.blocks_json),
+		blocks_json=CASE
+			WHEN rss_articles.is_full_text = 1 AND excluded.is_full_text = 0 THEN rss_articles.blocks_json
+			ELSE COALESCE(NULLIF(NULLIF(excluded.blocks_json, ''), '[]'), rss_articles.blocks_json)
+		END,
 		updated_at=excluded.updated_at`
 
 	for _, a := range articles {
@@ -300,6 +310,8 @@ func (s *Store) ListRSSArticles(ctx context.Context, filter RSSArticleFilter) ([
 	}
 	if filter.StarredOnly {
 		where = append(where, "starred = 1")
+	} else {
+		where = append(where, "feed_id NOT IN (SELECT id FROM rss_feeds WHERE deleted = 1)")
 	}
 	if filter.Search != "" {
 		where = append(where, "(title LIKE ? OR snippet LIKE ?)")
