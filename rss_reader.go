@@ -18,7 +18,9 @@ import (
 // The reader view's paragraph rail: a 24 pt lane on the reader's right edge
 // holding one short bar per article block, spread over the lane's height so a
 // bar's place is its position in the article. The bar the reading line is in
-// grows and takes the accent; the rest stay thin and muted.
+// grows and takes the accent; the bar under the pointer grows and darkens; the
+// rest stay thin and muted. A click on a bar takes the reader to the paragraph
+// it shows, and the bar under the pointer opens the preview beside it.
 const (
 	rssTickRailWidth float32 = 24
 	rssTickInset     float32 = 6 // room above the first and below the last bar
@@ -26,9 +28,19 @@ const (
 	rssTickMinPitch  float32 = 5 // closest two slots may sit, clear of the grown bar
 	rssTickInactiveW float32 = 12
 	rssTickInactiveH float32 = 2
+	rssTickHoverW    float32 = 16
+	rssTickHoverH    float32 = 3
 	rssTickActiveW   float32 = 18
 	rssTickActiveH   float32 = 4
 	rssReadingProbe  float32 = 24 // where the reading line sits below the viewport's top
+	// The hover preview is a light bubble left of the bars: its width, the gap
+	// it keeps from the widest bar, the room it keeps from the rail's ends, and
+	// how many characters of the paragraph it shows.
+	rssPreviewWidth  float32 = 236
+	rssPreviewGap    float32 = 8
+	rssPreviewMargin float32 = 6
+	rssPreviewRunes  int     = 56
+	rssPreviewLines  int     = 2
 	// rssHeaderInlineActionsMin is the reader width from which the header's
 	// two labelled actions share the metadata's row.
 	rssHeaderInlineActionsMin float32 = 560
@@ -67,8 +79,25 @@ type rssReaderState struct {
 	// viewport is the scrolling body's window bounds as the last frame laid
 	// it out.
 	viewport ui.Rect
+	// rail is the paragraph rail's window bounds as the last frame painted
+	// it, which a click reads the bars from before this frame's layout.
+	rail ui.Rect
 	// active is the block index at the reading line, -1 with no body.
 	active int
+	// hover is the bar under the pointer, -1 for none, and the block it
+	// shows is the one a click reads.
+	hover int
+	// jump is the block a clicked bar is scrolling to while jumping says a
+	// jump is under way: its bar stays grown until the reading line takes
+	// over, so the highlight does not sweep back as the body glides.
+	jump    int
+	jumping bool
+}
+
+// newRSSReaderState starts an article's reader at its top, with no bar under
+// the pointer and no jump under way.
+func newRSSReaderState(articleID string) rssReaderState {
+	return rssReaderState{articleID: articleID, hover: -1, jump: -1}
 }
 
 // clampRSSListWidth keeps the article list inside its 260-480 range, with zero
@@ -239,6 +268,50 @@ func rssTickBucket(block, blockCount, tickCount int) int {
 	return bucket
 }
 
+// rssTickBlock is rssTickBucket the other way: the first body block a bar
+// shows, the paragraph a click on the bar reads. A bar that gathers several
+// blocks reads the first of them, the one whose place in the article the bar
+// stands at. -1 asks for no bar, or a rail without one.
+func rssTickBlock(bucket, blockCount, tickCount int) int {
+	if bucket < 0 || blockCount <= 0 || tickCount <= 0 {
+		return -1
+	}
+	if bucket >= tickCount {
+		bucket = tickCount - 1
+	}
+	// The bar shows the blocks b whose block*tickCount/blockCount is its own,
+	// the smallest of which is the first that rounds up to it.
+	block := (bucket*blockCount + tickCount - 1) / tickCount
+	if block >= blockCount {
+		block = blockCount - 1
+	}
+	return block
+}
+
+// rssTickIndexAt is the bar a point in the rail is on: the slot its y falls in,
+// within the bars' right-aligned column, so the whole pitch of a bar answers
+// for it and a 2 pt mark is easy to hit. The lane's insets, the gutter left of
+// the bars and everything outside the rail answer -1.
+func rssTickIndexAt(rail ui.Rect, count int, x, y float32) int {
+	if count <= 0 || !rail.Contains(x, y) {
+		return -1
+	}
+	room := rail.H - 2*rssTickInset
+	if room <= 0 {
+		return -1
+	}
+	left := rail.X + rail.W - rssTickInsetX - max(rssTickInactiveW, max(rssTickHoverW, rssTickActiveW))
+	if x < left {
+		return -1
+	}
+	first := rail.Y + rssTickInset
+	pitch := room / float32(count)
+	if y < first || y >= first+float32(count)*pitch {
+		return -1
+	}
+	return min(int((y-first)/pitch), count-1)
+}
+
 // rssActiveBlock returns the block the reading line falls in: one line below
 // the viewport's top, the block whose top last passed that line is the one
 // being read, so at the article's top the first block is active and scrolling
@@ -268,9 +341,10 @@ func rssActiveBlock(bounds []ui.Rect, viewport ui.Rect) int {
 
 // rssTickRects lays the rail's bars inside rail: count slots spread over the
 // lane's whole height, so a bar's place is its position in the article and the
-// grown active bar shows how far through the piece the reader is. Bars are
-// right-aligned on the pane's edge.
-func rssTickRects(rail ui.Rect, count, active int) []ui.Rect {
+// grown active bar shows how far through the piece the reader is. The bar
+// under the pointer grows too, under the active one's size, and an active one
+// under the pointer keeps its own. Bars are right-aligned on the pane's edge.
+func rssTickRects(rail ui.Rect, count, active, hover int) []ui.Rect {
 	if count <= 0 || rail.W <= 0 || rail.H <= 0 {
 		return nil
 	}
@@ -282,8 +356,11 @@ func rssTickRects(rail ui.Rect, count, active int) []ui.Rect {
 	rects := make([]ui.Rect, count)
 	for i := range rects {
 		width, height := rssTickInactiveW, rssTickInactiveH
-		if i == active {
+		switch {
+		case i == active:
 			width, height = rssTickActiveW, rssTickActiveH
+		case i == hover:
+			width, height = rssTickHoverW, rssTickHoverH
 		}
 		rects[i] = ui.Rect{
 			X: rail.X + rail.W - rssTickInsetX - width,
@@ -293,6 +370,50 @@ func rssTickRects(rail ui.Rect, count, active int) []ui.Rect {
 		}
 	}
 	return rects
+}
+
+// rssPreviewHeight is the room the hover preview keeps: its padding and
+// border, the block kind's line, and the lines of the paragraph below it. The
+// preview places itself by that room rather than by what its own text measures,
+// so its top stays put as the pointer moves from a bar whose paragraph fills
+// both lines to one whose words fill a single line.
+func rssPreviewHeight(lines int) float32 {
+	lines = max(lines, 1)
+	return 2*mui.Space(2) + 2*mui.Hairline + mui.Metadata.LineHeight +
+		mui.Space(0.5) + float32(lines)*mui.Secondary.LineHeight
+}
+
+// rssPreviewRect places the hover preview in the rail's own coordinates: its
+// right edge the gap left of the widest bar, its middle on the hovered bar's
+// middle, and its top kept the margin inside the rail's ends where the bar sits
+// at either one. The bubble is wider than the lane, so x is negative: it hangs
+// over the reading column.
+func rssPreviewRect(rail, bar ui.Rect, width, height, gap, margin float32) ui.Rect {
+	if rail.H <= 0 || width <= 0 || height <= 0 {
+		return ui.Rect{}
+	}
+	top := bar.Y + bar.H/2 - rail.Y - height/2
+	lowest := max(rail.H-margin-height, margin)
+	return ui.Rect{
+		X: rail.W - rssTickInsetX - rssTickActiveW - gap - width,
+		Y: clamp(top, margin, lowest),
+		W: width,
+		H: height,
+	}
+}
+
+// rssBlockScrollY is the body offset that puts a block's top on the reading
+// line, where a click sends it: the block's own Y in the content, less where
+// the reading line sits below the viewport's top, so the line holds exactly the
+// paragraph the click read when the glide lands. Bounds and viewport are the
+// last frame's, in window coordinates, with the offset the body was scrolled to
+// then; the start of the body is 0 however far above the first block the line
+// would fall.
+func rssBlockScrollY(bounds []ui.Rect, viewport ui.Rect, scrollY float32, block int) float32 {
+	if block < 0 || block >= len(bounds) || viewport.H <= 0 {
+		return max(scrollY, 0)
+	}
+	return max(bounds[block].Y-viewport.Y+scrollY-rssReadingProbe, 0)
 }
 
 // rssReaderPane renders Column 3: the article reading view with its header,
@@ -310,17 +431,18 @@ func (w *Window) rssReaderPane(c *ui.Context, t mui.Tokens) {
 		return
 	}
 	if w.rssReader.articleID != art.ID {
-		w.rssReader = rssReaderState{articleID: art.ID}
+		w.rssReader = newRSSReaderState(art.ID)
 	}
+	blocks := rssArticleBlocks(*art)
 
 	ui.Row(c.Key("rss-reader-pane")).Fill().Background(t.App).AlignItems(ui.Stretch).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Clip().Children(func() {
 			w.rssReaderHeader(c, t, *art)
 			ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
 				ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
-					w.rssReaderBody(c, t, *art)
+					w.rssReaderBody(c, t, *art, blocks)
 				})
-				w.rssTickRail(c, t)
+				w.rssTickRail(c, t, blocks)
 			})
 		})
 	})
@@ -501,10 +623,10 @@ func (w *Window) refetchRSSArticle(c *ui.Context, art core.RSSArticle) {
 
 // rssReaderBody is the scrolling article body: the reading column of blocks,
 // the summary notice when only the feed's own text is available, and the
-// original article link.
-func (w *Window) rssReaderBody(c *ui.Context, t mui.Tokens, art core.RSSArticle) {
+// original article link. blocks are the body the pane parsed once for this
+// frame, which the paragraph rail maps.
+func (w *Window) rssReaderBody(c *ui.Context, t mui.Tokens, art core.RSSArticle, blocks []core.ArticleBlock) {
 	st := &w.rssReader
-	blocks := rssArticleBlocks(art)
 	degraded := !art.IsFullText || len(blocks) == 0
 	gutter := rssReaderPadding(w.rssLayout.readerWidth - rssTickRailWidth)
 
@@ -534,6 +656,16 @@ func (w *Window) rssReaderBody(c *ui.Context, t mui.Tokens, art core.RSSArticle)
 	st.viewport = body.LayoutBounds()
 	st.ticks = bounds
 	st.active = rssActiveBlock(bounds, st.viewport)
+	if st.jumping {
+		// A bar's click reads its paragraph before the body has glided there:
+		// its bar stays grown until the scroll arrives and the reading line
+		// takes over, so the highlight never sweeps back on the way.
+		if st.scroll.Scrolling() && st.jump >= 0 && st.jump < len(bounds) {
+			st.active = st.jump
+		} else {
+			st.jumping = false
+		}
+	}
 }
 
 // rssArticleBlocks is the structured body the reader renders: the article's
@@ -648,32 +780,172 @@ func rssLinkHost(link string) string {
 }
 
 // rssTickRail is the paragraph indicator lane: one bar per body block, the
-// block at the reading line grown and accented, the rest thin and muted. The
-// lane is painted, not built per tick, so a long article costs one draw call
-// per frame.
-func (w *Window) rssTickRail(c *ui.Context, t mui.Tokens) {
+// block at the reading line grown and accented, the bar under the pointer
+// grown and darker, the rest thin and muted. A click on a bar takes the reader
+// to the paragraph it shows, and the bar under the pointer opens its preview.
+// The lane is painted, not built per tick, so a long article costs one draw
+// call per frame: the pointer's place in the lane names the bar.
+func (w *Window) rssTickRail(c *ui.Context, t mui.Tokens, blocks []core.ArticleBlock) {
 	st := &w.rssReader
 	rail := ui.Column(c.Key("rss-ticks")).Width(rssTickRailWidth).Shrink(0).
 		Role(ui.RoleGroup).Label("Reading position")
+	// One block is not a structure to map: a lone bar would read as a stray
+	// mark rather than a position in the article, and it answers no click.
+	st.hover = -1
+	count := 0
+	if len(st.ticks) >= 2 {
+		count = rssTickCount(len(st.ticks), st.rail.H)
+	}
+	if count > 0 {
+		// The pointer's place is the last frame's: the lane it was over is the
+		// one the bars were laid in then, and the frame that follows a move
+		// rebuilds from it.
+		if x, y, over := rail.PointerPosition(); over {
+			st.hover = rssTickIndexAt(st.rail, count, st.rail.X+x, st.rail.Y+y)
+		}
+	}
+	if st.hover >= 0 && rail.Clicked() {
+		w.jumpToTick(blocks, count)
+	}
 	rail.Draw(func(p *ui.Painter, r ui.Rect) {
-		// One block is not a structure to map: a lone bar would read as a
-		// stray mark rather than a position in the article.
-		if len(st.ticks) < 2 {
+		st.rail = r
+		bars := 0
+		if len(st.ticks) >= 2 {
+			bars = rssTickCount(len(st.ticks), r.H)
+		}
+		if bars <= 0 {
 			return
 		}
-		count := rssTickCount(len(st.ticks), r.H)
-		if count <= 0 {
-			return
-		}
-		active := rssTickBucket(st.active, len(st.ticks), count)
-		for i, tick := range rssTickRects(r, count, active) {
+		active := rssTickBucket(st.active, len(st.ticks), bars)
+		for i, tick := range rssTickRects(r, bars, active, st.hover) {
 			color := t.Border
-			if i == active {
+			switch i {
+			case active:
 				color = t.Accent
+			case st.hover:
+				color = t.Muted
 			}
 			p.Fill(tick, color, tick.H/2)
 		}
 	})
+	if st.hover >= 0 {
+		rail.Children(func() {
+			w.rssTickPreview(c, t, blocks, count)
+		})
+	}
+}
+
+// jumpToTick scrolls the body to the paragraph the bar under the pointer
+// shows, and grows that bar in this same frame: the highlight holds on it
+// while the body glides, then the reading line takes over where it lands.
+func (w *Window) jumpToTick(blocks []core.ArticleBlock, count int) {
+	st := &w.rssReader
+	block := rssTickBlock(st.hover, len(st.ticks), count)
+	if block < 0 || block >= len(blocks) {
+		return
+	}
+	st.jump, st.jumping, st.active = block, true, block
+	st.scroll.ScrollTo(0, rssBlockScrollY(st.ticks, st.viewport, st.scroll.Y, block), ui.Smooth)
+}
+
+// rssTickPreview is the hover preview: the kind of block the bar under the
+// pointer shows and the paragraph's opening words, in a light bubble hanging
+// over the reading column beside the bar. It ignores the pointer, so it never
+// takes the hover that shows it, and it fades in and out as the pointer comes
+// along the rail and leaves it.
+func (w *Window) rssTickPreview(c *ui.Context, t mui.Tokens, blocks []core.ArticleBlock, count int) {
+	st := &w.rssReader
+	if st.hover < 0 || count <= 0 || len(st.ticks) < 2 {
+		return
+	}
+	block := rssTickBlock(st.hover, len(blocks), count)
+	if block < 0 || block >= len(blocks) {
+		return
+	}
+	bars := rssTickRects(st.rail, count, -1, st.hover)
+	if st.hover >= len(bars) {
+		return
+	}
+	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
+	kind := rssBlockKind(blocks[block], zh)
+	words := rssPreviewWords(blocks[block], rssPreviewRunes)
+	r := rssPreviewRect(st.rail, bars[st.hover], rssPreviewWidth,
+		rssPreviewHeight(rssPreviewLines), rssPreviewGap, rssPreviewMargin)
+	bubble := ui.Column(c.Key("rss-tick-preview")).Absolute().Left(r.X).Top(r.Y).Width(r.W).
+		Padding(mui.Space(2)).Gap(mui.Space(0.5)).Radius(mui.RadiusNotice).
+		Background(t.Surface).Border(mui.Hairline, t.Border).
+		Shadow(0, mui.ElevationOffsetY, mui.ElevationBlur, mui.ElevationSpread, t.Shadow).
+		IgnoreInput(true).Role(ui.RoleGroup).Label(rssPreviewLabel(kind, zh)).
+		// Only its colours and shadow ease: its place is the bar's, which the
+		// pointer already follows, so the bubble never trails behind it.
+		Transition(ui.ElementTransition{
+			Duration:     mui.MotionPopover,
+			Ease:         mui.Ease,
+			ExitDuration: mui.MotionInteraction,
+			Colors:       true,
+			Shadows:      true,
+			Enter:        &ui.Motion{Opacity: 0},
+			Exit:         &ui.Motion{Opacity: 0},
+		})
+	bubble.Children(func() {
+		mui.Metadata.Apply(ui.Text(c, kind)).TextColor(t.Muted).SingleLine()
+		mui.Secondary.Apply(ui.Text(c, words)).TextColor(t.Text).MaxLines(rssPreviewLines).Wrap()
+	})
+}
+
+// rssBlockKind names a body block in the reader's words, for the rail's
+// preview.
+func rssBlockKind(block core.ArticleBlock, zh bool) string {
+	en, cn := "Paragraph", "段落"
+	switch block.Type {
+	case core.BlockHeading:
+		en, cn = "Heading", "标题"
+	case core.BlockBlockquote:
+		en, cn = "Quote", "引用"
+	case core.BlockCode:
+		en, cn = "Code block", "代码块"
+	case core.BlockImage:
+		en, cn = "Image", "图片"
+	case core.BlockList:
+		en, cn = "List", "列表"
+	}
+	if zh {
+		return cn
+	}
+	return en
+}
+
+// rssPreviewWords is a block's opening words for the rail's preview: its text
+// run together on one line and cut at limit characters, or what a picture
+// shows when it carries no words of its own. A block left without any previews
+// its kind alone.
+func rssPreviewWords(block core.ArticleBlock, limit int) string {
+	text := block.Text
+	if strings.TrimSpace(text) == "" {
+		switch block.Type {
+		case core.BlockImage:
+			text = block.Alt
+			if strings.TrimSpace(text) == "" {
+				text = block.Caption
+			}
+		default:
+			text = core.CleanSnippet("", block.HTML, 0)
+		}
+	}
+	text = strings.Join(strings.Fields(text), " ")
+	if runes := []rune(text); limit > 0 && len(runes) > limit {
+		text = strings.TrimSpace(string(runes[:limit])) + "…"
+	}
+	return text
+}
+
+// rssPreviewLabel names the preview for assistive technology and for the tests
+// that place it: the kind of block it shows, and that it is a preview.
+func rssPreviewLabel(kind string, zh bool) string {
+	if zh {
+		return kind + "预览"
+	}
+	return kind + " preview"
 }
 
 // rssBlock renders one structured article block. Every block takes the reading
