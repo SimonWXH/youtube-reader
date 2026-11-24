@@ -656,7 +656,7 @@ func (w *Window) rssTextSizeControl(c *ui.Context, t mui.Tokens) {
 			segment := parts.Segment(i).Height(rssTextSizeSegmentH).Padding(0, rssTextSizePadX).
 				Radius(rssTextSizeRadius).Center().FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
 				Label(label).Tooltip(label)
-			glyph := mui.TextStyle{Size: size, LineHeight: size + 6, Weight: mui.Medium}
+			glyph := rssTextSizeGlyph(size)
 			if i == selected {
 				segment.Background(t.Surface).Border(mui.Hairline, t.BorderSoft)
 				segment.Children(func() {
@@ -715,14 +715,19 @@ func rssHeaderActionWidth(c *ui.Context, label string) float32 {
 	return rssTextWidth(c, mui.Control, label) + 2*mui.Space(3) + 2*mui.Hairline
 }
 
+// rssTextSizeGlyph is the A one size segment draws, so the header's width model
+// measures the style the drawn control uses.
+func rssTextSizeGlyph(size float32) mui.TextStyle {
+	return mui.TextStyle{Size: size, LineHeight: size + 6, Weight: mui.Medium}
+}
+
 // rssTextSizeControlWidth is the size control's width: the track's border,
 // inset, and gaps, and one padded segment per offered size drawing its own A,
 // with the chosen segment's border on top.
 func rssTextSizeControlWidth(c *ui.Context) float32 {
 	width := 2*mui.Hairline + 2*rssTextSizeInset + float32(len(mui.ArticleSizes)-1)*rssTextSizeGap + 2*mui.Hairline
 	for _, size := range mui.ArticleSizes {
-		glyph := mui.TextStyle{Size: size, LineHeight: size + 6, Weight: mui.Medium}
-		width += rssTextWidth(c, glyph, "A") + 2*rssTextSizePadX
+		width += rssTextWidth(c, rssTextSizeGlyph(size), "A") + 2*rssTextSizePadX
 	}
 	return width
 }
