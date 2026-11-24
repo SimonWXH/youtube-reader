@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -28,15 +29,62 @@ const (
 	maxMaxGridColumns     = 8
 )
 
+func hasNotifyOnlyFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--notify-only" || arg == "-notify-only" {
+			return true
+		}
+	}
+	return false
+}
+
+var consumePendingNotificationsForApp = core.ConsumePendingNotifications
+
+var runNotifyOnlyLoop = func(fn func()) error {
+	mygo.App.WhenReady(func() {
+		defer mygo.App.Quit()
+		fn()
+	})
+	return mygo.App.Run()
+}
+
+func deliverPendingNotifications(app *App) int {
+	plans, err := consumePendingNotificationsForApp(app.Dir)
+	if err != nil {
+		log.Printf("pending notifications: %v", err)
+		return 0
+	}
+	for _, plan := range plans {
+		app.postNotification(plan)
+	}
+	return len(plans)
+}
+
+func runNotifyOnly(app *App) {
+	err := runNotifyOnlyLoop(func() {
+		deliverPendingNotifications(app)
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
 func realMain() {
 	app, err := LoadApp()
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer app.Close()
+
+	if hasNotifyOnlyFlag(os.Args[1:]) {
+		runNotifyOnly(app)
+		return
+	}
+
 	if err := app.ConsumeHandoff(); err != nil {
 		log.Printf("handoff: %v", err)
 	}
+	deliverPendingNotifications(app)
 	// Register before Run so MyGo can deliver a click from an earlier run.
 	registerNotificationClick(app)
 	selectedIndex := -1
@@ -341,8 +389,7 @@ func notificationClickHandler(app *App) func(string) {
 }
 
 // serveNotificationDeliveries shows the notifications the background helper
-// hands the running app instead of posting them through Script Editor, whose
-// window a click would open. The listener lives as long as the process.
+// hands the running app when it is active. The listener lives as long as the process.
 func serveNotificationDeliveries(app *App, w *Window) {
 	show := func(plans []core.NotificationPlan) {
 		for _, plan := range plans {

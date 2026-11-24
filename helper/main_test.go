@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -275,10 +276,34 @@ func TestCommitHelperResultLeavesRefreshAndHandoffOwnership(t *testing.T) {
 	}
 }
 
-func TestEscapeAppleScript(t *testing.T) {
-	got := escapeAppleScript("2 new videos\nA \"quote\" \\ path")
-	want := "2 new videos\\nA \\\"quote\\\" \\\\ path"
-	if got != want {
-		t.Fatalf("escaped = %q, want %q", got, want)
+// TestHelperSourceDoesNotContainAppleScript proves that AppleScript and plain notification
+// fallback logic has been completely removed from the helper package source.
+func TestHelperSourceDoesNotContainAppleScript(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no go files found in helper directory")
+	}
+	forbidden := []string{
+		"osa" + "script",
+		"display " + "notification",
+		"postPlain" + "Notification",
+		"escapeApple" + "Script",
+	}
+	for _, file := range files {
+		if file == "main_test.go" {
+			continue
+		}
+		content, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, phrase := range forbidden {
+			if strings.Contains(string(content), phrase) {
+				t.Errorf("%s contains forbidden phrase %q", file, phrase)
+			}
+		}
 	}
 }
