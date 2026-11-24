@@ -74,7 +74,7 @@ func orderRSSFeeds(feeds []core.RSSFeed, storedOrder []string) []core.RSSFeed {
 	return append(ordered, remaining...)
 }
 
-// ReloadRSS refreshes all in-memory RSS feeds, groups, and counts from SQLite.
+// ReloadRSS refreshes all in-memory RSS feeds, groups, articles, and counts from SQLite.
 func (a *App) ReloadRSS() error {
 	if a.Store == nil {
 		return nil
@@ -88,20 +88,33 @@ func (a *App) ReloadRSS() error {
 	if err != nil {
 		return err
 	}
+	articles, err := a.Store.ListRSSArticles(ctx, core.RSSArticleFilter{})
+	if err != nil {
+		return err
+	}
 
+	a.RSSFeeds = feeds
+	a.RSSGroups = orderRSSGroups(groups, a.settingsSnapshot().RSSGroupOrder)
+	a.RSSArticles = articles
+	a.reloadRSSCounts()
+	return nil
+}
+
+// reloadRSSCounts reloads the unread and starred totals the RSS sidebar and
+// dock badge show. Every writer of an article's read or starred state calls it
+// so those counts never disagree with the article column.
+func (a *App) reloadRSSCounts() {
+	if a.Store == nil {
+		return
+	}
+	ctx := context.Background()
 	unreadMap, _ := a.Store.RSSUnreadCounts(ctx)
 	if unreadMap == nil {
 		unreadMap = make(map[string]int)
 	}
-	totalUnread, _ := a.Store.RSSTotalUnreadCount(ctx)
-	starred, _ := a.Store.RSSStarredCount(ctx)
-
-	a.RSSFeeds = feeds
-	a.RSSGroups = orderRSSGroups(groups, a.settingsSnapshot().RSSGroupOrder)
 	a.RSSUnreadMap = unreadMap
-	a.RSSTotalUnread = totalUnread
-	a.RSSStarredTotal = starred
-	return nil
+	a.RSSTotalUnread, _ = a.Store.RSSTotalUnreadCount(ctx)
+	a.RSSStarredTotal, _ = a.Store.RSSStarredCount(ctx)
 }
 
 // RSSGroupCollapsed reports whether an RSS group is folded in the sidebar.

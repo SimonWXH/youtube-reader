@@ -146,6 +146,7 @@ type Window struct {
 
 	grid               ui.GridState
 	gridKeyboardFocus  bool
+	rssRevealSelection string // article ID a keyboard move just selected
 	selectedIndex      *int
 	sidebarFocus       string // sidebar row that takes the focus in the next frame
 	sidebarKeyboard    string // sidebar row that arrow navigation focused
@@ -179,6 +180,9 @@ type Window struct {
 	// starts. The app leaves it nil and fetches in the background; a test
 	// records the request instead of starting a lookup that outlives it.
 	onAddedChannel func(channel core.Channel)
+	// onRSSArticleSelected, when set, is invoked when an RSS article is selected.
+	// The app leaves it nil; tests or observers record selection dispatches.
+	onRSSArticleSelected func(article core.RSSArticle)
 
 	// RSS inline renaming state:
 	renamingRSSGroupID   string

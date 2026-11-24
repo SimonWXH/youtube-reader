@@ -36,6 +36,9 @@ type App struct {
 	RSSTotalUnread  int
 	RSSStarredTotal int
 
+	RSSArticles          []core.RSSArticle
+	SelectedRSSArticleID string
+
 	Selected        string
 	Search          string
 	ChannelFilter   string
@@ -1656,6 +1659,140 @@ func (a *App) VideoByID(id string) (core.Video, bool) {
 		}
 	}
 	return core.Video{}, false
+}
+
+// FeedTitle returns the display name of feedID, or empty string if not found.
+func (a *App) FeedTitle(feedID string) string {
+	return a.RSSFeedByID(feedID).DisplayName()
+}
+
+// RSSUnreadCount returns the unread article count for feedID, or for every
+// active feed when feedID is empty. It reads the counts ReloadRSS derives from
+// SQLite so the article column header, the sidebar rows, and the dock badge
+// always agree.
+func (a *App) RSSUnreadCount(feedID string) int {
+	if feedID == "" {
+		return a.RSSTotalUnread
+	}
+	return a.RSSUnreadMap[feedID]
+}
+
+// VisibleRSSArticles returns the list of RSS articles filtered by current selection,
+// unread filter, and search query, ordered newest first (published_at DESC, id DESC).
+func (a *App) VisibleRSSArticles() []core.RSSArticle {
+	selected := a.Selected
+	var allowedFeeds map[string]bool
+	starredOnly := false
+
+	if selected == "starred" {
+		starredOnly = true
+	} else if strings.HasPrefix(selected, "feed:") {
+		fid := strings.TrimPrefix(selected, "feed:")
+		allowedFeeds = map[string]bool{fid: true}
+	} else if strings.HasPrefix(selected, "group:") {
+		gid := strings.TrimPrefix(selected, "group:")
+		allowedFeeds = map[string]bool{}
+		for _, g := range a.RSSGroups {
+			if g.ID == gid {
+				for _, fid := range g.FeedIDs {
+					allowedFeeds[fid] = true
+				}
+				break
+			}
+		}
+	}
+
+	q := strings.TrimSpace(strings.ToLower(a.Search))
+	var feedTitles map[string]string
+	if q != "" {
+		feedTitles = make(map[string]string, len(a.RSSFeeds))
+		for _, f := range a.RSSFeeds {
+			feedTitles[f.ID] = strings.ToLower(f.DisplayName())
+		}
+	}
+	out := make([]core.RSSArticle, 0, len(a.RSSArticles))
+
+	for _, art := range a.RSSArticles {
+		if starredOnly && !art.Starred {
+			continue
+		}
+		if allowedFeeds != nil && !allowedFeeds[art.FeedID] {
+			continue
+		}
+		if a.UnreadOnly && art.Read {
+			continue
+		}
+		if q != "" {
+			titleMatch := strings.Contains(strings.ToLower(art.Title), q)
+			snippetMatch := strings.Contains(strings.ToLower(art.Snippet), q)
+			feedMatch := strings.Contains(feedTitles[art.FeedID], q)
+			authorMatch := strings.Contains(strings.ToLower(art.Author), q)
+			if !titleMatch && !snippetMatch && !feedMatch && !authorMatch {
+				continue
+			}
+		}
+		out = append(out, art)
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].PublishedAt != out[j].PublishedAt {
+			return out[i].PublishedAt > out[j].PublishedAt
+		}
+		return out[i].ID > out[j].ID
+	})
+
+	return out
+}
+
+// feedTitlesByID returns each RSS feed's display title by feed ID.
+func (a *App) feedTitlesByID() map[string]string {
+	titles := make(map[string]string, len(a.RSSFeeds))
+	for _, f := range a.RSSFeeds {
+		titles[f.ID] = f.DisplayName()
+	}
+	return titles
+}
+
+// SelectedRSSArticle returns a pointer to the currently selected article, or nil.
+func (a *App) SelectedRSSArticle() *core.RSSArticle {
+	if a.SelectedRSSArticleID == "" {
+		return nil
+	}
+	for i := range a.RSSArticles {
+		if a.RSSArticles[i].ID == a.SelectedRSSArticleID {
+			return &a.RSSArticles[i]
+		}
+	}
+	return nil
+}
+
+// SelectRSSArticle selects an article by ID.
+func (a *App) SelectRSSArticle(id string) {
+	a.SelectedRSSArticleID = id
+}
+
+// MarkRSSArticleRead marks an article as read or unread in the store and in-memory.
+func (a *App) MarkRSSArticleRead(id string, read bool) error {
+	now := time.Now().UnixMilli()
+	if a.Store != nil {
+		if err := a.Store.MarkRSSArticleRead(context.Background(), id, read, now); err != nil {
+			return err
+		}
+	}
+	for i := range a.RSSArticles {
+		if a.RSSArticles[i].ID == id {
+			a.RSSArticles[i].Read = read
+			if read {
+				a.RSSArticles[i].ReadAt = now
+			} else {
+				a.RSSArticles[i].ReadAt = 0
+			}
+			a.RSSArticles[i].UpdatedAt = now
+			break
+		}
+	}
+	a.reloadRSSCounts()
+	return nil
 }
 
 func queueSyncState(raw json.RawMessage) (core.SyncState, error) {
