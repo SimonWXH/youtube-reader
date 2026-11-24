@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image/png"
 	"net/http"
 	"os"
@@ -185,7 +186,7 @@ func TestRSSTickMapping(t *testing.T) {
 
 	t.Run("bar geometry", func(t *testing.T) {
 		rail := ui.Rect{X: 1200, Y: 80, W: rssTickRailWidth, H: 500}
-		rects := rssTickRects(rail, 20, 3)
+		rects := rssTickRects(rail, 20, 3, -1)
 		if len(rects) != 20 {
 			t.Fatalf("rects = %d, want 20", len(rects))
 		}
@@ -213,11 +214,272 @@ func TestRSSTickMapping(t *testing.T) {
 		if active.X >= rects[0].X {
 			t.Fatalf("active bar starts at %v, want left of the inactive %v", active.X, rects[0].X)
 		}
-		if got := rssTickRects(rail, 0, 0); got != nil {
+		if got := rssTickRects(rail, 0, 0, -1); got != nil {
 			t.Fatalf("no bars: %v", got)
 		}
-		if got := rssTickRects(rail, 4, -1); len(got) != 4 {
+		if got := rssTickRects(rail, 4, -1, -1); len(got) != 4 {
 			t.Fatalf("no active bar: %d bars, want 4", len(got))
+		}
+		// The bar under the pointer grows between the inactive and the active
+		// size, and an active bar under the pointer keeps its own.
+		hovered := rssTickRects(rail, 20, 3, 7)
+		if got := hovered[7]; got.W != rssTickHoverW || got.H != rssTickHoverH {
+			t.Fatalf("hovered bar is %vx%v, want the hover %vx%v", got.W, got.H, rssTickHoverW, rssTickHoverH)
+		}
+		if got := hovered[7]; got.X+got.W != rects[0].X+rects[0].W {
+			t.Fatalf("hovered bar ends at %v, want the same right edge as the rest", got.X+got.W)
+		}
+		if got := hovered[3]; got.W != rssTickActiveW || got.H != rssTickActiveH {
+			t.Fatalf("active bar under the pointer is %vx%v, want the active %vx%v", got.W, got.H, rssTickActiveW, rssTickActiveH)
+		}
+		for i, r := range hovered {
+			if i == 3 || i == 7 {
+				continue
+			}
+			if r != rects[i] {
+				t.Fatalf("bar %d moved to %v for a pointer on bar 7, want %v", i, r, rects[i])
+			}
+		}
+	})
+}
+
+// TestRSSTickInteraction pins the rail's click and hover arithmetic: which
+// block a bar reads, which bar a point is on, where a click leaves the body,
+// and where the hover preview shows.
+func TestRSSTickInteraction(t *testing.T) {
+	t.Run("bar to block", func(t *testing.T) {
+		if got := rssTickBlock(-1, 10, 10); got != -1 {
+			t.Fatalf("no bar: block %v", got)
+		}
+		for block := 0; block < 10; block++ {
+			if got := rssTickBlock(block, 10, 10); got != block {
+				t.Fatalf("one bar per block: bar %d -> block %d", block, got)
+			}
+		}
+		// Every bar reads a block that maps back to it, and reads the first of
+		// the blocks it gathers, so a bar never skips a paragraph.
+		for _, size := range []struct{ blocks, bars int }{
+			{100, 10}, {13, 5}, {7, 3}, {400, 60}, {2, 1}, {1, 1},
+		} {
+			last := -1
+			for bar := 0; bar < size.bars; bar++ {
+				block := rssTickBlock(bar, size.blocks, size.bars)
+				if block <= last || block >= size.blocks {
+					t.Fatalf("%d blocks in %d bars: bar %d reads block %d after %d", size.blocks, size.bars, bar, block, last)
+				}
+				if got := rssTickBucket(block, size.blocks, size.bars); got != bar {
+					t.Fatalf("%d blocks in %d bars: bar %d reads block %d, which maps to bar %d", size.blocks, size.bars, bar, block, got)
+				}
+				if block > 0 {
+					if prev := rssTickBucket(block-1, size.blocks, size.bars); prev == bar {
+						t.Fatalf("%d blocks in %d bars: bar %d reads block %d, though block %d shares it", size.blocks, size.bars, bar, block, block-1)
+					}
+				}
+				last = block
+			}
+			// The last bar reaches the last block's bucket, however many bars
+			// the rail could keep apart.
+			if got := rssTickBucket(size.blocks-1, size.blocks, size.bars); got != size.bars-1 {
+				t.Fatalf("%d blocks in %d bars: the last block maps to bar %d", size.blocks, size.bars, got)
+			}
+		}
+		// A bar past the last reads the last bar's first block.
+		if got, want := rssTickBlock(10, 100, 10), rssTickBlock(9, 100, 10); got != want {
+			t.Fatalf("bar past the rail = block %d, want %d", got, want)
+		}
+	})
+
+	t.Run("bar hit test", func(t *testing.T) {
+		rail := ui.Rect{X: 1200, Y: 80, W: rssTickRailWidth, H: 500}
+		bars := 20
+		rects := rssTickRects(rail, bars, 3, -1)
+		pitch := (rail.H - 2*rssTickInset) / float32(bars)
+		for i, r := range rects {
+			if got := rssTickIndexAt(rail, bars, r.X+r.W/2, r.Y+r.H/2); got != i {
+				t.Fatalf("the middle of bar %d hits bar %d", i, got)
+			}
+			// The whole pitch answers for its bar, so a 2 pt mark is easy to hit.
+			for _, y := range []float32{
+				rail.Y + rssTickInset + float32(i)*pitch + 0.5,
+				rail.Y + rssTickInset + float32(i+1)*pitch - 0.5,
+			} {
+				if got := rssTickIndexAt(rail, bars, r.X+r.W/2, y); got != i {
+					t.Fatalf("y %v in slot %d hits bar %d", y, i, got)
+				}
+			}
+		}
+		if got := rssTickIndexAt(rail, bars, rects[5].X+rects[5].W/2, rail.Y+rssTickInset+5); got != 0 {
+			t.Fatalf("the pitch above the first bar hits bar %d, want 0", got)
+		}
+		for _, tc := range []struct {
+			name string
+			x, y float32
+		}{
+			{"above the first bar", rects[0].X + rects[0].W/2, rail.Y + 1},
+			{"below the last bar", rects[bars-1].X + rects[bars-1].W/2, rail.Y + rail.H - 1},
+			{"the gutter left of the bars", rail.X + 2, rects[5].Y + rects[5].H/2},
+			{"outside the lane", rail.X - 1, rects[5].Y + rects[5].H/2},
+			{"past the lane's edge", rail.X + rail.W, rects[5].Y + rects[5].H/2},
+		} {
+			if got := rssTickIndexAt(rail, bars, tc.x, tc.y); got != -1 {
+				t.Fatalf("%s (%v,%v) hits bar %d, want none", tc.name, tc.x, tc.y, got)
+			}
+		}
+		if got := rssTickIndexAt(rail, 0, rail.X+rail.W-6, rail.Y+100); got != -1 {
+			t.Fatalf("a lane without bars hits bar %d", got)
+		}
+	})
+
+	t.Run("click target", func(t *testing.T) {
+		viewport := ui.Rect{X: 900, Y: 100, W: 300, H: 600}
+		bounds := []ui.Rect{
+			{X: 900, Y: 120, W: 300, H: 100},
+			{X: 900, Y: 240, W: 300, H: 100},
+			{X: 900, Y: 360, W: 300, H: 100},
+			{X: 900, Y: 500, W: 300, H: 100},
+		}
+		// At the top of the article, the second block's content offset is 140,
+		// and the body scrolls to put its top on the reading line.
+		if got, want := rssBlockScrollY(bounds, viewport, 0, 1), float32(140-rssReadingProbe); got != want {
+			t.Fatalf("second block: scroll to %v, want %v", got, want)
+		}
+		// The same paragraph is the same place however far the body has
+		// scrolled: its blocks show nearer the top by that much.
+		scrolled := make([]ui.Rect, len(bounds))
+		for i, b := range bounds {
+			scrolled[i] = b
+			scrolled[i].Y -= 60
+		}
+		if got, want := rssBlockScrollY(scrolled, viewport, 60, 1), float32(140-rssReadingProbe); got != want {
+			t.Fatalf("second block while scrolled: scroll to %v, want %v", got, want)
+		}
+		// The first paragraph is above the reading line already: the body goes
+		// to its start rather than above it.
+		if got := rssBlockScrollY(bounds, viewport, 0, 0); got != 0 {
+			t.Fatalf("first block: scroll to %v, want the start", got)
+		}
+		for _, tc := range []struct {
+			name   string
+			block  int
+			holder ui.Rect
+		}{
+			{"no block", -1, viewport},
+			{"a block past the body", len(bounds), viewport},
+			{"a body the frame has not laid out", 1, ui.Rect{X: 900, Y: 100, W: 300}},
+		} {
+			if got := rssBlockScrollY(bounds, tc.holder, 300, tc.block); got != 300 {
+				t.Fatalf("%s: scroll to %v, want the place it was at (300)", tc.name, got)
+			}
+		}
+	})
+
+	t.Run("preview placement", func(t *testing.T) {
+		rail := ui.Rect{X: 1200, Y: 80, W: rssTickRailWidth, H: 500}
+		bars := 20
+		width, height := rssPreviewWidth, rssPreviewHeight(rssPreviewLines)
+		// The preview's place is in the rail's own coordinates: its right edge the
+		// gap left of the widest bar, which ends at the lane's right inset.
+		right := rssTickRailWidth - rssTickInsetX - rssTickActiveW - rssPreviewGap
+		for i, bar := range rssTickRects(rail, bars, 3, -1) {
+			r := rssPreviewRect(rail, bar, width, height, rssPreviewGap, rssPreviewMargin)
+			if r.X+r.W != right {
+				t.Fatalf("bar %d: the preview ends at %v, want %v", i, r.X+r.W, right)
+			}
+			if r.X+r.W > bar.X-rail.X {
+				t.Fatalf("bar %d: the preview overlaps its bar at %v", i, bar.X-rail.X)
+			}
+			if r.W != width || r.H != height {
+				t.Fatalf("bar %d: the preview is %vx%v, want %vx%v", i, r.W, r.H, width, height)
+			}
+			if r.Y < rssPreviewMargin || r.Y+r.H > rail.H-rssPreviewMargin {
+				t.Fatalf("bar %d: the preview %v leaves the lane %v", i, r, rail)
+			}
+			// Its middle is on the bar's middle wherever that fits, and against
+			// the lane's ends otherwise.
+			center := bar.Y + bar.H/2 - rail.Y - height/2
+			switch {
+			case center < rssPreviewMargin:
+				if r.Y != rssPreviewMargin {
+					t.Fatalf("bar %d at the top: preview top %v, want the margin %v", i, r.Y, rssPreviewMargin)
+				}
+			case center+height > rail.H-rssPreviewMargin:
+				if want := rail.H - rssPreviewMargin - height; r.Y != want {
+					t.Fatalf("bar %d at the bottom: preview top %v, want %v", i, r.Y, want)
+				}
+			default:
+				if r.Y != center {
+					t.Fatalf("bar %d: preview top %v, want the middle on the bar's (%v)", i, r.Y, center)
+				}
+			}
+		}
+		// A lane shorter than the preview keeps the margin at its top.
+		short := ui.Rect{X: 1200, Y: 80, W: rssTickRailWidth, H: 40}
+		bar := rssTickRects(short, 2, 0, -1)[1]
+		if r := rssPreviewRect(short, bar, width, height, rssPreviewGap, rssPreviewMargin); r.Y != rssPreviewMargin {
+			t.Fatalf("short lane: preview top %v, want %v", r.Y, rssPreviewMargin)
+		}
+		if got := rssPreviewRect(ui.Rect{X: 1200, Y: 80, W: rssTickRailWidth}, bar, width, height, rssPreviewGap, rssPreviewMargin); got != (ui.Rect{}) {
+			t.Fatalf("lane without room: preview %v, want none", got)
+		}
+		if got := rssPreviewHeight(rssPreviewLines); got != 2*mui.Space(2)+2*mui.Hairline+mui.Metadata.LineHeight+mui.Space(0.5)+float32(rssPreviewLines)*mui.Secondary.LineHeight {
+			t.Fatalf("preview height = %v, want the type scale's %v lines", got, rssPreviewLines)
+		}
+	})
+
+	t.Run("preview words", func(t *testing.T) {
+		// The brief asks for the opening 40 to 60 characters, the cut included.
+		if rssPreviewRunes < 40 || rssPreviewRunes >= 60 {
+			t.Fatalf("rssPreviewRunes = %d, want 40 to 59", rssPreviewRunes)
+		}
+		for _, tc := range []struct {
+			block core.ArticleBlock
+			zh    bool
+			want  string
+		}{
+			{core.ArticleBlock{Type: core.BlockParagraph}, false, "Paragraph"},
+			{core.ArticleBlock{Type: core.BlockHeading}, false, "Heading"},
+			{core.ArticleBlock{Type: core.BlockBlockquote}, false, "Quote"},
+			{core.ArticleBlock{Type: core.BlockCode}, false, "Code block"},
+			{core.ArticleBlock{Type: core.BlockList}, false, "List"},
+			{core.ArticleBlock{Type: core.BlockImage}, false, "Image"},
+			{core.ArticleBlock{Type: core.BlockParagraph}, true, "段落"},
+			{core.ArticleBlock{Type: core.BlockCode}, true, "代码块"},
+			{core.ArticleBlock{Type: core.BlockBlockquote}, true, "引用"},
+		} {
+			if got := rssBlockKind(tc.block, tc.zh); got != tc.want {
+				t.Fatalf("kind of %v (zh %v) = %q, want %q", tc.block.Type, tc.zh, got, tc.want)
+			}
+		}
+		// A paragraph previews its words on one line, however the source breaks
+		// them.
+		if got := rssPreviewWords(core.ArticleBlock{Text: "  first\n\n\tsecond   line "}, rssPreviewRunes); got != "first second line" {
+			t.Fatalf("preview = %q, want one line of words", got)
+		}
+		long := strings.Repeat("wide ", 40)
+		cut := rssPreviewWords(core.ArticleBlock{Text: long}, rssPreviewRunes)
+		if runes := []rune(cut); len(runes) != rssPreviewRunes+1 || !strings.HasSuffix(cut, "…") {
+			t.Fatalf("long paragraph previews %d runes (%q), want %d and an ellipsis", len(runes), cut, rssPreviewRunes+1)
+		}
+		// A picture without words says what it shows, and one without any
+		// previews its kind alone.
+		if got := rssPreviewWords(core.ArticleBlock{Type: core.BlockImage, Alt: "A reading room"}, rssPreviewRunes); got != "A reading room" {
+			t.Fatalf("picture alt preview = %q", got)
+		}
+		if got := rssPreviewWords(core.ArticleBlock{Type: core.BlockImage, Caption: "The reading room"}, rssPreviewRunes); got != "The reading room" {
+			t.Fatalf("picture caption preview = %q", got)
+		}
+		if got := rssPreviewWords(core.ArticleBlock{Type: core.BlockImage}, rssPreviewRunes); got != "" {
+			t.Fatalf("bare picture preview = %q, want none", got)
+		}
+		// A block that carries only markup still previews its text.
+		if got := rssPreviewWords(core.ArticleBlock{HTML: "<p>From <b>markup</b></p>"}, rssPreviewRunes); got != "From markup" {
+			t.Fatalf("markup-only preview = %q", got)
+		}
+		if got := rssPreviewLabel("Quote", false); got != "Quote preview" {
+			t.Fatalf("label = %q", got)
+		}
+		if got := rssPreviewLabel("引用", true); got != "引用预览" {
+			t.Fatalf("zh label = %q", got)
 		}
 	})
 }
@@ -640,6 +902,504 @@ func TestRSSReaderTicksFollowScroll(t *testing.T) {
 	tt.Frame()
 	if w.rssReader.active <= activeAtHalf {
 		t.Fatalf("at the end active block = %d, want past %d", w.rssReader.active, activeAtHalf)
+	}
+}
+
+// TestRSSReaderTickClickJumps covers a click on a bar: the body glides to the
+// paragraph the bar shows, lands it within 10 pt of the reading line, and the
+// bar turns active in the frame of the click and stays so.
+func TestRSSReaderTickClickJumps(t *testing.T) {
+	a, w, tt := rssReaderTestWindow(t)
+	openRSSReaderTickArticle(t, tt)
+	blocks := rssArticleBlocks(*a.SelectedRSSArticle())
+	rail := rssReaderTickRail(t, tt)
+	if w.rssReader.scroll.MaxY <= 0 {
+		t.Fatalf("the article does not scroll: MaxY = %v", w.rssReader.scroll.MaxY)
+	}
+	if w.rssReader.active != 0 {
+		t.Fatalf("at rest the active block = %d, want 0", w.rssReader.active)
+	}
+
+	// The fifth block, far enough down the article that the jump moves the body,
+	// and far enough from its end that the reading line can take its top.
+	block := 5
+	if reach := w.rssReader.scroll.MaxY + w.rssReader.viewport.H - rssReadingProbe; w.rssReader.ticks[block].Y-w.rssReader.viewport.Y+w.rssReader.scroll.Y > reach {
+		t.Fatalf("block %d cannot reach the reading line: the case needs one the body can bring there", block)
+	}
+	bar := rssReaderTickBar(t, rail, len(blocks), block)
+	tt.ClickAt(bar.X+bar.W/2, bar.Y+bar.H/2)
+	tt.Frame()
+
+	// The bar grows in the click's own frame, before the body has moved.
+	if w.rssReader.active != block || !w.rssReader.jumping {
+		t.Fatalf("the frame of the click: active = %d, jumping = %v; want block %d on its way",
+			w.rssReader.active, w.rssReader.jumping, block)
+	}
+	saveRSSTickScreenshot(t, tt, "01-click-jumping.png")
+
+	settleRSSReaderScroll(t, tt, w)
+	if w.rssReader.jumping {
+		t.Fatal("the jump outlived the glide")
+	}
+	if w.rssReader.active != block {
+		t.Fatalf("after the glide active = %d, want the clicked block %d", w.rssReader.active, block)
+	}
+	if got, want := rssTickBucket(w.rssReader.active, len(blocks), rssTickCount(len(blocks), rail.H)), rssTickBucket(block, len(blocks), rssTickCount(len(blocks), rail.H)); got != want {
+		t.Fatalf("the grown bar is %d, want the clicked bar %d", got, want)
+	}
+	// The brief allows the paragraph's top 10 pt from where it should land.
+	settled := w.rssReader.ticks[block].Y - w.rssReader.viewport.Y
+	if settled < rssReadingProbe-10 || settled > rssReadingProbe+10 {
+		t.Fatalf("the paragraph's top sits %v pt below the viewport's top, want %v ± 10", settled, rssReadingProbe)
+	}
+	saveRSSTickScreenshot(t, tt, "02-click-arrived.png")
+
+	// A bar above the reading line brings the body back up the same way.
+	for _, back := range []int{1, 0} {
+		up := rssReaderTickBar(t, rail, len(blocks), back)
+		tt.ClickAt(up.X+up.W/2, up.Y+up.H/2)
+		tt.Frame()
+		if w.rssReader.active != back || !w.rssReader.jumping {
+			t.Fatalf("clicking bar %d: active = %d, jumping = %v", back, w.rssReader.active, w.rssReader.jumping)
+		}
+		settleRSSReaderScroll(t, tt, w)
+		if w.rssReader.active != back {
+			t.Fatalf("back at bar %d active = %d", back, w.rssReader.active)
+		}
+		if got := w.rssReader.ticks[back].Y - w.rssReader.viewport.Y; got < rssReadingProbe-10 || got > rssReadingProbe+10 {
+			t.Fatalf("block %d's top sits %v pt below the viewport's top, want %v ± 10", back, got, rssReadingProbe)
+		}
+	}
+
+	// The last bar of an article whose end shows no more than a screenful: the
+	// body goes as far as it can, to its end, and the highlight follows the
+	// reading line where it lands.
+	last := rssReaderTickBar(t, rail, len(blocks), len(blocks)-1)
+	tt.ClickAt(last.X+last.W/2, last.Y+last.H/2)
+	tt.Frame()
+	settleRSSReaderScroll(t, tt, w)
+	if !closeTo(w.rssReader.scroll.Y, w.rssReader.scroll.MaxY, 0.5) {
+		t.Fatalf("the last bar left the body at %v of %v", w.rssReader.scroll.Y, w.rssReader.scroll.MaxY)
+	}
+	if want := rssActiveBlock(w.rssReader.ticks, w.rssReader.viewport); w.rssReader.active != want {
+		t.Fatalf("at the end active = %d, want the reading line's %d", w.rssReader.active, want)
+	}
+}
+
+// TestRSSReaderTickHoverPreview covers the rail's hover preview: it names the
+// kind of block a bar shows and its opening words, hangs left of the bar, and
+// goes as the pointer leaves.
+func TestRSSReaderTickHoverPreview(t *testing.T) {
+	a, w, tt := rssReaderTestWindow(t)
+	openRSSReaderTickArticle(t, tt)
+	blocks := rssArticleBlocks(*a.SelectedRSSArticle())
+	rail := rssReaderTickRail(t, tt)
+	count := rssTickCount(len(blocks), rail.H)
+
+	// The quote, whose kind reads differently from a paragraph's.
+	block := 2
+	bar := rssReaderTickBar(t, rail, len(blocks), block)
+	tt.Move(bar.X+bar.W/2, bar.Y+bar.H/2)
+	tt.Frame()
+	if want := rssTickBucket(block, len(blocks), count); w.rssReader.hover != want {
+		t.Fatalf("hovering bar %d, the reader has %d", want, w.rssReader.hover)
+	}
+	// The preview fades in: its frame shows it once the fade has come.
+	tt.Advance(mui.MotionPopover + 20*time.Millisecond)
+	tt.Frame()
+
+	bubble, ok := tt.AccessByRole(ui.RoleGroup, "Quote preview")
+	if !ok {
+		t.Fatalf("no quote preview in %v", tt.Texts())
+	}
+	// Left of the bars with the gap from the widest one, its middle on the
+	// bar's middle, and inside the rail's height.
+	if want := rail.X + rail.W - rssTickInsetX - rssTickActiveW - rssPreviewGap; !closeTo(bubble.Bounds.X+bubble.Bounds.W, want, 0.5) {
+		t.Fatalf("the preview ends at %v, want the gap's %v left of the widest bar", bubble.Bounds.X+bubble.Bounds.W, want)
+	}
+	if want := rssPreviewHeight(rssPreviewLines); !closeTo(bubble.Bounds.H, want, 0.5) {
+		t.Fatalf("the preview is %v tall, want the %v of its two lines", bubble.Bounds.H, want)
+	}
+	if want := bar.Y + bar.H/2; !closeTo(bubble.Bounds.Y+bubble.Bounds.H/2, want, 0.5) {
+		t.Fatalf("the preview's middle is at %v, want the bar's %v", bubble.Bounds.Y+bubble.Bounds.H/2, want)
+	}
+	if bubble.Bounds.Y < rail.Y+rssPreviewMargin || bubble.Bounds.Y+bubble.Bounds.H > rail.Y+rail.H-rssPreviewMargin {
+		t.Fatalf("the preview %v leaves the rail %v", bubble.Bounds, rail)
+	}
+	if !tt.HasText("Quote") {
+		t.Fatalf("the preview does not name the block kind, texts = %v", tt.Texts())
+	}
+	// Its words are the paragraph's, cut to the brief's length, inside it.
+	words := rssPreviewWords(blocks[block], rssPreviewRunes)
+	if len([]rune(words)) > 60 {
+		t.Fatalf("the preview shows %d runes, want at most 60", len([]rune(words)))
+	}
+	text, ok := tt.Find(words)
+	if !ok {
+		t.Fatalf("the preview does not show %q, texts = %v", words, tt.Texts())
+	}
+	if !rectHolds(bubble.Bounds, text, 0.5) {
+		t.Fatalf("the words %v sit outside their preview %v", text, bubble.Bounds)
+	}
+	saveRSSTickScreenshot(t, tt, "03-hover-preview.png")
+
+	// Along the rail the preview follows the pointer, showing that bar's block.
+	other := 7
+	otherBar := rssReaderTickBar(t, rail, len(blocks), other)
+	tt.Move(otherBar.X+otherBar.W/2, otherBar.Y+otherBar.H/2)
+	tt.Frame()
+	if want := rssTickBucket(other, len(blocks), count); w.rssReader.hover != want {
+		t.Fatalf("hovering bar %d, the reader has %d", want, w.rssReader.hover)
+	}
+	if _, ok := tt.AccessByRole(ui.RoleGroup, "Quote preview"); ok {
+		t.Fatal("the quote's preview stayed on another bar")
+	}
+	list, ok := tt.AccessByRole(ui.RoleGroup, "List preview")
+	if !ok {
+		t.Fatalf("no list preview over the list's bar, texts = %v", tt.Texts())
+	}
+	if want := rail.X + rail.W - rssTickInsetX - rssTickActiveW - rssPreviewGap; !closeTo(list.Bounds.X+list.Bounds.W, want, 0.5) {
+		t.Fatalf("the list's preview ends at %v, want beside its bar %v", list.Bounds.X+list.Bounds.W, otherBar)
+	}
+
+	// The lane's gutter is no bar: no preview there.
+	tt.Move(rail.X+1, bar.Y+bar.H/2)
+	tt.Frame()
+	if w.rssReader.hover != -1 {
+		t.Fatalf("the gutter hovers bar %d", w.rssReader.hover)
+	}
+	if _, ok := tt.AccessByRole(ui.RoleGroup, "List preview"); ok {
+		t.Fatal("the preview stayed after the pointer left the bars")
+	}
+	tt.Advance(mui.MotionInteraction + 20*time.Millisecond)
+	tt.Frame()
+	if _, ok := tt.AccessByRole(ui.RoleGroup, "List preview"); ok {
+		t.Fatal("the preview outlived its fade")
+	}
+
+	// The top bar's preview keeps the rail's margin rather than hanging over
+	// the article header.
+	top := rssReaderTickBar(t, rail, len(blocks), 0)
+	tt.Move(top.X+top.W/2, top.Y+top.H/2)
+	if top.Y+top.H/2-rail.Y >= rssPreviewHeight(rssPreviewLines)/2+rssPreviewMargin {
+		t.Fatal("the top bar leaves the preview room: the check would prove nothing")
+	}
+	tt.Frame()
+	heading, ok := tt.AccessByRole(ui.RoleGroup, "Heading preview")
+	if !ok {
+		t.Fatalf("no preview over the heading's bar, texts = %v", tt.Texts())
+	}
+	if !closeTo(heading.Bounds.Y, rail.Y+rssPreviewMargin, 0.5) {
+		t.Fatalf("the top preview starts at %v, want the rail's margin %v", heading.Bounds.Y, rail.Y+rssPreviewMargin)
+	}
+	tt.Advance(mui.MotionPopover + 20*time.Millisecond)
+	tt.Frame()
+	saveRSSTickScreenshot(t, tt, "04-hover-top.png")
+
+	// Dark mode keeps the preview's contrast: the panel is the surface over the
+	// app's background, its border the panel rule.
+	tt.SetDark(true)
+	tt.Advance(300 * time.Millisecond)
+	tt.Frame()
+	if _, ok := tt.AccessByRole(ui.RoleGroup, "Heading preview"); !ok {
+		t.Fatalf("the preview went out with dark mode, texts = %v", tt.Texts())
+	}
+	saveRSSTickScreenshot(t, tt, "05-hover-dark.png")
+	tt.SetDark(false)
+	tt.Frame()
+
+	// A narrower window moves the lane: the preview follows it to the new bars
+	// and stays inside it.
+	tt.SetSize(1180, 700)
+	tt.Frame()
+	rail = rssReaderTickRail(t, tt)
+	bar = rssReaderTickBar(t, rail, len(blocks), block)
+	tt.Move(bar.X+bar.W/2, bar.Y+bar.H/2)
+	tt.Frame()
+	tt.Advance(mui.MotionPopover + 20*time.Millisecond)
+	tt.Frame()
+	shrunk, ok := tt.AccessByRole(ui.RoleGroup, "Quote preview")
+	if !ok {
+		t.Fatalf("no preview after the window narrowed, texts = %v", tt.Texts())
+	}
+	if shrunk.Bounds.Y < rail.Y+rssPreviewMargin || shrunk.Bounds.Y+shrunk.Bounds.H > rail.Y+rail.H-rssPreviewMargin {
+		t.Fatalf("the narrowed preview %v leaves the rail %v", shrunk.Bounds, rail)
+	}
+	if want := rail.X + rail.W - rssTickInsetX - rssTickActiveW - rssPreviewGap; !closeTo(shrunk.Bounds.X+shrunk.Bounds.W, want, 0.5) {
+		t.Fatalf("the narrowed preview ends at %v, want %v", shrunk.Bounds.X+shrunk.Bounds.W, want)
+	}
+	tt.SetSize(1280, 808)
+	tt.Frame()
+	rail = rssReaderTickRail(t, tt)
+
+	// 简体中文 names the block kinds in its own words.
+	tt.SetLocale("zh-Hans")
+	tt.Frame()
+	paragraph := 9
+	paragraphBar := rssReaderTickBar(t, rail, len(blocks), paragraph)
+	tt.Move(paragraphBar.X+paragraphBar.W/2, paragraphBar.Y+paragraphBar.H/2)
+	tt.Frame()
+	if _, ok := tt.AccessByRole(ui.RoleGroup, "段落预览"); !ok {
+		t.Fatalf("no Chinese paragraph preview, texts = %v", tt.Texts())
+	}
+	if !tt.HasText("段落") {
+		t.Fatalf("the Chinese preview does not name the kind, texts = %v", tt.Texts())
+	}
+	tt.SetLocale("en")
+	tt.Frame()
+}
+
+// TestRSSReaderTickLongArticle covers a body the rail cannot keep apart: bars
+// gather paragraphs, each reads and previews the first of them, and the last
+// bar lands at the end of the article.
+func TestRSSReaderTickLongArticle(t *testing.T) {
+	blocks := make([]core.ArticleBlock, 0, 400)
+	for i := range 400 {
+		blocks = append(blocks, core.ArticleBlock{
+			Type: core.BlockParagraph,
+			Text: fmt.Sprintf("Paragraph %d of a long piece that keeps going for as long as the rail can follow it, one short bar at a time.", i),
+		})
+	}
+	a, w, tt := rssReaderScopedWindow(t, core.RSSArticle{
+		ID: "art-long", Title: "A Long Read", Link: "https://feeds.example.com/long", IsFullText: true, Blocks: blocks,
+	})
+	body := rssArticleBlocks(*a.SelectedRSSArticle())
+	if len(body) != 400 {
+		t.Fatalf("the body holds %d blocks, want 400", len(body))
+	}
+	rail := rssReaderTickRail(t, tt)
+	count := rssTickCount(len(body), rail.H)
+	if count <= 0 || count >= len(body) {
+		t.Fatalf("the rail shows %d bars for %d blocks, want the bars it can keep apart", count, len(body))
+	}
+
+	// A bar gathers several paragraphs: it reads and previews the first.
+	bar := count / 2
+	block := rssTickBlock(bar, len(body), count)
+	if block <= 0 || rssTickBucket(block-1, len(body), count) == bar {
+		t.Fatalf("bar %d reads block %d, which the bar before does not keep apart", bar, block)
+	}
+	rect := rssTickRects(rail, count, -1, -1)[bar]
+	tt.Move(rect.X+rect.W/2, rect.Y+rect.H/2)
+	tt.Frame()
+	if w.rssReader.hover != bar {
+		t.Fatalf("hovering bar %d, the reader has %d", bar, w.rssReader.hover)
+	}
+	preview, ok := tt.AccessByRole(ui.RoleGroup, "Paragraph preview")
+	if !ok {
+		t.Fatalf("no preview over bar %d, texts = %v", bar, tt.Texts())
+	}
+	words := rssPreviewWords(body[block], rssPreviewRunes)
+	if text, ok := tt.Find(words); !ok || !rectHolds(preview.Bounds, text, 0.5) {
+		t.Fatalf("the preview %v does not show block %d's words (%v, %v)", preview.Bounds, block, text, ok)
+	}
+
+	// Clicking the bar takes the body to that paragraph, within the 10 pt.
+	tt.ClickAt(rect.X+rect.W/2, rect.Y+rect.H/2)
+	tt.Frame()
+	if w.rssReader.active != block || !w.rssReader.jumping {
+		t.Fatalf("the click reads block %d (%v jumping), want block %d on its way", w.rssReader.active, w.rssReader.jumping, block)
+	}
+	settleRSSReaderScroll(t, tt, w)
+	if w.rssReader.active != block {
+		t.Fatalf("after the glide active = %d, want %d", w.rssReader.active, block)
+	}
+	if got := w.rssReader.ticks[block].Y - w.rssReader.viewport.Y; got < rssReadingProbe-10 || got > rssReadingProbe+10 {
+		t.Fatalf("the gathered paragraph's top sits %v pt below the viewport's top, want %v ± 10", got, rssReadingProbe)
+	}
+
+	// The last bar reaches the end of the article, where the body can go no
+	// further: it lands there, on the paragraph the reading line shows.
+	lastBar := rssTickRects(rail, count, -1, -1)[count-1]
+	tt.ClickAt(lastBar.X+lastBar.W/2, lastBar.Y+lastBar.H/2)
+	tt.Frame()
+	settleRSSReaderScroll(t, tt, w)
+	if !closeTo(w.rssReader.scroll.Y, w.rssReader.scroll.MaxY, 0.5) {
+		t.Fatalf("the last bar left the body at %v of %v", w.rssReader.scroll.Y, w.rssReader.scroll.MaxY)
+	}
+	if want := rssActiveBlock(w.rssReader.ticks, w.rssReader.viewport); w.rssReader.active != want {
+		t.Fatalf("at the end active = %d, want the reading line's %d", w.rssReader.active, want)
+	}
+	if w.rssReader.active <= block {
+		t.Fatalf("the last bar left the body at block %d, no further than the middle bar's %d", w.rssReader.active, block)
+	}
+}
+
+// TestRSSReaderTickShortArticle covers the bodies a rail cannot map: one block
+// shows no bars and answers no click, and a body too short to scroll keeps its
+// place.
+func TestRSSReaderTickShortArticle(t *testing.T) {
+	t.Run("one block", func(t *testing.T) {
+		_, w, tt := rssReaderScopedWindow(t, core.RSSArticle{
+			ID: "art-one", Title: "A Note", Link: "https://feeds.example.com/note", IsFullText: true,
+			Blocks: []core.ArticleBlock{{Type: core.BlockParagraph, Text: "A single paragraph is not a map."}},
+		})
+		rail := rssReaderTickRail(t, tt)
+		tt.Move(rail.X+rail.W-rssTickInsetX-rssTickInactiveW/2, rail.Y+rail.H/2)
+		tt.Frame()
+		if w.rssReader.hover != -1 {
+			t.Fatalf("one block hovers bar %d", w.rssReader.hover)
+		}
+		if _, ok := tt.AccessByRole(ui.RoleGroup, "Paragraph preview"); ok {
+			t.Fatal("one block shows a preview")
+		}
+		tt.ClickAt(rail.X+rail.W-rssTickInsetX-rssTickInactiveW/2, rail.Y+rail.H/2)
+		tt.Frame()
+		settleRSSReaderScroll(t, tt, w)
+		if w.rssReader.jumping || w.rssReader.active != 0 || w.rssReader.scroll.Y != 0 {
+			t.Fatalf("one block answered a click: active = %d, jumping = %v, Y = %v",
+				w.rssReader.active, w.rssReader.jumping, w.rssReader.scroll.Y)
+		}
+	})
+
+	t.Run("a body too short to scroll", func(t *testing.T) {
+		_, w, tt := rssReaderScopedWindow(t, core.RSSArticle{
+			ID: "art-two", Title: "Two Lines", Link: "https://feeds.example.com/two", IsFullText: true,
+			Blocks: []core.ArticleBlock{
+				{Type: core.BlockParagraph, Text: "The first of two short paragraphs."},
+				{Type: core.BlockParagraph, Text: "The second, still inside the viewport."},
+			},
+		})
+		if w.rssReader.scroll.MaxY != 0 {
+			t.Fatalf("the two paragraphs scroll %v; the case needs a body that fits", w.rssReader.scroll.MaxY)
+		}
+		rail := rssReaderTickRail(t, tt)
+		bar := rssReaderTickBar(t, rail, 2, 1)
+		tt.Move(bar.X+bar.W/2, bar.Y+bar.H/2)
+		tt.Frame()
+		if got := w.rssReader.hover; got != rssTickBucket(1, 2, rssTickCount(2, rail.H)) {
+			t.Fatalf("hovering the second bar, the reader has %d", got)
+		}
+		if _, ok := tt.AccessByRole(ui.RoleGroup, "Paragraph preview"); !ok {
+			t.Fatalf("no preview over the second bar, texts = %v", tt.Texts())
+		}
+		tt.ClickAt(bar.X+bar.W/2, bar.Y+bar.H/2)
+		tt.Frame()
+		settleRSSReaderScroll(t, tt, w)
+		// Nothing scrolls, so the reading line cannot move: the first block stays
+		// the one being read, and the jump ends without moving the body.
+		if w.rssReader.scroll.Y != 0 || w.rssReader.active != 0 || w.rssReader.jumping {
+			t.Fatalf("a body that fits: active = %d, jumping = %v, Y = %v",
+				w.rssReader.active, w.rssReader.jumping, w.rssReader.scroll.Y)
+		}
+	})
+}
+
+// openRSSReaderTickArticle opens the fixture's full-text article in the reader
+// and lays the frames that record its blocks and rail.
+func openRSSReaderTickArticle(t *testing.T, tt *ui.Tester) {
+	t.Helper()
+	row, ok := tt.Find("The Quiet Return of the Open Feed")
+	if !ok {
+		t.Fatal("article row not found")
+	}
+	tt.ClickAt(row.X+row.W/2, row.Y+row.H/2)
+	tt.Frame()
+	tt.Frame()
+}
+
+// rssReaderTickRail is the paragraph rail's box in the last frame, as the
+// group it labels shows it.
+func rssReaderTickRail(t *testing.T, tt *ui.Tester) ui.Rect {
+	t.Helper()
+	rail, ok := tt.AccessByRole(ui.RoleGroup, "Reading position")
+	if !ok || rail.Bounds.H <= 0 || rail.Bounds.W <= 0 {
+		t.Fatalf("rail = %+v, %v; want a laid-out lane", rail.Bounds, ok)
+	}
+	return rail.Bounds
+}
+
+// rssReaderTickBar is where the bar for a block shows, in the window.
+func rssReaderTickBar(t *testing.T, rail ui.Rect, blockCount, block int) ui.Rect {
+	t.Helper()
+	count := rssTickCount(blockCount, rail.H)
+	if count <= 0 {
+		t.Fatalf("a rail of %v shows no bars for %d blocks", rail, blockCount)
+	}
+	return rssTickRects(rail, count, -1, -1)[rssTickBucket(block, blockCount, count)]
+}
+
+// settleRSSReaderScroll advances the tester's clock until the body's glide
+// arrives, laying each frame it passes.
+func settleRSSReaderScroll(t *testing.T, tt *ui.Tester, w *Window) {
+	t.Helper()
+	for range 60 {
+		if !w.rssReader.scroll.Scrolling() {
+			tt.Frame()
+			return
+		}
+		tt.Advance(100 * time.Millisecond)
+		tt.Frame()
+	}
+	t.Fatalf("the body's glide never arrived: %+v", w.rssReader.scroll)
+}
+
+// rssReaderScopedWindow opens a reader on one article of its own, for the
+// bodies the shared fixture does not have.
+func rssReaderScopedWindow(t *testing.T, art core.RSSArticle) (*App, *Window, *ui.Tester) {
+	t.Helper()
+	stubNetImages(t)
+	a := newTestApp(t, t.TempDir())
+	t.Cleanup(func() { a.Close() })
+	ctx := context.Background()
+	now := time.Now().UnixMilli()
+	feed := core.RSSFeed{ID: "feed-scoped", FeedURL: "https://feeds.example.com/scoped.xml", Title: "Scoped Reads", UpdatedAt: now}
+	if err := a.Store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatalf("save feed: %v", err)
+	}
+	art.FeedID = feed.ID
+	art.UpdatedAt = now
+	if err := a.Store.SaveRSSArticles(ctx, []core.RSSArticle{art}); err != nil {
+		t.Fatalf("save article: %v", err)
+	}
+	if err := a.ReloadRSS(); err != nil {
+		t.Fatalf("reload rss: %v", err)
+	}
+	w := &Window{app: a, selectedIndex: new(int)}
+	w.selectWorkspace(WorkspaceRSS)
+	a.SelectRSSArticle(art.ID)
+	tt := ui.NewTester(w.view, 1280, 808)
+	tt.Frame()
+	tt.Frame()
+	return a, w, tt
+}
+
+// closeTo reports whether got is want within tolerance, for the DIPs a laid-out
+// box rounds by.
+func closeTo(got, want, tolerance float32) bool {
+	return got >= want-tolerance && got <= want+tolerance
+}
+
+// rectHolds reports whether inner sits inside outer, within tolerance.
+func rectHolds(outer, inner ui.Rect, tolerance float32) bool {
+	return inner.X >= outer.X-tolerance && inner.Y >= outer.Y-tolerance &&
+		inner.X+inner.W <= outer.X+outer.W+tolerance && inner.Y+inner.H <= outer.Y+outer.H+tolerance
+}
+
+// saveRSSTickScreenshot writes the rendered frame to the task's proof
+// directory, outside the repository, for visual inspection.
+func saveRSSTickScreenshot(t *testing.T, tt *ui.Tester, name string) {
+	t.Helper()
+	dir := "/Volumes/ZHITAI_1TB/Projects/firstmate/data/youtube-reader-rss-ticks-jump-6/screenshots"
+	if fi, err := os.Stat(filepath.Dir(dir)); err != nil || !fi.IsDir() {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Logf("screenshot dir: %v", err)
+		return
+	}
+	img := tt.Image()
+	if img == nil {
+		return
+	}
+	f, err := os.Create(filepath.Join(dir, name))
+	if err != nil {
+		t.Logf("screenshot file: %v", err)
+		return
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Logf("screenshot encode: %v", err)
 	}
 }
 
