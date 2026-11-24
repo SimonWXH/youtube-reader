@@ -62,7 +62,7 @@ func appBundleForExecutable(exe string) string {
 
 // resolveAppBundleForHelper finds the actual installation bundle path of YouTube Reader.
 // It prioritizes the enclosing bundle of the current helper executable, followed by
-// standard application paths and Spotlight metadata.
+// standard application paths.
 var resolveAppBundleForHelper = func() (string, error) {
 	exe, err := os.Executable()
 	if err == nil {
@@ -82,17 +82,6 @@ var resolveAppBundleForHelper = func() (string, error) {
 	for _, path := range candidates {
 		if fi, err := os.Stat(path); err == nil && fi.IsDir() {
 			return path, nil
-		}
-	}
-	if out, err := exec.Command("mdfind", "kMDItemCFBundleIdentifier == 'com.simon.youtubereader'").Output(); err == nil {
-		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line != "" {
-				if fi, err := os.Stat(line); err == nil && fi.IsDir() {
-					return line, nil
-				}
-			}
 		}
 	}
 	return "", errors.New("cannot resolve YouTube Reader.app bundle path")
