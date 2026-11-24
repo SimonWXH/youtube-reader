@@ -132,6 +132,9 @@ func (w *Window) startBackfill(channelID string) {
 	}()
 }
 
+// applyBackfillResult commits the loaded history page or reports its failure,
+// isolating the error message and the empty-page toast to the channel that
+// requested it so switching channels leaves the new selection clean.
 func (w *Window) applyBackfillResult(channelID string, result core.BackfillResult, err error, locale string) {
 	if w.app == nil {
 		return
