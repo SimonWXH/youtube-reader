@@ -692,4 +692,3 @@ func saveScreenshot(t *testing.T, tt *ui.Tester, path string) {
 	}
 	t.Logf("saved screenshot %s (%d bytes)", path, buf.Len())
 }
-
