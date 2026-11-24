@@ -777,4 +777,3 @@ func (a *App) ExportRSSOPMLToFile(path string) error {
 	orderedGroups := orderRSSGroups(groups, a.settingsSnapshot().RSSGroupOrder)
 	return core.ExportRSSOPMLFile(path, orderedGroups, feeds, "YouTube Reader RSS Subscriptions")
 }
-

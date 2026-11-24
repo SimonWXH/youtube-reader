@@ -13,10 +13,10 @@ import (
 
 // OPMLDocument represents the root <opml> element for standard OPML 2.0 serialization.
 type OPMLDocument struct {
-	XMLName xml.Name      `xml:"opml"`
-	Version string        `xml:"version,attr"`
-	Head    OPMLHead      `xml:"head"`
-	Body    OPMLBody      `xml:"body"`
+	XMLName xml.Name `xml:"opml"`
+	Version string   `xml:"version,attr"`
+	Head    OPMLHead `xml:"head"`
+	Body    OPMLBody `xml:"body"`
 }
 
 // OPMLHead represents metadata in the OPML <head> element.
@@ -314,8 +314,10 @@ func ParseRSSOPMLFile(path string) (*ParsedRSSOPML, error) {
 }
 
 // ExportRSSOPML serializes RSS groups and feeds into a standards-compliant OPML 2.0 XML byte slice.
-// It preserves group names and hierarchies, outputs feed metadata (title, xmlUrl, htmlUrl),
-// skips soft-deleted records, and formats the output with XML declaration and indentation.
+// Each group becomes one folder outline in the order given and holds its own feeds, feeds in no
+// group follow at the top level in title order, and every feed outline carries its title, xmlUrl
+// and htmlUrl. Soft-deleted records are skipped, and the output is formatted with an XML
+// declaration and indentation.
 func ExportRSSOPML(groups []RSSGroup, feeds []RSSFeed, title string) ([]byte, error) {
 	if title == "" {
 		title = "RSS Subscriptions"
