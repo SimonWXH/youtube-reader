@@ -715,10 +715,11 @@ func rssHeaderActionWidth(c *ui.Context, label string) float32 {
 	return rssTextWidth(c, mui.Control, label) + 2*mui.Space(3) + 2*mui.Hairline
 }
 
-// rssTextSizeControlWidth is the size control's width: the track's inset and
-// gaps, and one padded segment per offered size drawing its own A.
+// rssTextSizeControlWidth is the size control's width: the track's border,
+// inset, and gaps, and one padded segment per offered size drawing its own A,
+// with the chosen segment's border on top.
 func rssTextSizeControlWidth(c *ui.Context) float32 {
-	width := 2*rssTextSizeInset + float32(len(mui.ArticleSizes)-1)*rssTextSizeGap
+	width := 2*mui.Hairline + 2*rssTextSizeInset + float32(len(mui.ArticleSizes)-1)*rssTextSizeGap + 2*mui.Hairline
 	for _, size := range mui.ArticleSizes {
 		glyph := mui.TextStyle{Size: size, LineHeight: size + 6, Weight: mui.Medium}
 		width += rssTextWidth(c, glyph, "A") + 2*rssTextSizePadX

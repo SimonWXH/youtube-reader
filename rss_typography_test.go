@@ -234,21 +234,60 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 			if action.X+action.W > header.Bounds.X+header.Bounds.W {
 				t.Fatalf("the actions run outside the header: %v in %v", action, header.Bounds)
 			}
-			feed, ok := rssHeaderNode(t, tt, header.Bounds, "The Long Read")
-			if !ok {
-				t.Fatal("the header draws no feed name")
-			}
-			if feed.W < mui.Space(6) {
-				t.Fatalf("the feed name is %v wide, want at least the %v pt gutter", feed.W, mui.Space(6))
-			}
-			sep, ok := rssHeaderNode(t, tt, header.Bounds, "·")
-			if !ok {
-				t.Fatal("the header draws no separator between the feed name and the date")
-			}
-			if sep.X < feed.X+feed.W {
-				t.Fatalf("the separator at %v precedes the feed name %v", sep, feed)
-			}
+			rssHeaderFeedBox(t, tt, header.Bounds)
 		})
+	}
+
+	t.Run("every row keeps the feed name's room", func(t *testing.T) {
+		_, w := rssReaderTestApp(t)
+		w.rssRefetchingID = "art-reader"
+		inlineRows, widths := 0, 0
+		for width := 1200; width <= 1300; width += 2 {
+			tt := ui.NewTester(w.view, width, 808)
+			tt.Frame()
+			openRSSReaderTickArticle(t, tt)
+			tt.Frame()
+			header, ok := tt.AccessByRole(ui.RoleGroup, "Article header")
+			if !ok {
+				t.Fatal("the reader header has no accessible group")
+			}
+			segments := rssTextSizeSegments(t, tt)
+			if len(segments) != 3 {
+				t.Fatalf("%d pt: the size control has %d segments, want the three steps", width, len(segments))
+			}
+			action, ok := tt.Find("Fetching…")
+			if !ok {
+				t.Fatalf("%d pt: the re-fetch action is missing while fetching", width)
+			}
+			if box := segments[0].Bounds; box.Y+box.H > action.Y && box.Y < action.Y+action.H {
+				inlineRows++
+			}
+			rssHeaderFeedBox(t, tt, header.Bounds)
+			widths++
+		}
+		if inlineRows == 0 || inlineRows == widths {
+			t.Fatalf("%d of %d rows were inline, want both layouts across the band", inlineRows, widths)
+		}
+	})
+}
+
+// rssHeaderFeedBox checks the row drew its feed name at least at the minimum
+// and its separator after it, so neither is squeezed away.
+func rssHeaderFeedBox(t *testing.T, tt *ui.Tester, header ui.Rect) {
+	t.Helper()
+	feed, ok := rssHeaderNode(t, tt, header, "The Long Read")
+	if !ok {
+		t.Fatal("the header draws no feed name")
+	}
+	if feed.W < mui.Space(6) {
+		t.Fatalf("the feed name is %v wide, want at least the %v pt gutter", feed.W, mui.Space(6))
+	}
+	sep, ok := rssHeaderNode(t, tt, header, "·")
+	if !ok {
+		t.Fatal("the header draws no separator between the feed name and the date")
+	}
+	if sep.X < feed.X+feed.W {
+		t.Fatalf("the separator at %v precedes the feed name %v", sep, feed)
 	}
 }
 
