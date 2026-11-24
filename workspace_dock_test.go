@@ -73,11 +73,11 @@ func TestWorkspaceDockRendersFourEntrances(t *testing.T) {
 	if metaRSS.Title != "RSS" || metaRSS.Count != "0" {
 		t.Fatalf("rss meta = %+v, want RSS with 0 count", metaRSS)
 	}
-	if metaReadLater.Title != "Read Later" || metaReadLater.Count != "" {
-		t.Fatalf("read later meta = %+v, want Read Later with empty count", metaReadLater)
+	if metaReadLater.Title != "Read Later" || metaReadLater.Count != "0" {
+		t.Fatalf("read later meta = %+v, want Read Later with the placeholder 0", metaReadLater)
 	}
-	if metaWeChatNotes.Title != "WeChat Notes" || metaWeChatNotes.Count != "" {
-		t.Fatalf("wechat notes meta = %+v, want WeChat Notes with empty count", metaWeChatNotes)
+	if metaWeChatNotes.Title != "WeChat Notes" || metaWeChatNotes.Count != "0" {
+		t.Fatalf("wechat notes meta = %+v, want WeChat Notes with the placeholder 0", metaWeChatNotes)
 	}
 
 	// In Chinese:
@@ -664,5 +664,69 @@ func TestWorkspaceSwitchCommitsPendingGroupRename(t *testing.T) {
 	}
 	if len(a.Groups) != 1 || a.Groups[0].Name != "Computer Science" {
 		t.Fatalf("app groups after the page switch = %+v, want one Computer Science group", a.Groups)
+	}
+}
+
+// TestNotificationClickOpensTheVideosWorkspace checks a channel notification
+// takes the reader to the video page with the channel selected, whatever page
+// was on screen, and that the page it left keeps its own search and selection
+// for the way back.
+func TestNotificationClickOpensTheVideosWorkspace(t *testing.T) {
+	a, w := setupWorkspaceTestApp(t)
+	a.Settings.ActiveWorkspace = WorkspaceRSS
+	tt := ui.NewTester(w.view, 1280, 808)
+	tt.Frame()
+
+	if w.activeWorkspaceName() != WorkspaceRSS {
+		t.Fatalf("active workspace = %q, want %q", w.activeWorkspaceName(), WorkspaceRSS)
+	}
+	a.Search = "rust"
+	a.Selected = "starred"
+	tt.Frame()
+
+	notificationClickHandler(w)(core.ChannelNotificationID("ch-2"))
+	tt.Frame()
+
+	if w.activeWorkspaceName() != WorkspaceVideos {
+		t.Fatalf("after the notification click, active workspace = %q, want %q", w.activeWorkspaceName(), WorkspaceVideos)
+	}
+	if a.Selected != "channel:ch-2" {
+		t.Fatalf("click routed to %q, want channel:ch-2", a.Selected)
+	}
+	if !tt.HasText("Rust Async Explained") {
+		t.Fatalf("the clicked channel's videos are missing: %q", tt.Texts())
+	}
+
+	w.selectWorkspace(WorkspaceRSS)
+	tt.Frame()
+	if a.Selected != "starred" || a.Search != "rust" {
+		t.Fatalf("the RSS page came back as %q, %q; want its own starred view and search", a.Selected, a.Search)
+	}
+}
+
+// TestRSSSidebarRowsSelectTheSmartFeed checks the RSS smart-feed rows still
+// answer a click with their own selection after moving onto the sidebar's
+// shared row.
+func TestRSSSidebarRowsSelectTheSmartFeed(t *testing.T) {
+	a, w := setupWorkspaceTestApp(t)
+	a.Settings.ActiveWorkspace = WorkspaceRSS
+	a.Selected = "all"
+	tt := ui.NewTester(w.view, 1280, 808)
+	tt.Frame()
+
+	if err := tt.Click("Starred"); err != nil {
+		t.Fatalf("click Starred: %v", err)
+	}
+	tt.Frame()
+	if a.Selected != "starred" {
+		t.Fatalf("after clicking Starred, selection = %q, want starred", a.Selected)
+	}
+
+	if err := tt.Click("All articles"); err != nil {
+		t.Fatalf("click All articles: %v", err)
+	}
+	tt.Frame()
+	if a.Selected != "all" {
+		t.Fatalf("after clicking All articles, selection = %q, want all", a.Selected)
 	}
 }

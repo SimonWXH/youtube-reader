@@ -45,7 +45,7 @@ func TestHelperHandoffMakesTheAnnouncedVideoClickable(t *testing.T) {
 		t.Fatalf("channels after hand-off = %d, want 1", got)
 	}
 
-	notificationClickHandler(a)(core.ChannelNotificationID("ch-1"))
+	notificationClickHandler(w)(core.ChannelNotificationID("ch-1"))
 	if a.Selected != "channel:ch-1" {
 		t.Fatalf("click routed to %q", a.Selected)
 	}
@@ -156,7 +156,7 @@ func TestNotifyOnlyDeliversAndConsumesHandshakeWithoutWindow(t *testing.T) {
 	}
 
 	// Prove that cold-start click on the delivered notification routes to channel
-	notificationClickHandler(a)(core.ChannelNotificationID("ch-alpha"))
+	notificationClickHandler(&Window{app: a, selectedIndex: new(int)})(core.ChannelNotificationID("ch-alpha"))
 	if a.Selected != "channel:ch-alpha" {
 		t.Fatalf("click routing selected = %q, want channel:ch-alpha", a.Selected)
 	}

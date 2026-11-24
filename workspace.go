@@ -249,11 +249,12 @@ func (w *Window) unwatchedVideoCount() int {
 }
 
 type dockItemMeta struct {
-	ID      string
-	Symbol  string
-	Title   string
-	Count   string
-	Tooltip string
+	ID          string
+	Symbol      string
+	Title       string
+	Count       string
+	Tooltip     string
+	Placeholder bool
 }
 
 func (w *Window) dockMeta(locale, id string) dockItemMeta {
@@ -296,11 +297,12 @@ func (w *Window) dockMeta(locale, id string) dockItemMeta {
 			tooltip = "稍后读（后续提供）"
 		}
 		return dockItemMeta{
-			ID:      WorkspaceReadLater,
-			Symbol:  "bookmark.fill",
-			Title:   title,
-			Count:   "",
-			Tooltip: tooltip,
+			ID:          WorkspaceReadLater,
+			Symbol:      "bookmark.fill",
+			Title:       title,
+			Count:       "0",
+			Tooltip:     tooltip,
+			Placeholder: true,
 		}
 	case WorkspaceWeChatNotes:
 		title := "WeChat Notes"
@@ -310,11 +312,12 @@ func (w *Window) dockMeta(locale, id string) dockItemMeta {
 			tooltip = "微信读书笔记（后续提供）"
 		}
 		return dockItemMeta{
-			ID:      WorkspaceWeChatNotes,
-			Symbol:  "book.closed.fill",
-			Title:   title,
-			Count:   "",
-			Tooltip: tooltip,
+			ID:          WorkspaceWeChatNotes,
+			Symbol:      "book.closed.fill",
+			Title:       title,
+			Count:       "0",
+			Tooltip:     tooltip,
+			Placeholder: true,
 		}
 	}
 	return dockItemMeta{ID: id, Symbol: "square", Title: id}
@@ -371,6 +374,10 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 
 			iconColor := t.Muted
 			countColor := t.Muted
+			if meta.Placeholder {
+				iconColor = t.Faint
+				countColor = t.Faint
+			}
 			switch {
 			case selected:
 				iconColor = t.Accent
@@ -420,7 +427,9 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 }
 
 // rssSidebar renders the RSS sources and smart feeds in the sidebar.
-func (w *Window) rssSidebar(c *ui.Context, t mui.Tokens) {
+func (w *Window) rssSidebar(c *ui.Context, t mui.Tokens, sidebar ui.Element) {
+	nav := &sidebarNav{w: w, focus: w.sidebarFocus, actions: map[string]func(){}}
+	w.sidebarFocus = ""
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	feedsHeader := "Feeds"
 	allArticlesLabel := "All articles"
@@ -439,15 +448,23 @@ func (w *Window) rssSidebar(c *ui.Context, t mui.Tokens) {
 		TrackScroll(w.workspaceSidebarScroll(WorkspaceRSS)).
 		Padding(0, mui.Space(2), mui.Space(2)+mui.ScrollBottomInset).Children(func() {
 		sectionHeader(c, t, feedsHeader)
-		rssNavRow(c, t, "rss-all", allArticlesLabel, "newspaper", "0", w.app != nil && w.app.Selected == "all", func() {
-			if w.app != nil {
-				w.app.Selected = "all"
-			}
+		nav.row(c, t, mui.SidebarRow{
+			Key: "rss-all", Label: allArticlesLabel, Symbol: "newspaper", Count: "0",
+			Selected: w.app != nil && w.app.Selected == "all",
+			OnClick: func() {
+				if w.app != nil {
+					w.app.Selected = "all"
+				}
+			},
 		})
-		rssNavRow(c, t, "rss-starred", starredLabel, "star", "0", w.app != nil && w.app.Selected == "starred", func() {
-			if w.app != nil {
-				w.app.Selected = "starred"
-			}
+		nav.row(c, t, mui.SidebarRow{
+			Key: "rss-starred", Label: starredLabel, Symbol: "star", Count: "0",
+			Selected: w.app != nil && w.app.Selected == "starred",
+			OnClick: func() {
+				if w.app != nil {
+					w.app.Selected = "starred"
+				}
+			},
 		})
 
 		ui.Column(c.Key("rss-sidebar-empty")).FillWidth().Padding(mui.Space(4), mui.Space(2)).AlignItems(ui.Center).Children(func() {
@@ -455,44 +472,12 @@ func (w *Window) rssSidebar(c *ui.Context, t mui.Tokens) {
 			ui.Text(c, noFeedsDesc).FontSize(11).TextColor(t.Faint).SingleLine()
 		})
 	})
-}
 
-func rssNavRow(c *ui.Context, t mui.Tokens, key, label, symbol, count string, selected bool, onClick func()) {
-	row := ui.ButtonBase(c.Key(key)).Height(mui.SidebarRowHeight).FillWidth().
-		Padding(0, mui.Space(2)).Radius(mui.RadiusControl).Cursor(ui.CursorPointer).
-		FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).Role(ui.RoleTab).Label(label)
-
-	bg := ui.Color{}
-	fg := t.Text
-	countColor := t.Muted
-	symbolColor := t.Muted
-
-	if selected {
-		bg = t.AccentSoft
-		fg = t.Accent
-		countColor = t.Accent
-		symbolColor = t.Accent
-	} else if row.Hovered() {
-		bg = t.SurfaceAlt
+	if nav.focused != "" && nav.focused != w.sidebarKeyboard {
+		w.sidebarKeyboard = ""
 	}
-
-	row.Draw(func(p *ui.Painter, r ui.Rect) {
-		if bg.A > 0 {
-			p.Fill(r, bg, mui.RadiusControl)
-		}
-	})
-
-	row.Children(func() {
-		ui.Row(c).Fill().AlignItems(ui.Center).Gap(mui.Space(2)).Children(func() {
-			sfsymbols.Symbol(c, symbol).Size(16).Color(symbolColor).Element.Role(ui.RoleNone)
-			ui.Text(c, label).FontSize(13).TextColor(fg).SingleLine().Grow(1)
-			ui.Text(c, count).FontSize(11).TextColor(countColor).SingleLine()
-		})
-	})
-
-	if row.Clicked() && onClick != nil {
-		onClick()
-	}
+	sidebar.OnShortcut(0, ui.KeyDown, nav.move(1))
+	sidebar.OnShortcut(0, ui.KeyUp, nav.move(-1))
 }
 
 // readLaterSidebar renders the placeholder sidebar for Read Later.

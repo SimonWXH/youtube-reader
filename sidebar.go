@@ -81,7 +81,7 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 
 		switch w.activeWorkspaceName() {
 		case WorkspaceRSS:
-			w.rssSidebar(c, t)
+			w.rssSidebar(c, t, sidebar)
 		case WorkspaceReadLater:
 			w.readLaterSidebar(c, t)
 		case WorkspaceWeChatNotes:
