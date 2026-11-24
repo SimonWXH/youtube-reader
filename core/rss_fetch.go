@@ -240,7 +240,11 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 		feed.SiteURL = parsed.Link
 	}
 	if feed.AvatarURL == "" && parsed.Image != nil && parsed.Image.URL != "" {
-		feed.AvatarURL = parsed.Image.URL
+		avatarBase := feed.SiteURL
+		if avatarBase == "" {
+			avatarBase = feed.FeedURL
+		}
+		feed.AvatarURL = resolveAssetURL(avatarBase, parsed.Image.URL)
 	}
 	feed.FailureCount = 0
 	feed.LastError = ""
@@ -264,17 +268,11 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 			author = item.Authors[0].Name
 		}
 
-		publishedAt := ""
+		publishedAt := time.UnixMilli(now).UTC().Format(time.RFC3339)
 		if item.PublishedParsed != nil {
-			publishedAt = item.PublishedParsed.Format(time.RFC3339)
+			publishedAt = item.PublishedParsed.UTC().Format(time.RFC3339)
 		} else if item.UpdatedParsed != nil {
-			publishedAt = item.UpdatedParsed.Format(time.RFC3339)
-		} else if item.Published != "" {
-			publishedAt = item.Published
-		} else if item.Updated != "" {
-			publishedAt = item.Updated
-		} else {
-			publishedAt = time.UnixMilli(now).Format(time.RFC3339)
+			publishedAt = item.UpdatedParsed.UTC().Format(time.RFC3339)
 		}
 
 		feedContent := item.Content
@@ -282,6 +280,11 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 			feedContent = item.Description
 		}
 		snippet := CleanSnippet(item.Description, item.Content, 200)
+
+		articleBase := item.Link
+		if articleBase == "" {
+			articleBase = feed.SiteURL
+		}
 
 		heroImage := ""
 		if item.Image != nil && item.Image.URL != "" {
@@ -310,6 +313,13 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 				heroImage = ExtractHeroImage(contentHTML)
 			}
 			isFullText = false
+		}
+
+		heroImage = resolveAssetURL(articleBase, heroImage)
+		for i := range blocks {
+			if blocks[i].Type == BlockImage {
+				blocks[i].URL = resolveAssetURL(articleBase, blocks[i].URL)
+			}
 		}
 
 		articles = append(articles, RSSArticle{
@@ -426,7 +436,17 @@ func DiscoverFeedURL(ctx context.Context, client *http.Client, targetURL string)
 		return "", errors.New("empty URL")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, canonical, nil)
+	requestURL := canonical
+	baseURL, err := url.Parse(canonical)
+	if err != nil {
+		return "", err
+	}
+	if input, inputErr := url.Parse(strings.TrimSpace(targetURL)); inputErr == nil && strings.HasSuffix(input.Path, "/") {
+		baseURL.Path += "/"
+		requestURL = baseURL.String()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return "", err
 	}
@@ -459,10 +479,9 @@ func DiscoverFeedURL(ctx context.Context, client *http.Client, targetURL string)
 		if strings.Contains(t, "rss") || strings.Contains(t, "atom") || strings.Contains(t, "json") {
 			href, exists := s.Attr("href")
 			if exists && href != "" {
-				parsedBase, _ := url.Parse(canonical)
 				parsedHref, err := url.Parse(href)
 				if err == nil {
-					foundFeed = parsedBase.ResolveReference(parsedHref).String()
+					foundFeed = baseURL.ResolveReference(parsedHref).String()
 					return false // stop searching
 				}
 			}

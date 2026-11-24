@@ -118,6 +118,84 @@ func TestFetchRSS20(t *testing.T) {
 	}
 }
 
+const sampleRSSUnparseableDate = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+  <title>Assets Blog</title>
+  <link>https://example.com</link>
+  <description>Blog about assets</description>
+  <item>
+    <title>Post with relative image</title>
+    <link>https://example.com/post/1</link>
+    <guid>post-relative-assets</guid>
+    <pubDate>not a real date</pubDate>
+    <description><![CDATA[<p>Body text here.</p><img src="/img/cover.png" alt="cover">]]></description>
+  </item>
+</channel>
+</rss>`
+
+func TestFetchNormalizesPublishedAtAndResolvesAssetURLs(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+
+	feed := RSSFeed{
+		ID:        "feed:assets",
+		FeedURL:   "https://example.com/feed.xml",
+		UpdatedAt: time.Now().UnixMilli(),
+	}
+	if err := store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &http.Client{
+		Transport: &mockTransport{
+			roundTripFunc: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Header:     http.Header{"Content-Type": []string{"application/rss+xml"}},
+					Body:       io.NopCloser(strings.NewReader(sampleRSSUnparseableDate)),
+				}, nil
+			},
+		},
+	}
+
+	before := time.Now().UTC()
+	fetcher := NewRSSFetcher(store, WithHTTPClient(client))
+	if _, err := fetcher.FetchFeed(ctx, feed); err != nil {
+		t.Fatalf("FetchFeed failed: %v", err)
+	}
+
+	articles, _ := store.ListRSSArticles(ctx, RSSArticleFilter{FeedID: feed.ID})
+	if len(articles) != 1 {
+		t.Fatalf("expected 1 article, got %d", len(articles))
+	}
+	art := articles[0]
+
+	// published_at is persisted as RFC3339 so retention and ordering compare chronologically.
+	published, err := time.Parse(time.RFC3339, art.PublishedAt)
+	if err != nil {
+		t.Fatalf("published_at must always be RFC3339, got %q", art.PublishedAt)
+	}
+	if published.Before(before.Add(-time.Minute)) || published.After(before.Add(time.Hour)) {
+		t.Fatalf("unparseable feed date must fall back to fetch time, got %q", art.PublishedAt)
+	}
+
+	const wantImage = "https://example.com/img/cover.png"
+	if art.HeroImage != wantImage {
+		t.Fatalf("hero image must be absolute, got %q; want %q", art.HeroImage, wantImage)
+	}
+	var imageBlockURL string
+	for _, b := range art.Blocks {
+		if b.Type == BlockImage {
+			imageBlockURL = b.URL
+		}
+	}
+	if imageBlockURL != wantImage {
+		t.Fatalf("image block URL must be absolute, got %q; want %q", imageBlockURL, wantImage)
+	}
+}
+
 func TestFetchFeedDefaultDoesNotRequestArticlePages(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
@@ -483,5 +561,43 @@ func TestDiscoverFeedURL(t *testing.T) {
 	}
 	if discoveredSchemeless != "https://example.com/rss.xml" {
 		t.Fatalf("expected discovered URL 'https://example.com/rss.xml' for schemeless input, got %q", discoveredSchemeless)
+	}
+}
+
+func TestDiscoverFeedURLResolvesRelativeFeedLink(t *testing.T) {
+	ctx := context.Background()
+
+	siteHTML := `<!DOCTYPE html>
+<html>
+<head>
+	<link rel="alternate" type="application/atom+xml" href="rss.xml" />
+</head>
+<body><h1>My Blog</h1></body>
+</html>`
+
+	var requested []string
+	client := &http.Client{
+		Transport: &mockTransport{
+			roundTripFunc: func(req *http.Request) (*http.Response, error) {
+				requested = append(requested, req.URL.String())
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+					Body:       io.NopCloser(strings.NewReader(siteHTML)),
+				}, nil
+			},
+		},
+	}
+
+	discovered, err := DiscoverFeedURL(ctx, client, "https://example.com/blog/")
+	if err != nil {
+		t.Fatalf("DiscoverFeedURL failed: %v", err)
+	}
+	if discovered != "https://example.com/blog/rss.xml" {
+		t.Fatalf("relative feed link must resolve against the input directory, got %q", discovered)
+	}
+	if len(requested) != 1 || requested[0] != "https://example.com/blog/" {
+		t.Fatalf("expected a single probe of the input directory URL, got %v", requested)
 	}
 }

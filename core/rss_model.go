@@ -376,6 +376,24 @@ func CanonicalURL(rawURL string) string {
 	return parsed.String()
 }
 
+// resolveAssetURL resolves a relative asset reference (e.g. an image src) against base.
+// Absolute references and empty inputs are returned unchanged.
+func resolveAssetURL(base, ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" || base == "" {
+		return ref
+	}
+	parsedRef, err := url.Parse(ref)
+	if err != nil || parsedRef.IsAbs() {
+		return ref
+	}
+	parsedBase, err := url.Parse(base)
+	if err != nil || parsedBase.Scheme == "" {
+		return ref
+	}
+	return parsedBase.ResolveReference(parsedRef).String()
+}
+
 // FeedID produces a deterministic, collision-resistant feed identifier from a canonical feed URL.
 // Example: "feed:a1b2c3d4e5f60718"
 func FeedID(canonicalFeedURL string) string {
