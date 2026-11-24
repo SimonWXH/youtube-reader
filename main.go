@@ -24,6 +24,14 @@ const (
 	maxDetailsWidth float32 = 480
 	minGridWidth    float32 = 320
 
+	// The RSS workspace's three columns: the article list keeps a stored width
+	// and the reader takes the rest, so the list has room to read in while the
+	// reader still never falls below rssReaderMinWidth.
+	defaultRSSListWidth float32 = 400
+	minRSSListWidth     float32 = 260
+	maxRSSListWidth     float32 = 480
+	rssReaderMinWidth   float32 = 320
+
 	defaultMaxGridColumns = 5
 	minMaxGridColumns     = 2
 	maxMaxGridColumns     = 8
@@ -157,6 +165,14 @@ type Window struct {
 	contentWidth       float32
 	gridAvailableWidth float32
 	detail             detailState
+	// rssLayout is the RSS workspace's three-column split and rssReader the
+	// reading view's scroll and paragraph-tick state.
+	rssLayout rssLayoutState
+	rssReader rssReaderState
+	// rssRefetchingID is the article whose full-text re-fetch is in flight,
+	// empty when none is: the reader's Refetch action shows progress and
+	// refuses a second request while it is set.
+	rssRefetchingID string
 	// groupDragOrder is the group order before the drag that is moving one of
 	// them began, so giving that drag up puts the groups back as they were.
 	// nil when no group drag has moved the list.
@@ -183,6 +199,10 @@ type Window struct {
 	// onRSSArticleSelected, when set, is invoked when an RSS article is selected.
 	// The app leaves it nil; tests or observers record selection dispatches.
 	onRSSArticleSelected func(article core.RSSArticle)
+	// onRefetchRSSArticle, when set, takes the reader's Refetch action instead
+	// of the app's background fetch. The app leaves it nil; tests record the
+	// request without touching the network.
+	onRefetchRSSArticle func(ctx context.Context, articleID string) (core.RSSArticle, error)
 
 	// RSS inline renaming state:
 	renamingRSSGroupID   string

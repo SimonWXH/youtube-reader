@@ -226,6 +226,7 @@ func defaultSettings() core.Settings {
 		RecentFailures:  []core.RefreshFailure{},
 		SidebarWidth:    defaultSidebarWidth,
 		DetailsWidth:    defaultDetailsWidth,
+		RSSListWidth:    defaultRSSListWidth,
 		MaxGridColumns:  defaultMaxGridColumns,
 		ExpandedGroups:  map[string]bool{},
 		WorkspaceOrder:  append([]string(nil), DefaultWorkspaceOrder...),

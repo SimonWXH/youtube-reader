@@ -77,6 +77,10 @@ type WorkspaceState struct {
 	SidebarScroll ui.ScrollState
 	// ContentScroll is where the workspace's middle timeline is scrolled.
 	ContentScroll ui.ScrollState
+	// Reader is the RSS reading view's place: the open article, where its body
+	// is scrolled, and its paragraph rail. Switching pages keeps it, so coming
+	// back to an article returns to the paragraph being read.
+	Reader rssReaderState
 }
 
 // workspaceSidebarScroll returns the sidebar scroll state of a workspace,
@@ -233,6 +237,7 @@ func (w *Window) saveWorkspaceState(id string) {
 			st.SelectedItemID = w.app.SelectedVideoID
 		} else if id == WorkspaceRSS {
 			st.SelectedItemID = w.app.SelectedRSSArticleID
+			st.Reader = w.rssReader
 		}
 	}
 	st.SelectedIndex = w.selectedIndex
@@ -261,6 +266,11 @@ func (w *Window) restoreWorkspaceState(id string) {
 		} else {
 			w.app.SelectedRSSArticleID = ""
 		}
+	}
+	if id == WorkspaceRSS {
+		w.rssReader = st.Reader
+	} else {
+		w.rssReader = rssReaderState{}
 	}
 	w.selectedIndex = st.SelectedIndex
 }
@@ -505,25 +515,77 @@ func (w *Window) wechatNotesSidebar(c *ui.Context, t mui.Tokens) {
 	})
 }
 
-// rssMainArea renders the 3-column RSS layout with middle timeline and right reader view.
+// rssMainArea renders the RSS workspace's three columns: the article list at
+// its stored width, the divider the user drags, and the adaptive reader.
 func (w *Window) rssMainArea(c *ui.Context, t mui.Tokens, rowWidth float32) {
-	d := &w.detail
-	detailsWidth := detailWidthForRoom(d.width, rowWidth)
-	column2Width := max(rowWidth-detailsWidth-splitDividerWidth(), 0)
-	w.contentWidth = column2Width
-	w.gridAvailableWidth = column2Width
+	listWidth := rssListWidthForRoom(w.rssLayout.listWidth, rowWidth)
+	w.rssLayout.shownWidth = listWidth
+	w.rssLayout.readerWidth = max(rowWidth-listWidth-splitDividerWidth(), 0)
+	w.contentWidth = listWidth
+	w.gridAvailableWidth = listWidth
 
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
-		ui.Column(c).Grow(1).MinWidth(0).Children(func() {
+		ui.Column(c).Width(listWidth).Shrink(0).MinWidth(0).Children(func() {
 			w.rssContent(c, t)
 		})
-		line := w.detailsDivider(c, t)
-		ui.Column(c).Width(max(detailsWidth, 0)).Shrink(0).Children(func() {
-			w.rssReader(c, t)
+		line := w.rssListDivider(c, t, listWidth, rowWidth)
+		ui.Column(c).Grow(1).MinWidth(rssReaderMinWidth).Children(func() {
+			w.rssReaderPane(c, t)
 		})
-		w.detailsDividerGrip(c, line, w.contentWidth)
+		w.rssListDividerGrip(c, t, line, listWidth, rowWidth)
 	})
 }
+
+// rssListDivider is the 1 pt line between the article list and the reader.
+// A press focuses it and the arrows step the list width, so the split works
+// without a pointer.
+func (w *Window) rssListDivider(c *ui.Context, t mui.Tokens, listWidth, rowWidth float32) ui.Element {
+	line := ui.Box(c).Key("rss-list-divider").Width(splitDividerWidth()).FillHeight().
+		Focusable().Role(ui.RoleSplitter).Label("Resize article list").
+		Range(float64(minRSSListWidth), float64(maxRSSListWidth), float64(listWidth)).
+		Step(float64(rssListKeyStep)).FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
+	line.Draw(func(p *ui.Painter, r ui.Rect) {
+		p.Fill(r, t.Border, 0)
+	})
+	if line.Shortcut(0, ui.KeyLeft) {
+		w.setRSSListWidth(listWidth-rssListKeyStep, rowWidth)
+	}
+	if line.Shortcut(0, ui.KeyRight) {
+		w.setRSSListWidth(listWidth+rssListKeyStep, rowWidth)
+	}
+	return line
+}
+
+// rssListDividerGrip carries the drag, the col-resize cursor, the hover ink
+// and the double-click reset for the list/reader seam.
+func (w *Window) rssListDividerGrip(c *ui.Context, t mui.Tokens, line ui.Element, listWidth, rowWidth float32) {
+	handle := ui.Box(c).Key("rss-list-divider-grip").Absolute().Top(0).FillHeight().
+		Width(detailsDividerGrip).
+		Left(listWidth - (detailsDividerGrip-splitDividerWidth())/2).Cursor(ui.CursorResizeEW)
+	dx, _, held := handle.Dragged()
+	switch {
+	case held:
+		line.Focus()
+		if dx != 0 {
+			w.dragRSSList(dx, listWidth, rowWidth)
+		}
+	case w.rssLayout.dragging:
+		w.rssLayout.dragging = false
+		w.rssLayout.overshoot = 0
+	}
+	if handle.DoubleClicked() {
+		w.setRSSListWidth(defaultRSSListWidth, rowWidth)
+	}
+	handle.Draw(func(p *ui.Painter, r ui.Rect) {
+		if handle.Hovered() || w.rssLayout.dragging {
+			x := r.X + (detailsDividerGrip-splitDividerWidth())/2
+			p.Fill(ui.Rect{X: x, Y: r.Y, W: splitDividerWidth(), H: r.H}, t.Accent, 0)
+		}
+	})
+}
+
+// rssListKeyStep is the article list width an arrow key asks for.
+var rssListKeyStep = mui.Space(2)
 
 // rssContent renders Column 2: the RSS middle timeline and search filter bar.
 func (w *Window) rssContent(c *ui.Context, t mui.Tokens) {
@@ -926,28 +988,6 @@ func (w *Window) rssEmptyState(c *ui.Context, t mui.Tokens) {
 			Title:    title,
 			Sentence: sentence,
 		},
-	})
-}
-
-// rssReader renders Column 3: the RSS reader view pane.
-func (w *Window) rssReader(c *ui.Context, t mui.Tokens) {
-	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
-	title := "No Article Selected"
-	sentence := "Select an article from the list to read."
-	if zh {
-		title = "未选择文章"
-		sentence = "从列表中选择一篇文章进行阅读。"
-	}
-
-	ui.Column(c.Key("rss-reader-pane")).Fill().Background(t.App).Children(func() {
-		mui.EmptyPane(c, t, mui.EmptySpec{
-			Key: "rss-reader-empty",
-			Copy: mui.EmptyStateCopy{
-				Symbol:   "doc.text",
-				Title:    title,
-				Sentence: sentence,
-			},
-		})
 	})
 }
 
