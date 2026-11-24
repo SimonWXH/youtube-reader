@@ -287,7 +287,7 @@ func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
 		available = windowWidth(c)
 	}
 	channelWidth, searchWidth, gap, collapsed := fitFilterStrip(
-		max(0, available-2*mui.Space(4)), checkboxWidth, toolbarControl, trailingWidth,
+		max(0, available-2*mui.Space(4)), channelMenuWidth, checkboxWidth, toolbarControl, trailingWidth, 4,
 	)
 	strip := ui.Row(c).Height(contentStripHeight).Shrink(0).FillWidth().
 		Padding(0, mui.Space(4)).AlignItems(ui.Center).Gap(gap).
@@ -364,24 +364,26 @@ func (w *Window) contentStrip(c *ui.Context, t mui.Tokens) {
 	})
 }
 
-// fitFilterStrip gives the filter controls their widths for the room the grid
-// pane has: the search field shrinks first, but never below the width its
-// contents need, then the channel menu collapses to its glyph form, then the
-// Unwatched check box collapses to its icon, and then the gaps tighten. The
-// count always stays visible as text. The row never clips its controls or
-// runs under the detail pane.
-func fitFilterStrip(inner, checkbox, checkboxIcon, count float32) (channel, search, gap float32, collapsed bool) {
-	channel, search, gap = channelMenuWidth, searchFieldWidth, mui.Space(2)
+// fitFilterStrip gives the filter controls their widths for the room the row
+// has: the search field shrinks first, but never below the width its contents
+// need, then a channel menu collapses to its glyph form, then the check box
+// collapses to its icon, and then the gaps tighten. A strip with no channel
+// menu passes 0 for its width, and a check box with no icon form passes 0 for
+// the icon, so only the search field and the gaps give way. The count always
+// stays visible as text. The row never clips its controls or runs under the
+// detail pane.
+func fitFilterStrip(inner, channel, checkbox, checkboxIcon, count float32, gaps int) (channelWidth, search, gap float32, collapsed bool) {
+	channelWidth, search, gap = channel, searchFieldWidth, mui.Space(2)
 	need := func() float32 {
 		box := checkbox
 		if collapsed {
 			box = checkboxIcon
 		}
-		return channel + search + box + count + 4*gap
+		return channelWidth + search + box + count + float32(gaps)*gap
 	}
 	deficit := need() - inner
 	if deficit <= 0 {
-		return channel, search, gap, false
+		return channelWidth, search, gap, false
 	}
 	shrink := func(deficit float32, value *float32, floor float32) float32 {
 		d := min(deficit, *value-floor)
@@ -389,23 +391,31 @@ func fitFilterStrip(inner, checkbox, checkboxIcon, count float32) (channel, sear
 		return deficit - d
 	}
 	deficit = shrink(deficit, &search, searchFieldMin)
-	if deficit > 0 {
-		channel = channelMenuIcon
+	if deficit > 0 && channelWidth > 0 {
+		channelWidth = channelMenuIcon
 		deficit = need() - inner
 	}
-	if deficit > 0 {
+	if deficit > 0 && checkboxIcon > 0 {
 		collapsed = true
 		deficit = need() - inner
 	}
 	if deficit > 0 {
-		d := min(deficit, 4*(gap-mui.Space(1)))
-		gap -= d / 4
+		d := min(deficit, float32(gaps)*(gap-mui.Space(1)))
+		gap -= d / float32(gaps)
 		deficit -= d
 	}
-	return channel, search, gap, collapsed
+	return channelWidth, search, gap, collapsed
 }
 
 func (w *Window) title() string {
+	switch w.activeWorkspaceName() {
+	case WorkspaceRSS:
+		return "RSS"
+	case WorkspaceReadLater:
+		return "Read Later"
+	case WorkspaceWeChatNotes:
+		return "WeChat Notes"
+	}
 	switch {
 	case w.app.Selected == "all":
 		return "All videos"

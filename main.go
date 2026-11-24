@@ -84,10 +84,10 @@ func realMain() {
 	if err := app.ConsumeHandoff(); err != nil {
 		log.Printf("handoff: %v", err)
 	}
-	// Register before Run so MyGo can deliver a click from an earlier run.
-	registerNotificationClick(app)
 	selectedIndex := -1
 	window := &Window{app: app, selectedIndex: &selectedIndex}
+	// Register before Run so MyGo can deliver a click from an earlier run.
+	registerNotificationClick(window)
 	// The socket is up before the first frame so a helper run that starts
 	// while the app is launching still hands its notifications over.
 	go serveNotificationDeliveries(app, window)
@@ -128,6 +128,10 @@ type Window struct {
 	// sidebarHidden folds the sidebar pane away from the toolbar's leading
 	// control or the View menu; the split layout reads it in detail.go.
 	sidebarHidden bool
+	// activeWorkspace is the currently displayed workspace.
+	activeWorkspace string
+	// workspaceStates holds the isolated state for each workspace.
+	workspaceStates map[string]*WorkspaceState
 	// menuRefresh and menuSidebar are the system menu's mirror of the toolbar.
 	menuRefresh *mygo.MenuItem
 	menuSidebar *mygo.MenuItem
@@ -374,16 +378,16 @@ func showNotification(plan NotificationPlan) error {
 	return nil
 }
 
-func registerNotificationClick(app *App) (off func()) {
-	return mygo.App.OnNotificationClick(notificationClickHandler(app))
+func registerNotificationClick(w *Window) (off func()) {
+	return mygo.App.OnNotificationClick(notificationClickHandler(w))
 }
 
-func notificationClickHandler(app *App) func(string) {
+func notificationClickHandler(w *Window) func(string) {
 	return func(id string) {
 		// Every notification YouTube Reader shows carries its channel's ID, so
 		// a click is complete on its own, also when it launched the app.
 		if channelID, ok := core.ChannelFromNotificationID(id); ok {
-			selectNotificationChannel(app, channelID)
+			selectNotificationChannel(w, channelID)
 		}
 	}
 }
@@ -429,8 +433,9 @@ func (w *Window) reloadHelperRefresh() {
 	w.refreshSettingsWindow()
 }
 
-func selectNotificationChannel(app *App, channelID string) {
-	if !app.SelectChannel(channelID) {
+func selectNotificationChannel(w *Window, channelID string) {
+	w.selectWorkspace(WorkspaceVideos)
+	if !w.app.SelectChannel(channelID) {
 		log.Printf("notification click: unknown channel %q", channelID)
 	}
 }
@@ -448,6 +453,7 @@ func (w *Window) navigateToChannel(channelID string) {
 		w.detail.errDismissed = true
 	}
 	if w.app != nil {
+		w.selectWorkspace(WorkspaceVideos)
 		w.app.SelectChannel(channelID)
 	}
 }

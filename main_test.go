@@ -24,8 +24,9 @@ func TestRegisterNotificationClickRoutesChannelID(t *testing.T) {
 	a.UnreadOnly = true
 	a.SelectedVideoID = "v-1"
 
-	registerNotificationClick(a)
-	notificationClickHandler(a)(core.ChannelNotificationID("ch-1"))
+	w := &Window{app: a, selectedIndex: new(int)}
+	registerNotificationClick(w)
+	notificationClickHandler(w)(core.ChannelNotificationID("ch-1"))
 	if a.Selected != "channel:ch-1" || a.ChannelFilter != "" || a.Search != "" || a.UnreadOnly || a.SelectedVideoID != "" {
 		t.Fatalf("id route: %+v", a)
 	}
@@ -44,9 +45,10 @@ func TestNotificationClickHandlerRoutesWarmAndColdChannelIDs(t *testing.T) {
 			a.Videos = []core.Video{{ID: "v-2", ChannelID: "ch-2"}}
 			a.Selected = "all"
 			a.ChannelFilter = "ch-other"
-			off := registerNotificationClick(a)
+			w := &Window{app: a, selectedIndex: new(int)}
+			off := registerNotificationClick(w)
 			defer off()
-			notificationClickHandler(a)(core.ChannelNotificationID("ch-2"))
+			notificationClickHandler(w)(core.ChannelNotificationID("ch-2"))
 			if a.Selected != "channel:ch-2" || a.ChannelFilter != "" {
 				t.Fatalf("route = %q, %q", a.Selected, a.ChannelFilter)
 			}
@@ -63,10 +65,11 @@ func TestNotificationClickHandlerDoesNotRouteWithoutAChannelID(t *testing.T) {
 	defer a.Close()
 	a.Channels = []core.Channel{{ID: "ch-1"}}
 	a.Selected = "all"
+	w := &Window{app: a, selectedIndex: new(int)}
 	// A click that carries no channel, or an ID from something else, must
 	// leave the reader where it is.
 	for _, id := range []string{"", "unrelated-id", core.ChannelNotificationID("")} {
-		notificationClickHandler(a)(id)
+		notificationClickHandler(w)(id)
 		if a.Selected != "all" {
 			t.Fatalf("click %q routed to %q", id, a.Selected)
 		}
