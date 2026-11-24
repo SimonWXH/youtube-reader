@@ -197,7 +197,7 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 	}{
 		{name: "default window", width: 1280, sidebar: defaultSidebarWidth, list: defaultRSSListWidth, reader: 618, inline: true},
 		{name: "widest reader", width: 1280, sidebar: minSidebarWidth, list: minRSSListWidth, reader: 798, inline: true},
-		{name: "band under an inline row", width: 1280, sidebar: maxSidebarWidth, list: defaultRSSListWidth, reader: 558, inline: false},
+		{name: "band under an inline row", width: 1200, sidebar: maxSidebarWidth, list: defaultRSSListWidth, reader: 478, inline: false},
 		{name: "minimum window", width: 960, sidebar: maxSidebarWidth, list: maxRSSListWidth, reader: rssReaderMinWidth, inline: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -295,8 +295,8 @@ func rssHeaderFeedBox(t *testing.T, tt *ui.Tester, header ui.Rect) {
 	if !ok {
 		t.Fatal("the header draws no feed name")
 	}
-	if feed.W < 24 {
-		t.Fatalf("the feed name is %v wide, want at least the 24 pt gutter", feed.W)
+	if feed.W < 56 {
+		t.Fatalf("the feed name is %v wide, want at least its 56 pt readable minimum", feed.W)
 	}
 	sep, ok := rssHeaderNode(t, tt, header, "·")
 	if !ok {

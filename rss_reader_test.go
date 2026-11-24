@@ -682,10 +682,14 @@ func rssReaderTestApp(t *testing.T) (*App, *Window) {
 		t.Fatalf("reload rss: %v", err)
 	}
 
-	w := &Window{app: a, selectedIndex: new(int)}
+	w := &Window{app: a, selectedIndex: new(int), now: func() time.Time { return rssReaderTestNow }}
 	w.selectWorkspace(WorkspaceRSS)
 	return a, w
 }
+
+// rssReaderTestNow is the clock the reader tests run at, so the header's Today
+// and its year rule do not change with the day the suite runs.
+var rssReaderTestNow = time.Date(2026, time.December, 1, 9, 0, 0, 0, time.UTC)
 
 // stubNetImages keeps picture blocks offline and deterministic: the frame
 // holds its place and never depends on a network fetch.
@@ -695,6 +699,26 @@ func stubNetImages(t *testing.T) {
 		return nil, errors.New("offline in tests")
 	})})
 	t.Cleanup(func() { netimage.SetClient(http.DefaultClient) })
+}
+
+// TestRSSReaderDate pins the reading header's compact stamp: a same-day
+// article reads Today, one from this year names its day without the clock,
+// and an older one keeps its year.
+func TestRSSReaderDate(t *testing.T) {
+	now := time.Date(2026, time.November, 25, 15, 0, 0, 0, time.Local)
+	for _, tc := range []struct {
+		name, raw, want string
+	}{
+		{name: "today", raw: now.Format(time.RFC3339), want: "Today"},
+		{name: "this year", raw: time.Date(2026, time.November, 23, 8, 0, 0, 0, time.Local).Format(time.RFC3339), want: "Nov 23"},
+		{name: "another year", raw: time.Date(2025, time.December, 31, 8, 0, 0, 0, time.Local).Format(time.RFC3339), want: "Dec 31, 2025"},
+		{name: "empty", raw: "", want: ""},
+		{name: "unreadable", raw: "not a date", want: "not a date"},
+	} {
+		if got := rssReaderDate(tc.raw, now); got != tc.want {
+			t.Errorf("%s: rssReaderDate(%q) = %q, want %q", tc.name, tc.raw, got, tc.want)
+		}
+	}
 }
 
 // TestRSSReaderViewRendersArticle covers the reading view end to end: an
@@ -726,10 +750,10 @@ func TestRSSReaderViewRendersArticle(t *testing.T) {
 		t.Fatalf("SelectedRSSArticleID = %q, want art-reader", a.SelectedRSSArticleID)
 	}
 	for _, want := range []string{
-		"The Long Read",                       // feed source
-		"Ada Lovelace",                        // author
-		rssReaderDate("2026-11-23T08:00:00Z"), // published date, local and stamped
-		"The Quiet Return of the Open Feed",   // title
+		"The Long Read", // feed source
+		"Ada Lovelace",  // author
+		rssReaderDate("2026-11-23T08:00:00Z", rssReaderTestNow), // the article's day
+		"The Quiet Return of the Open Feed",                     // title
 		"Open in Browser",
 		"Refetch",
 		"The quiet return of the open feed",           // heading block

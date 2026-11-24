@@ -182,6 +182,9 @@ type Window struct {
 	// empty when none is: the reader's Refetch action shows progress and
 	// refuses a second request while it is set.
 	rssRefetchingID string
+	// now is the window's clock, the wall clock in the app and a fixed moment
+	// in tests, for header copy that depends on today's date.
+	now func() time.Time
 	// groupDragOrder is the group order before the drag that is moving one of
 	// them began, so giving that drag up puts the groups back as they were.
 	// nil when no group drag has moved the list.

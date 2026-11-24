@@ -1001,7 +1001,13 @@ func FormatArticleDate(raw string, now time.Time) string {
 		}
 		return "just now"
 	}
-	if t.Year() == nowLocal.Year() {
+	return formatArticleDay(t, nowLocal)
+}
+
+// formatArticleDay names the day a published time fell on, with the year only
+// when it is not now's: "Nov 23" this year, "Dec 31, 2025" any other.
+func formatArticleDay(t, now time.Time) string {
+	if t.Year() == now.Year() {
 		return t.Format("Jan 2")
 	}
 	return t.Format("Jan 2, 2006")

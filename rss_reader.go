@@ -45,8 +45,9 @@ const (
 	rssReaderImageMax float32 = 560 // the tallest an inline picture may show
 	// rssHeaderFeedMin is the least room the header's metadata row leaves the
 	// feed name before giving up the inline layout, so the name and its
-	// separator never shrink to a stub. It is the 24 pt gutter, mui.Space(6).
-	rssHeaderFeedMin float32 = 24
+	// separator never shrink to a stub: enough for the opening of a short
+	// feed title.
+	rssHeaderFeedMin float32 = 56
 	// The text size control in the reader's header reuses the settings panes'
 	// segmented-control metrics, the track and chip filling the header's 28 pt
 	// control height, and keeps its own padding for the single-letter segments.
@@ -544,7 +545,11 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 
 	gutter := rssReaderPadding(w.rssLayout.readerWidth - rssTickRailWidth)
 	content := w.rssLayout.readerWidth - rssTickRailWidth - 2*gutter
-	date := rssReaderDate(art.PublishedAt)
+	now := time.Now()
+	if w.now != nil {
+		now = w.now()
+	}
+	date := rssReaderDate(art.PublishedAt, now)
 	inline := rssHeaderRowWidth(c, feedName, date, openLabel, refetchLabel, refetchingLabel) <= content
 	busy := w.rssRefetchingID == art.ID
 	refetchText := refetchLabel
@@ -916,10 +921,10 @@ func rssBlocksHoldImage(blocks []core.ArticleBlock, url string) bool {
 	return false
 }
 
-// rssReaderDate formats an article's timestamp for the reading header: the
-// full stamped date rather than the list's relative one, because the header
-// answers "when was this written" once the article is open.
-func rssReaderDate(raw string) string {
+// rssReaderDate formats an article's timestamp for the reading header: Today
+// for a same-day article and the day it fell on for any other, without the
+// clock the list and the body already carry.
+func rssReaderDate(raw string, now time.Time) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""
@@ -928,7 +933,11 @@ func rssReaderDate(raw string) string {
 	if err != nil {
 		return raw
 	}
-	return strings.ToUpper(t.Local().Format("Jan 2, 2006 at 15:04"))
+	published, today := t.Local(), now.Local()
+	if published.Year() == today.Year() && published.YearDay() == today.YearDay() {
+		return "Today"
+	}
+	return formatArticleDay(published, today)
 }
 
 // rssDegradedNotice tells the reader the body is the feed's own text and the
