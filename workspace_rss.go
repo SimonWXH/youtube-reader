@@ -809,31 +809,24 @@ func (w *Window) rssSidebarAddButton(c *ui.Context, t mui.Tokens) {
 	})
 }
 
+// rssSidebarMenuWords are the RSS plus menu's commands: the sidebar plus menu's
+// own words, which stay owned there, and the two OPML commands this menu adds.
 type rssSidebarMenuWords struct {
-	newGroup        string
-	addSubscription string
-	groupSaveFailed string
-	importOPML      string
-	exportOPML      string
+	sidebarMenuWords
+	importOPML string
+	exportOPML string
 }
 
 func rssSidebarMenuCopy(locale string) rssSidebarMenuWords {
+	words := rssSidebarMenuWords{sidebarMenuWords: sidebarMenuCopy(locale)}
 	if strings.HasPrefix(strings.ToLower(locale), "zh") {
-		return rssSidebarMenuWords{
-			newGroup:        "新建分组",
-			addSubscription: "新增订阅…",
-			groupSaveFailed: "无法保存这个分组。请重试。",
-			importOPML:      "导入 OPML…",
-			exportOPML:      "导出 OPML…",
-		}
+		words.importOPML = "导入 OPML…"
+		words.exportOPML = "导出 OPML…"
+		return words
 	}
-	return rssSidebarMenuWords{
-		newGroup:        "New Group",
-		addSubscription: "Add Subscription…",
-		groupSaveFailed: "Could not save the group. Try again.",
-		importOPML:      "Import OPML…",
-		exportOPML:      "Export OPML…",
-	}
+	words.importOPML = "Import OPML…"
+	words.exportOPML = "Export OPML…"
+	return words
 }
 
 func (w *Window) importRSSOPML(c *ui.Context) {
