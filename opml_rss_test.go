@@ -1,10 +1,7 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"fmt"
-	"image/png"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,39 +11,6 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/simon/youtube-reader/core"
 )
-
-const opmlEvidenceDir = "/Users/simon/.no-mistakes/evidence/01M87DV9ZZ7928C7K326G2BH9M"
-
-func saveOPMLEvidenceScreenshot(t *testing.T, tt *ui.Tester, filename string) {
-	t.Helper()
-	tt.Frame()
-	if fi, err := os.Stat(opmlEvidenceDir); err == nil && fi.IsDir() {
-		outPath := filepath.Join(opmlEvidenceDir, filename)
-		img := tt.Image()
-		if img != nil {
-			var buf bytes.Buffer
-			if err := png.Encode(&buf, img); err == nil {
-				if err := os.WriteFile(outPath, buf.Bytes(), 0o644); err != nil {
-					t.Logf("failed to write evidence screenshot %s: %v", outPath, err)
-				} else {
-					t.Logf("saved evidence screenshot: %s (%d bytes)", outPath, buf.Len())
-				}
-			}
-		}
-	}
-}
-
-func saveOPMLEvidenceFile(t *testing.T, filename string, data []byte) {
-	t.Helper()
-	if fi, err := os.Stat(opmlEvidenceDir); err == nil && fi.IsDir() {
-		outPath := filepath.Join(opmlEvidenceDir, filename)
-		if err := os.WriteFile(outPath, data, 0o644); err != nil {
-			t.Logf("failed to write evidence file %s: %v", outPath, err)
-		} else {
-			t.Logf("saved evidence file: %s (%d bytes)", outPath, len(data))
-		}
-	}
-}
 
 func writeTestOPML(t *testing.T, dir, filename, content string) string {
 	t.Helper()
@@ -616,8 +580,6 @@ func TestRSSSidebarMenuOPMLEntries(t *testing.T) {
 		t.Fatalf("click rss sidebar add button: %v", err)
 	}
 
-	saveOPMLEvidenceScreenshot(t, tt, "evidence_sidebar_plus_menu_en.png")
-
 	menu := tt.Menu()
 	for _, want := range []string{"New Group", "Add Subscription…", "Import OPML…", "Export OPML…"} {
 		if !slices.Contains(menu, want) {
@@ -633,8 +595,6 @@ func TestRSSSidebarMenuOPMLEntries(t *testing.T) {
 	if err := tt.Click("New group or RSS subscription"); err != nil {
 		t.Fatalf("click rss sidebar add button (zh): %v", err)
 	}
-
-	saveOPMLEvidenceScreenshot(t, tt, "evidence_sidebar_plus_menu_zh.png")
 
 	menuZH := tt.Menu()
 	for _, want := range []string{"新建分组", "新增订阅…", "导入 OPML…", "导出 OPML…"} {
@@ -660,8 +620,6 @@ func TestRSSEmptyStateImportButton(t *testing.T) {
 	if _, ok := tt.AccessByRole(ui.RoleButton, "Import OPML…"); !ok {
 		t.Fatal("empty state missing Import OPML… button")
 	}
-	saveOPMLEvidenceScreenshot(t, tt, "evidence_empty_state_en.png")
-
 	// In Chinese
 	tt.SetLocale("zh-CN")
 	tt.Frame()
@@ -672,7 +630,6 @@ func TestRSSEmptyStateImportButton(t *testing.T) {
 	if _, ok := tt.AccessByRole(ui.RoleButton, "导入 OPML…"); !ok {
 		t.Fatal("empty state missing 导入 OPML… button")
 	}
-	saveOPMLEvidenceScreenshot(t, tt, "evidence_empty_state_zh.png")
 }
 
 // TestOverflowMenuKeepsExportOPMLWithState checks that Export OPML… stays in
@@ -868,30 +825,16 @@ func TestLiveScenario1_BatchImportAndSidebarRender(t *testing.T) {
 	tt.SetLocale("en")
 	tt.Frame()
 
-	saveOPMLEvidenceScreenshot(t, tt, "evidence_sidebar_after_opml_import.png")
-
-	// Dump database state report for evidence
-	var dbDump strings.Builder
-	dbDump.WriteString("=== RSS PERSISTED DATABASE STATE DUMP ===\n\n")
-	dbDump.WriteString(fmt.Sprintf("Imported Feeds Count: %d\n", len(dbFeeds)))
-	dbDump.WriteString(fmt.Sprintf("Imported Groups Count: %d\n\n", len(dbGroups)))
-	dbDump.WriteString("--- GROUPS ---\n")
-	for _, g := range dbGroups {
-		dbDump.WriteString(fmt.Sprintf("Group ID: %s | Name: %s | SortOrder: %d | Feeds: %v\n", g.ID, g.Name, g.SortOrder, g.FeedIDs))
+	for _, want := range []string{"Technology", "Design", "News", "Ars Technica", "xkcd"} {
+		if !tt.HasText(want) {
+			t.Errorf("RSS sidebar after import is missing %q", want)
+		}
 	}
-	dbDump.WriteString("\n--- FEEDS ---\n")
-	for _, f := range dbFeeds {
-		dbDump.WriteString(fmt.Sprintf("Feed ID: %s | Title: %q | FeedURL: %s | SiteURL: %s | Groups: %v\n", f.ID, f.Title, f.FeedURL, f.SiteURL, f.GroupIDs))
-	}
-	dbDump.WriteString("\n--- YOUTUBE ISOLATION VERIFICATION ---\n")
-	dbDump.WriteString(fmt.Sprintf("YouTube Channels in Store: %d (expected 1, untouched)\n", len(a.Channels)))
-	dbDump.WriteString(fmt.Sprintf("YouTube Videos in Store: %d (expected 1, untouched)\n", len(a.Videos)))
-	saveOPMLEvidenceFile(t, "evidence_sqlite_db_state.txt", []byte(dbDump.String()))
 }
 
-// TestLiveScenario3_ExportAndRoundtripEvidence tests export of OPML from the live app,
+// TestLiveScenario3_ExportAndRoundtrip tests export of OPML from the live app,
 // validates standards compliance, and proves lossless roundtrip into a fresh instance.
-func TestLiveScenario3_ExportAndRoundtripEvidence(t *testing.T) {
+func TestLiveScenario3_ExportAndRoundtrip(t *testing.T) {
 	a1, _ := setupRSSTestApp(t)
 	dir := t.TempDir()
 
@@ -968,9 +911,6 @@ func TestLiveScenario3_ExportAndRoundtripEvidence(t *testing.T) {
 		t.Fatalf("read exported OPML failed: %v", err)
 	}
 
-	// Save exported OPML as evidence artifact
-	saveOPMLEvidenceFile(t, "evidence_exported_subscriptions.opml", exportedBytes)
-
 	// Validate OPML format
 	exportedStr := string(exportedBytes)
 	if !strings.HasPrefix(exportedStr, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>") {
@@ -1002,28 +942,11 @@ func TestLiveScenario3_ExportAndRoundtripEvidence(t *testing.T) {
 	if resRoundtrip.GroupsImported != 2 {
 		t.Errorf("a2 GroupsImported = %d; want 2", resRoundtrip.GroupsImported)
 	}
-
-	var report strings.Builder
-	report.WriteString("=== OPML ROUNDTRIP & STANDARDS CONFORMANCE REPORT ===\n\n")
-	report.WriteString("1. Standards Conformance:\n")
-	report.WriteString("   - XML Declaration: Present (UTF-8)\n")
-	report.WriteString("   - OPML Spec Version: 2.0\n")
-	report.WriteString("   - Head Elements: title, dateCreated, dateModified, docs\n")
-	report.WriteString("   - Group Outlines: text, title preserved\n")
-	report.WriteString("   - Feed Outlines: type=\"rss\", text, title, xmlUrl, htmlUrl preserved\n")
-	report.WriteString("   - Soft-deleted feeds excluded: Verified\n\n")
-	report.WriteString("2. Roundtrip Fidelity:\n")
-	report.WriteString(fmt.Sprintf("   - Source active feeds: 4 -> Imported in a2: %d\n", len(a2.RSSFeeds)))
-	report.WriteString(fmt.Sprintf("   - Source groups: 2 -> Imported in a2: %d\n", len(a2.RSSGroups)))
-	for _, g := range a2.RSSGroups {
-		report.WriteString(fmt.Sprintf("   - Group %q contains %d feeds (feed IDs: %v)\n", g.Name, len(g.FeedIDs), g.FeedIDs))
-	}
-	saveOPMLEvidenceFile(t, "evidence_roundtrip_verification.txt", []byte(report.String()))
 }
 
-// TestLiveScenario4_WorkspaceIsolationEvidence explicitly asserts that OPML operations
+// TestLiveScenario4_WorkspaceIsolation explicitly asserts that OPML operations
 // in the RSS workspace do not mutate YouTube subscriptions or video stores.
-func TestLiveScenario4_WorkspaceIsolationEvidence(t *testing.T) {
+func TestLiveScenario4_WorkspaceIsolation(t *testing.T) {
 	a, w := setupRSSTestApp(t)
 	dir := t.TempDir()
 
@@ -1071,14 +994,6 @@ func TestLiveScenario4_WorkspaceIsolationEvidence(t *testing.T) {
 	if w.activeWorkspaceName() != WorkspaceRSS {
 		t.Fatalf("expected active workspace RSS, got %s", w.activeWorkspaceName())
 	}
-
-	var isoReport strings.Builder
-	isoReport.WriteString("=== WORKSPACE ISOLATION AUDIT REPORT ===\n\n")
-	isoReport.WriteString(fmt.Sprintf("YouTube Channels Count Before: %d | After: %d\n", initialYTCnt, len(a.Channels)))
-	isoReport.WriteString(fmt.Sprintf("YouTube Videos Count Before: %d | After: %d\n", initialVidCnt, len(a.Videos)))
-	isoReport.WriteString("YouTube Channels in Exported RSS OPML: None (0 references)\n")
-	isoReport.WriteString("Workspace State Isolation: PASSED\n")
-	saveOPMLEvidenceFile(t, "evidence_workspace_isolation.txt", []byte(isoReport.String()))
 }
 
 // TestLiveScenario5_AdversarialOPML verifies edge cases, malformed XML, and protocol variations.
@@ -1086,17 +1001,12 @@ func TestLiveScenario5_AdversarialOPML(t *testing.T) {
 	a, _ := setupRSSTestApp(t)
 	dir := t.TempDir()
 
-	var advReport strings.Builder
-	advReport.WriteString("=== ADVERSARIAL & EDGE-CASE OPML TEST SUITE ===\n\n")
-
 	// 1. Malformed XML
 	badXML := `<?xml version="1.0"?><opml><head><title>Unclosed`
 	badFile := writeTestOPML(t, dir, "bad.opml", badXML)
 	_, err := importRSSOPMLForTest(t, a, []string{badFile})
 	if err == nil {
 		t.Errorf("expected error on malformed XML, got nil")
-	} else {
-		advReport.WriteString(fmt.Sprintf("1. Malformed XML: Gracefully rejected with error: %v\n", err))
 	}
 
 	// 2. feed:// scheme and entity escaping
@@ -1135,7 +1045,6 @@ func TestLiveScenario5_AdversarialOPML(t *testing.T) {
 	if !techHoldsFeed {
 		t.Errorf("groups = %+v; want a Tech folder holding %q", a.RSSGroups, techFeedID)
 	}
-	advReport.WriteString(fmt.Sprintf("2. Scheme Normalization & Missing URLs: Imported %d valid feeds and %d groups, skipped missing xmlUrl\n", res.FeedsImported, res.GroupsImported))
 
 	// Verify feeds were normalized
 	for _, f := range a.RSSFeeds {
@@ -1143,7 +1052,6 @@ func TestLiveScenario5_AdversarialOPML(t *testing.T) {
 			t.Errorf("FeedURL not normalized: %s", f.FeedURL)
 		}
 	}
-	advReport.WriteString("3. URL Schemes verified clean of 'feed:' prefix: PASSED\n")
 
 	// 4. Empty OPML file
 	emptyOPML := `<?xml version="1.0" encoding="UTF-8"?><opml version="2.0"><head/><body/></opml>`
@@ -1155,7 +1063,4 @@ func TestLiveScenario5_AdversarialOPML(t *testing.T) {
 	if resEmpty.FeedsImported != 0 || resEmpty.GroupsImported != 0 {
 		t.Errorf("empty OPML returned non-zero result: %+v", resEmpty)
 	}
-	advReport.WriteString("4. Empty OPML Body: Safely processed with 0 imports: PASSED\n")
-
-	saveOPMLEvidenceFile(t, "evidence_adversarial_test_log.txt", []byte(advReport.String()))
 }
