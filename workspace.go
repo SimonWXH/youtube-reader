@@ -518,6 +518,7 @@ func (w *Window) wechatNotesSidebar(c *ui.Context, t mui.Tokens) {
 // rssMainArea renders the RSS workspace's three columns: the article list at
 // its stored width, the divider the user drags, and the adaptive reader.
 func (w *Window) rssMainArea(c *ui.Context, t mui.Tokens, rowWidth float32) {
+	w.installRSSShortcuts(c)
 	listWidth := rssListWidthForRoom(w.rssLayout.listWidth, rowWidth)
 	w.rssLayout.shownWidth = listWidth
 	w.rssLayout.readerWidth = max(rowWidth-listWidth-splitDividerWidth(), 0)
@@ -819,7 +820,20 @@ func (w *Window) rssArticleItemRow(c *ui.Context, t mui.Tokens, art core.RSSArti
 			}
 		}
 		if m.Item(readLabel).Chosen() {
-			_ = w.app.MarkRSSArticleRead(art.ID, !art.Read)
+			w.toggleRSSArticleRead(c, art)
+		}
+		starLabel := "Star"
+		if zh {
+			starLabel = "标星"
+		}
+		if art.Starred {
+			starLabel = "Unstar"
+			if zh {
+				starLabel = "取消标星"
+			}
+		}
+		if m.Item(starLabel).Chosen() {
+			w.toggleRSSArticleStar(c, art)
 		}
 	})
 
@@ -857,6 +871,13 @@ func (w *Window) rssArticleItemRow(c *ui.Context, t mui.Tokens, art core.RSSArti
 						sourceName = "RSS"
 					}
 					mui.Metadata.Apply(ui.Text(c, sourceName)).TextColor(t.Muted).SingleLine().Shrink(1)
+					if art.Starred {
+						ui.Row(c).Key("rss-starred-mark:"+art.ID).Shrink(0).AlignItems(ui.Center).
+							Margin(0, 0, 0, mui.Space(1)).
+							Role(ui.RoleImage).Label("Starred: " + art.Title).Children(func() {
+							sfsymbols.Symbol(c, "star.fill").Size(mui.Space(3)).Color(t.Accent).Element.Role(ui.RoleNone)
+						})
+					}
 					ui.Spacer(c)
 					dateStr := FormatArticleDate(art.PublishedAt, time.Now())
 					mui.Metadata.Apply(ui.Text(c, dateStr)).TextColor(t.Muted).SingleLine().Shrink(0)

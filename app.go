@@ -1796,6 +1796,32 @@ func (a *App) MarkRSSArticleRead(id string, read bool) error {
 	return nil
 }
 
+// SetRSSArticleStarred marks an article as starred or unstarred in the store
+// and in-memory. The starred total the sidebar row shows is refreshed with it,
+// so the count never disagrees with the article's own star.
+func (a *App) SetRSSArticleStarred(id string, starred bool) error {
+	now := time.Now().UnixMilli()
+	if a.Store != nil {
+		if err := a.Store.SetRSSArticleStarred(context.Background(), id, starred, now); err != nil {
+			return err
+		}
+	}
+	for i := range a.RSSArticles {
+		if a.RSSArticles[i].ID == id {
+			a.RSSArticles[i].Starred = starred
+			if starred {
+				a.RSSArticles[i].StarredAt = now
+			} else {
+				a.RSSArticles[i].StarredAt = 0
+			}
+			a.RSSArticles[i].UpdatedAt = now
+			break
+		}
+	}
+	a.reloadRSSCounts()
+	return nil
+}
+
 func queueSyncState(raw json.RawMessage) (core.SyncState, error) {
 	var outer string
 	var payload struct {
