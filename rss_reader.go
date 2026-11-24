@@ -1077,8 +1077,8 @@ func (w *Window) rssImageBlock(c *ui.Context, t mui.Tokens, key string, block co
 		// shows, the picture stands on the page, centred in the column.
 		frame.Height(height).Background(ui.Color{}).
 			Cursor(ui.CursorPointer).Tooltip(url).OnClick(func() {
-				c.OpenURL(url)
-			})
+			c.OpenURL(url)
+		})
 		frame.Children(func() {
 			ui.Image(c, src).Fit(ui.Contain).Size(width, height)
 		})
