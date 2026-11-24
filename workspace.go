@@ -945,15 +945,36 @@ func (w *Window) moveRSSSelection(articles []core.RSSArticle, delta int) {
 	target := 0
 	if current >= 0 {
 		target = current + delta
-		if target < 0 {
-			target = 0
-		}
-		if target >= len(articles) {
-			target = len(articles) - 1
-		}
+	} else if sel := w.app.SelectedRSSArticle(); sel != nil {
+		target = rssNeighbourIndex(articles, *sel, delta)
+	}
+	if target < 0 {
+		target = 0
+	}
+	if target >= len(articles) {
+		target = len(articles) - 1
 	}
 	w.selectRSSArticle(articles[target].ID)
 	w.rssRevealSelection = articles[target].ID
+}
+
+// rssNeighbourIndex reports which visible article a step from sel should reach
+// when sel itself is no longer listed: the first one older than it for +1, the
+// last one newer for -1, and -1 when the list holds none that way.
+func rssNeighbourIndex(articles []core.RSSArticle, sel core.RSSArticle, delta int) int {
+	target := -1
+	for i, art := range articles {
+		if delta > 0 {
+			if rssArticleNewer(sel, art) {
+				return i
+			}
+			continue
+		}
+		if rssArticleNewer(art, sel) {
+			target = i
+		}
+	}
+	return target
 }
 
 // FormatArticleDate formats an article's published timestamp for display in the middle list row.

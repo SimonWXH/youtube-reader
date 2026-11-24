@@ -135,6 +135,166 @@ func TestRSSKeyboardStepsSelection(t *testing.T) {
 	}
 }
 
+// TestRSSKeyboardStepsKeepTheAnchor checks a step still lands beside the open
+// article after M or S hides it from the filtered column, instead of jumping
+// back to the top of the list.
+func TestRSSKeyboardStepsKeepTheAnchor(t *testing.T) {
+	a, w, tt := rssShortcutFixture(t, 6)
+	a.UnreadOnly = true
+	tt.Frame()
+
+	for i := 0; i < 3; i++ {
+		tt.Key(0, ui.KeyJ)
+		tt.Frame()
+	}
+	if a.SelectedRSSArticleID != "art-02" {
+		t.Fatalf("chosen article = %q, want art-02", a.SelectedRSSArticleID)
+	}
+
+	// M hides the open article from the unread column while it stays open.
+	tt.Key(0, ui.KeyM)
+	tt.Frame()
+	if a.SelectedRSSArticleID != "art-02" {
+		t.Fatalf("marking read changed the open article to %q", a.SelectedRSSArticleID)
+	}
+	if visible := a.VisibleRSSArticles(); len(visible) != 5 {
+		t.Fatalf("the unread column holds %d articles, want 5", len(visible))
+	}
+
+	// J carries on with the article after the hidden one, not the top entry.
+	tt.Key(0, ui.KeyJ)
+	tt.Frame()
+	if a.SelectedRSSArticleID != "art-03" {
+		t.Fatalf("J after the open article was hidden chose %q, want art-03", a.SelectedRSSArticleID)
+	}
+	if w.rssReader.articleID != "art-03" {
+		t.Fatalf("reader shows %q, want art-03", w.rssReader.articleID)
+	}
+
+	tt.Key(0, ui.KeyM)
+	tt.Frame()
+	if visible := a.VisibleRSSArticles(); len(visible) != 4 {
+		t.Fatalf("the unread column holds %d articles, want 4", len(visible))
+	}
+
+	// K goes back to the article before both hidden ones.
+	tt.Key(0, ui.KeyK)
+	tt.Frame()
+	if a.SelectedRSSArticleID != "art-01" {
+		t.Fatalf("K after the open article was hidden chose %q, want art-01", a.SelectedRSSArticleID)
+	}
+
+	// The arrow keys share the move and keep the same anchor.
+	if err := tt.Click("Article 01"); err != nil {
+		t.Fatalf("focus the open row: %v", err)
+	}
+	tt.Frame()
+	tt.Key(0, ui.KeyDown)
+	tt.Frame()
+	if a.SelectedRSSArticleID != "art-04" {
+		t.Fatalf("the down arrow chose %q, want art-04", a.SelectedRSSArticleID)
+	}
+}
+
+// TestRSSKeyboardStarKeepsTheAnchorInStarred checks the Starred destination
+// keeps the same anchor when S unstars the open row.
+func TestRSSKeyboardStarKeepsTheAnchorInStarred(t *testing.T) {
+	a, _, tt := rssShortcutFixture(t, 4)
+	for _, id := range []string{"art-00", "art-01", "art-02"} {
+		if err := a.SetRSSArticleStarred(id, true); err != nil {
+			t.Fatalf("star %s: %v", id, err)
+		}
+	}
+	if err := tt.Click("Starred"); err != nil {
+		t.Fatalf("open the Starred destination: %v", err)
+	}
+	tt.Frame()
+
+	tt.Key(0, ui.KeyJ)
+	tt.Frame()
+	tt.Key(0, ui.KeyJ)
+	tt.Frame()
+	if a.SelectedRSSArticleID != "art-01" {
+		t.Fatalf("chosen starred article = %q, want art-01", a.SelectedRSSArticleID)
+	}
+
+	tt.Key(0, ui.KeyS)
+	tt.Frame()
+	if visible := a.VisibleRSSArticles(); len(visible) != 2 {
+		t.Fatalf("the Starred column holds %d articles, want 2", len(visible))
+	}
+
+	tt.Key(0, ui.KeyJ)
+	tt.Frame()
+	if a.SelectedRSSArticleID != "art-02" {
+		t.Fatalf("J after unstarring the open row chose %q, want art-02", a.SelectedRSSArticleID)
+	}
+
+	tt.Key(0, ui.KeyK)
+	tt.Frame()
+	if a.SelectedRSSArticleID != "art-00" {
+		t.Fatalf("K chose %q, want art-00", a.SelectedRSSArticleID)
+	}
+}
+
+// TestRSSKeyboardTogglesTakeThePressAlone checks holding M, S or Cmd+O acts
+// once, while J and K still step once per auto-repeat.
+func TestRSSKeyboardTogglesTakeThePressAlone(t *testing.T) {
+	a, _, tt := rssShortcutFixture(t, 6)
+
+	tt.Key(0, ui.KeyJ)
+	tt.Frame()
+
+	tt.Key(0, ui.KeyM)
+	tt.Frame()
+	for i := 0; i < 3; i++ {
+		tt.KeyRepeat(0, ui.KeyM)
+		tt.Frame()
+	}
+	if art := a.SelectedRSSArticle(); art == nil || !art.Read {
+		t.Fatalf("the auto-repeats flipped the article back to unread: %+v", art)
+	}
+	if a.RSSTotalUnread != 5 {
+		t.Fatalf("unread total after holding M = %d, want 5", a.RSSTotalUnread)
+	}
+
+	tt.Key(0, ui.KeyS)
+	tt.Frame()
+	for i := 0; i < 3; i++ {
+		tt.KeyRepeat(0, ui.KeyS)
+		tt.Frame()
+	}
+	if art := a.SelectedRSSArticle(); art == nil || !art.Starred {
+		t.Fatalf("the auto-repeats removed the star: %+v", art)
+	}
+	if a.RSSStarredTotal != 1 {
+		t.Fatalf("starred total after holding S = %d, want 1", a.RSSStarredTotal)
+	}
+
+	tt.Key(ui.Cmd, ui.KeyO)
+	tt.Frame()
+	for i := 0; i < 3; i++ {
+		tt.KeyRepeat(ui.Cmd, ui.KeyO)
+		tt.Frame()
+	}
+	if opened := tt.OpenedURLs(); len(opened) != 1 {
+		t.Fatalf("holding Cmd+O opened %v, want one link", opened)
+	}
+
+	// J steps once per repeat, as stepping while the key is held should.
+	tt.KeyDown(ui.KeyJ)
+	tt.Frame()
+	tt.KeyRepeat(0, ui.KeyJ)
+	tt.Frame()
+	tt.KeyRepeat(0, ui.KeyJ)
+	tt.Frame()
+	tt.KeyUp(ui.KeyJ)
+	tt.Frame()
+	if a.SelectedRSSArticleID != "art-03" {
+		t.Fatalf("three J presses chose %q, want art-03", a.SelectedRSSArticleID)
+	}
+}
+
 // TestRSSKeyboardTogglesRead checks M flips the chosen article between read
 // and unread, that the store keeps it, and that the header's unread count and
 // the row's unread dot follow at once.

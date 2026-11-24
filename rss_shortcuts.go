@@ -47,7 +47,7 @@ func (w *Window) rssStepSelection(c *ui.Context, delta int) {
 // column header, the sidebar counts and the dock badge follow through the
 // app's own count reload.
 func (w *Window) rssToggleOpenArticleRead(c *ui.Context) {
-	if !w.rssSingleKeyReady(c) {
+	if !w.rssSingleKeyReady(c) || c.ShortcutRepeated() {
 		return
 	}
 	art := w.app.SelectedRSSArticle()
@@ -59,7 +59,7 @@ func (w *Window) rssToggleOpenArticleRead(c *ui.Context) {
 
 // rssToggleOpenArticleStar stars or unstars the open article.
 func (w *Window) rssToggleOpenArticleStar(c *ui.Context) {
-	if !w.rssSingleKeyReady(c) {
+	if !w.rssSingleKeyReady(c) || c.ShortcutRepeated() {
 		return
 	}
 	art := w.app.SelectedRSSArticle()
@@ -72,7 +72,7 @@ func (w *Window) rssToggleOpenArticleStar(c *ui.Context) {
 // rssOpenArticleInBrowser opens the open article's original page in the
 // default browser.
 func (w *Window) rssOpenArticleInBrowser(c *ui.Context) {
-	if w.app == nil || w.activeWorkspaceName() != WorkspaceRSS {
+	if w.app == nil || w.activeWorkspaceName() != WorkspaceRSS || c.ShortcutRepeated() {
 		return
 	}
 	art := w.app.SelectedRSSArticle()

@@ -1735,14 +1735,18 @@ func (a *App) VisibleRSSArticles() []core.RSSArticle {
 		out = append(out, art)
 	}
 
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].PublishedAt != out[j].PublishedAt {
-			return out[i].PublishedAt > out[j].PublishedAt
-		}
-		return out[i].ID > out[j].ID
-	})
+	sort.SliceStable(out, func(i, j int) bool { return rssArticleNewer(out[i], out[j]) })
 
 	return out
+}
+
+// rssArticleNewer reports whether a sorts before b in the article column,
+// which lists the newest article first and breaks a tie by the larger ID.
+func rssArticleNewer(a, b core.RSSArticle) bool {
+	if a.PublishedAt != b.PublishedAt {
+		return a.PublishedAt > b.PublishedAt
+	}
+	return a.ID > b.ID
 }
 
 // feedTitlesByID returns each RSS feed's display title by feed ID.
