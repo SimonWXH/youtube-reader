@@ -5,7 +5,7 @@ The rules below are settled decisions for this repository, not suggestions. Foll
 ## Overview and architecture
 
 - YouTube Reader is an open-source, two-platform YouTube subscription reader for daily personal use: a native macOS client in Go/MyGo plus a native Android client.
-- Core model: local-first, YouTube Data API v3 integration, channel avatars, standard long-form videos (Shorts filtered out), with optional RSS aggregation on Android.
+- Core model: local-first, YouTube Data API v3 integration, channel avatars, standard long-form videos (Shorts filtered out), with optional RSS aggregation.
 - All work stays inside the public repository `SimonWXH/youtube-reader`.
 - Dual-platform by default: every feature is expected on both macOS and Android, with synced data (read state, favorites, and later notes and annotations). Shipping on one platform first is fine when that is the stated plan, but its data model and interactions must not block the other platform or the sync model later.
 
