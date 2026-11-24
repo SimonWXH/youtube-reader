@@ -42,7 +42,7 @@ const (
 	rssPreviewRunes  int     = 56
 	rssPreviewLines  int     = 2
 	// rssHeaderInlineActionsMin is the reader width from which the header's
-	// two labelled actions share the metadata's row.
+	// star and its two labelled actions share the metadata's row.
 	rssHeaderInlineActionsMin float32 = 560
 	rssReadingColumn          float32 = 700 // the reading text column's widest
 	rssReaderImageMax         float32 = 560 // the tallest an inline picture may show
@@ -470,7 +470,8 @@ func (w *Window) rssReaderEmpty(c *ui.Context, t mui.Tokens) {
 }
 
 // rssReaderHeader is the fixed article header: its source and date, its title,
-// its author, and the two actions that leave the app's rendering.
+// its author, the star that toggles the article's star, and the two actions
+// that leave the app's rendering.
 func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticle) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	openLabel := "Open in Browser"
@@ -497,6 +498,7 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 	}
 	actions := func() {
 		ui.Row(c).Shrink(0).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
+			w.rssReaderStarAction(c, t, art)
 			w.rssReaderAction(c, t, "rss-reader-open", openLabel, false, func() {
 				if art.Link != "" {
 					c.OpenURL(art.Link)
@@ -544,7 +546,8 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 
 // rssHeaderInlineActions reports whether the reader is wide enough for the
 // header's actions to share the metadata's row. Below it they take their own
-// row, because two labelled buttons and the date cannot fit side by side.
+// row, because the star, two labelled buttons and the date cannot fit side by
+// side.
 func rssHeaderInlineActions(readerWidth float32) bool {
 	return readerWidth >= rssHeaderInlineActionsMin
 }
@@ -566,20 +569,59 @@ func (w *Window) rssReaderAction(c *ui.Context, t mui.Tokens, key, label string,
 			text.TextColor(t.Muted)
 		}
 	})
-	el.Draw(func(p *ui.Painter, r ui.Rect) {
-		if busy {
-			return
-		}
-		switch {
-		case el.Pressed():
-			p.Fill(ui.Rect{X: r.X - mui.Hairline, Y: r.Y - mui.Hairline, W: r.W + 2*mui.Hairline, H: r.H + 2*mui.Hairline}, t.Face(mui.Active, false, false).Background, mui.RadiusControl)
-		case el.Hovered():
-			p.Fill(ui.Rect{X: r.X - mui.Hairline, Y: r.Y - mui.Hairline, W: r.W + 2*mui.Hairline, H: r.H + 2*mui.Hairline}, t.Face(mui.Hover, false, false).Background, mui.RadiusControl)
-		}
-	})
 	if !busy {
+		el.Draw(rssActionFace(el, t))
 		el.OnClick(onClick)
 	}
+	return el
+}
+
+// rssActionFace is the hover and press fill the reader header's actions share:
+// the accent's quiet face, drawn a hairline past the control's own bounds so it
+// sits inside the border rather than over it.
+func rssActionFace(el ui.Element, t mui.Tokens) func(p *ui.Painter, r ui.Rect) {
+	return func(p *ui.Painter, r ui.Rect) {
+		grown := ui.Rect{X: r.X - mui.Hairline, Y: r.Y - mui.Hairline, W: r.W + 2*mui.Hairline, H: r.H + 2*mui.Hairline}
+		switch {
+		case el.Pressed():
+			p.Fill(grown, t.Face(mui.Active, false, false).Background, mui.RadiusControl)
+		case el.Hovered():
+			p.Fill(grown, t.Face(mui.Hover, false, false).Background, mui.RadiusControl)
+		}
+	}
+}
+
+// rssReaderStarAction is the header's star toggle: one 28 pt icon that fills
+// and takes the accent while the article is starred, so both the state and the
+// way to change it sit in the header beside the ways out of the app.
+func (w *Window) rssReaderStarAction(c *ui.Context, t mui.Tokens, art core.RSSArticle) ui.Element {
+	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
+	label := "Star article (S)"
+	if art.Starred {
+		label = "Unstar article (S)"
+	}
+	if zh {
+		label = "标星 (S)"
+		if art.Starred {
+			label = "取消标星 (S)"
+		}
+	}
+	glyph, color := "star", t.Muted
+	if art.Starred {
+		glyph, color = "star.fill", t.Accent
+	}
+	el := ui.ButtonBase(c).Key("rss-reader-star").Size(mui.Space(7), mui.Space(7)).
+		Padding(0).Radius(mui.RadiusControl).Border(mui.Hairline, t.Border).
+		Background(t.Surface).Cursor(ui.CursorPointer).Transition(mui.Fade).
+		FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
+		Role(ui.RoleButton).Label(label).Tooltip(label)
+	el.Children(func() {
+		sfsymbols.Symbol(c, glyph).Size(mui.Space(4)).Color(color).Element.Role(ui.RoleNone)
+	})
+	el.Draw(rssActionFace(el, t))
+	el.OnClick(func() {
+		w.toggleRSSArticleStar(c, art)
+	})
 	return el
 }
 

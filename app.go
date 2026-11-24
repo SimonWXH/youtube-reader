@@ -1735,14 +1735,18 @@ func (a *App) VisibleRSSArticles() []core.RSSArticle {
 		out = append(out, art)
 	}
 
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].PublishedAt != out[j].PublishedAt {
-			return out[i].PublishedAt > out[j].PublishedAt
-		}
-		return out[i].ID > out[j].ID
-	})
+	sort.SliceStable(out, func(i, j int) bool { return rssArticleNewer(out[i], out[j]) })
 
 	return out
+}
+
+// rssArticleNewer reports whether a sorts before b in the article column,
+// which lists the newest article first and breaks a tie by the larger ID.
+func rssArticleNewer(a, b core.RSSArticle) bool {
+	if a.PublishedAt != b.PublishedAt {
+		return a.PublishedAt > b.PublishedAt
+	}
+	return a.ID > b.ID
 }
 
 // feedTitlesByID returns each RSS feed's display title by feed ID.
@@ -1787,6 +1791,32 @@ func (a *App) MarkRSSArticleRead(id string, read bool) error {
 				a.RSSArticles[i].ReadAt = now
 			} else {
 				a.RSSArticles[i].ReadAt = 0
+			}
+			a.RSSArticles[i].UpdatedAt = now
+			break
+		}
+	}
+	a.reloadRSSCounts()
+	return nil
+}
+
+// SetRSSArticleStarred marks an article as starred or unstarred in the store
+// and in-memory. The starred total the sidebar row shows is refreshed with it,
+// so the count never disagrees with the article's own star.
+func (a *App) SetRSSArticleStarred(id string, starred bool) error {
+	now := time.Now().UnixMilli()
+	if a.Store != nil {
+		if err := a.Store.SetRSSArticleStarred(context.Background(), id, starred, now); err != nil {
+			return err
+		}
+	}
+	for i := range a.RSSArticles {
+		if a.RSSArticles[i].ID == id {
+			a.RSSArticles[i].Starred = starred
+			if starred {
+				a.RSSArticles[i].StarredAt = now
+			} else {
+				a.RSSArticles[i].StarredAt = 0
 			}
 			a.RSSArticles[i].UpdatedAt = now
 			break

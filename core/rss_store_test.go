@@ -762,8 +762,8 @@ func TestDeleteRSSFeedSoftDeleteArticles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if starredCnt != len(starredList) {
-		t.Fatalf("expected RSSStarredCount (%d) to match starredList (%d)", starredCnt, len(starredList))
+	if starredCnt != 0 {
+		t.Fatalf("expected RSSStarredCount 0 while the feed is tombstoned, got %d", starredCnt)
 	}
 
 	// Re-subscribing the same feed must restore its previously fetched articles
@@ -784,6 +784,9 @@ func TestDeleteRSSFeedSoftDeleteArticles(t *testing.T) {
 		if a.ID == "art:test-softdel:unstarred" && !a.Read {
 			t.Fatalf("read state must survive feed soft delete and re-subscribe")
 		}
+	}
+	if starredCnt, err := store.RSSStarredCount(ctx); err != nil || starredCnt != 1 {
+		t.Fatalf("RSSStarredCount after re-subscribe = %d (%v), want 1", starredCnt, err)
 	}
 }
 
