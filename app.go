@@ -1702,20 +1702,10 @@ func (a *App) VisibleRSSArticles() []core.RSSArticle {
 		}
 	}
 
-	deletedFeeds := make(map[string]bool)
-	for _, f := range a.RSSFeeds {
-		if f.Deleted {
-			deletedFeeds[f.ID] = true
-		}
-	}
-
 	q := strings.TrimSpace(strings.ToLower(a.Search))
 	out := make([]core.RSSArticle, 0, len(a.RSSArticles))
 
 	for _, art := range a.RSSArticles {
-		if deletedFeeds[art.FeedID] {
-			continue
-		}
 		if starredOnly && !art.Starred {
 			continue
 		}
