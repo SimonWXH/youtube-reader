@@ -508,6 +508,54 @@ func TestRSSGroupNamesStayUnique(t *testing.T) {
 	}
 }
 
+// TestRSSGroupNameCheckReadsStore verifies that create and rename enforce the
+// case-insensitive name rule against the store, so a stale in-memory snapshot
+// cannot let a duplicate name through.
+func TestRSSGroupNameCheckReadsStore(t *testing.T) {
+	a, _ := setupRSSTestApp(t)
+
+	if _, err := a.CreateRSSGroup("Tech"); err != nil {
+		t.Fatalf("create Tech: %v", err)
+	}
+	news, err := a.CreateRSSGroup("News")
+	if err != nil {
+		t.Fatalf("create News: %v", err)
+	}
+
+	a.RSSGroups = nil
+	created, err := a.CreateRSSGroup("tech")
+	if err != nil {
+		t.Fatalf("create tech: %v", err)
+	}
+	if created.Name != "tech 2" {
+		t.Errorf("created group name = %q; want it numbered against the stored Tech", created.Name)
+	}
+
+	a.RSSGroups = nil
+	if err := a.RenameRSSGroup(news.ID, "TECH"); err != nil {
+		t.Fatalf("rename News: %v", err)
+	}
+	if got := a.RSSGroupByID(news.ID).Name; got != "TECH 3" {
+		t.Errorf("renamed group name = %q; want it numbered against the stored names", got)
+	}
+
+	stored, err := a.Store.ListRSSGroups(context.Background(), false)
+	if err != nil {
+		t.Fatalf("ListRSSGroups: %v", err)
+	}
+	if len(stored) != 3 {
+		t.Fatalf("stored groups = %d; want 3", len(stored))
+	}
+	seen := make(map[string]string, len(stored))
+	for _, g := range stored {
+		key := strings.ToLower(g.Name)
+		if prev, ok := seen[key]; ok {
+			t.Errorf("groups %q and %q share a name", prev, g.Name)
+		}
+		seen[key] = g.Name
+	}
+}
+
 // TestExportRSSOPMLRoundTripKeepsRenamedGroupsApart covers two groups born with
 // the same default name: once renamed apart, an export must re-import with each
 // feed under its own group only.

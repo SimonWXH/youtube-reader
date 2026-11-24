@@ -171,11 +171,22 @@ func (a *App) RSSGroupByID(groupID string) core.RSSGroup {
 }
 
 // uniqueRSSGroupName returns name, or name with the first free numeric suffix,
-// so no two active groups share a name case-insensitively.
-func (a *App) uniqueRSSGroupName(name, exceptID string) string {
+// so no two active groups share a name case-insensitively. The names come from
+// the store, so a stale in-memory snapshot cannot let a duplicate through.
+func (a *App) uniqueRSSGroupName(ctx context.Context, name, exceptID string) (string, error) {
 	name = strings.TrimSpace(name)
-	taken := make(map[string]bool, len(a.RSSGroups))
-	for _, g := range a.RSSGroups {
+	var groups []core.RSSGroup
+	if a.Store != nil {
+		stored, err := a.Store.ListRSSGroups(ctx, false)
+		if err != nil {
+			return "", err
+		}
+		groups = stored
+	} else {
+		groups = a.RSSGroups
+	}
+	taken := make(map[string]bool, len(groups))
+	for _, g := range groups {
 		if g.ID != exceptID {
 			taken[strings.ToLower(strings.TrimSpace(g.Name))] = true
 		}
@@ -184,7 +195,22 @@ func (a *App) uniqueRSSGroupName(name, exceptID string) string {
 	for n := 2; taken[strings.ToLower(candidate)]; n++ {
 		candidate = fmt.Sprintf("%s %d", name, n)
 	}
-	return candidate
+	return candidate, nil
+}
+
+// activeRSSGroupByName returns the active group whose name matches name
+// case-insensitively, read from the store.
+func (a *App) activeRSSGroupByName(ctx context.Context, name string) (*core.RSSGroup, error) {
+	groups, err := a.Store.ListRSSGroups(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	for i := range groups {
+		if strings.EqualFold(strings.TrimSpace(groups[i].Name), strings.TrimSpace(name)) {
+			return &groups[i], nil
+		}
+	}
+	return nil, nil
 }
 
 // CreateRSSGroup creates a new RSS group with the given name, appends it to the group order,
@@ -194,7 +220,12 @@ func (a *App) CreateRSSGroup(name string) (core.RSSGroup, error) {
 	if name == "" {
 		return core.RSSGroup{}, errors.New("group name cannot be empty")
 	}
-	name = a.uniqueRSSGroupName(name, "")
+	ctx := context.Background()
+	unique, err := a.uniqueRSSGroupName(ctx, name, "")
+	if err != nil {
+		return core.RSSGroup{}, err
+	}
+	name = unique
 
 	groupID := "rss-group-" + core.NewGroupID()
 	now := time.Now().UnixMilli()
@@ -206,7 +237,6 @@ func (a *App) CreateRSSGroup(name string) (core.RSSGroup, error) {
 	}
 
 	if a.Store != nil {
-		ctx := context.Background()
 		if err := a.Store.SaveRSSGroup(ctx, group); err != nil {
 			return core.RSSGroup{}, err
 		}
@@ -230,7 +260,6 @@ func (a *App) RenameRSSGroup(id, newName string) error {
 	if newName == "" {
 		return errors.New("group name cannot be empty")
 	}
-	newName = a.uniqueRSSGroupName(newName, id)
 
 	if a.Store != nil {
 		ctx := context.Background()
@@ -241,7 +270,11 @@ func (a *App) RenameRSSGroup(id, newName string) error {
 		if g == nil {
 			return fmt.Errorf("group %q not found", id)
 		}
-		g.Name = newName
+		unique, err := a.uniqueRSSGroupName(ctx, newName, id)
+		if err != nil {
+			return err
+		}
+		g.Name = unique
 		g.UpdatedAt = time.Now().UnixMilli()
 		if err := a.Store.SaveRSSGroup(ctx, *g); err != nil {
 			return err
@@ -668,7 +701,19 @@ func (a *App) ImportRSSOPMLPaths(ctx context.Context, paths []string) (RSSOPMLIm
 		if normName == "" {
 			continue
 		}
-		if existing, exists := groupByName[normName]; exists {
+		existing, exists := groupByName[normName]
+		if !exists || existing.Deleted {
+			raced, err := a.activeRSSGroupByName(ctx, g.Name)
+			if err != nil {
+				return result, err
+			}
+			if raced != nil {
+				groupByName[normName] = raced
+				groupIDMap[g.ID] = raced.ID
+				continue
+			}
+		}
+		if exists {
 			// Reuse existing group and revive if soft-deleted. Deleting a group
 			// removes it from every feed but leaves its own FeedIDs behind, so a
 			// revived group starts from the memberships this import carries.
