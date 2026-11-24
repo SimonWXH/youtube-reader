@@ -552,6 +552,10 @@ func TestDeleteRSSFeedSoftDeleteArticles(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := store.MarkRSSArticleRead(ctx, "art:test-softdel:unstarred", true, now); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := store.DeleteRSSFeed(ctx, feed.ID, false); err != nil {
 		t.Fatalf("DeleteRSSFeed soft failed: %v", err)
 	}
@@ -560,8 +564,8 @@ func TestDeleteRSSFeedSoftDeleteArticles(t *testing.T) {
 	if err != nil || unstarred == nil {
 		t.Fatalf("GetRSSArticle unstarred failed: %v", err)
 	}
-	if !unstarred.Deleted || unstarred.DeletedAt == 0 {
-		t.Fatalf("unstarred article should be soft deleted, got deleted=%v, deleted_at=%d", unstarred.Deleted, unstarred.DeletedAt)
+	if unstarred.Deleted {
+		t.Fatalf("soft-deleting a feed must not tombstone its articles, got deleted=true")
 	}
 
 	starred, err := store.GetRSSArticle(ctx, "art:test-softdel:starred")
@@ -594,5 +598,27 @@ func TestDeleteRSSFeedSoftDeleteArticles(t *testing.T) {
 	}
 	if len(starredList) != 1 || starredList[0].ID != "art:test-softdel:starred" {
 		t.Fatalf("expected 1 starred article preserved, got %+v", starredList)
+	}
+
+	// Re-subscribing the same feed must restore its previously fetched articles
+	// with their read/starred state intact.
+	feed.Deleted = false
+	feed.DeletedAt = 0
+	feed.UpdatedAt = now + 1000
+	if err := store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatalf("SaveRSSFeed re-subscribe failed: %v", err)
+	}
+
+	restored, err := store.ListRSSArticles(ctx, RSSArticleFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restored) != 2 {
+		t.Fatalf("expected both articles to reappear after re-subscribe, got %d: %+v", len(restored), restored)
+	}
+	for _, a := range restored {
+		if a.ID == "art:test-softdel:unstarred" && !a.Read {
+			t.Fatalf("read state must survive feed soft delete and re-subscribe")
+		}
 	}
 }

@@ -118,6 +118,58 @@ func TestFetchRSS20(t *testing.T) {
 	}
 }
 
+func TestFetchFeedDefaultDoesNotRequestArticlePages(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+
+	feed := RSSFeed{
+		ID:        "feed:nofulltext",
+		FeedURL:   "https://go.dev/blog/feed.atom",
+		UpdatedAt: time.Now().UnixMilli(),
+	}
+	if err := store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatal(err)
+	}
+
+	var requested []string
+	client := &http.Client{
+		Transport: &mockTransport{
+			roundTripFunc: func(req *http.Request) (*http.Response, error) {
+				requested = append(requested, req.URL.String())
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Header:     http.Header{"Content-Type": []string{"application/rss+xml"}},
+					Body:       io.NopCloser(strings.NewReader(sampleRSS20)),
+				}, nil
+			},
+		},
+	}
+
+	fetcher := NewRSSFetcher(store, WithHTTPClient(client))
+	res, err := fetcher.FetchFeed(ctx, feed)
+	if err != nil {
+		t.Fatalf("FetchFeed failed: %v", err)
+	}
+	if res.ItemsSaved != 1 {
+		t.Fatalf("expected 1 item saved, got %d", res.ItemsSaved)
+	}
+	if len(requested) != 1 || requested[0] != feed.FeedURL {
+		t.Fatalf("feed refresh must only request the feed itself, requested %v", requested)
+	}
+
+	articles, _ := store.ListRSSArticles(ctx, RSSArticleFilter{FeedID: feed.ID})
+	if len(articles) != 1 {
+		t.Fatalf("expected 1 article, got %d", len(articles))
+	}
+	if articles[0].IsFullText {
+		t.Fatalf("default feed refresh must not mark articles as extracted full text")
+	}
+	if !strings.Contains(articles[0].ContentHTML, "Go 1.24 introduces generic type aliases") {
+		t.Fatalf("article must fall back to feed-provided content, got %q", articles[0].ContentHTML)
+	}
+}
+
 func TestFetchAtom(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)

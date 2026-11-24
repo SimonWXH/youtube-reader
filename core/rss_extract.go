@@ -17,7 +17,7 @@ import (
 
 var (
 	htmlTagRegex    = regexp.MustCompile(`<[^>]*>`)
-	brRegex          = regexp.MustCompile(`(?i)<br\s*/?>|</p>|</div>|</h[1-6]>|</li>`)
+	brRegex         = regexp.MustCompile(`(?i)<br\s*/?>|</p>|</div>|</h[1-6]>|</li>`)
 	whitespaceRegex = regexp.MustCompile(`\s+`)
 	codeLangRegex   = regexp.MustCompile(`(?:language-|lang-)([a-zA-Z0-9_\-]+)`)
 )
@@ -40,9 +40,8 @@ func CleanSnippet(desc, content string, maxRunes int) string {
 	if err == nil {
 		text = doc.Text()
 	} else {
-		text = htmlTagRegex.ReplaceAllString(preprocessed, " ")
+		text = html.UnescapeString(htmlTagRegex.ReplaceAllString(preprocessed, " "))
 	}
-	text = html.UnescapeString(text)
 	text = strings.TrimSpace(whitespaceRegex.ReplaceAllString(text, " "))
 
 	if maxRunes <= 0 {

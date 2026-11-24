@@ -17,14 +17,14 @@ import (
 )
 
 const (
-	DefaultRSSRefreshIntervalMins = 30
-	DefaultRSSConcurrency         = 4
-	DefaultRSSTimeout             = 25 * time.Second
-	DefaultRSSMaxRetries          = 2
+	DefaultRSSRefreshIntervalMins  = 30
+	DefaultRSSConcurrency          = 4
+	DefaultRSSTimeout              = 25 * time.Second
+	DefaultRSSMaxRetries           = 2
 	DefaultRSSRetentionMaxArticles = 500
-	DefaultRSSRetentionMaxAge     = 30 * 24 * time.Hour
-	DefaultRSSUserAgent           = "YouTubeReader/1.0 (+https://github.com/SimonWXH/youtube-reader)"
-	MaxFeedBodyBytes              = 10 * 1024 * 1024 // 10MB
+	DefaultRSSRetentionMaxAge      = 30 * 24 * time.Hour
+	DefaultRSSUserAgent            = "YouTubeReader/1.0 (+https://github.com/SimonWXH/youtube-reader)"
+	MaxFeedBodyBytes               = 10 * 1024 * 1024 // 10MB
 )
 
 // FetchFeedResult details the outcome of fetching a single RSS feed.
@@ -128,7 +128,7 @@ func NewRSSFetcher(store *Store, opts ...RSSFetcherOption) *RSSFetcher {
 		timeout:              DefaultRSSTimeout,
 		maxRetries:           DefaultRSSMaxRetries,
 		userAgent:            DefaultRSSUserAgent,
-		extractFullText:      true,
+		extractFullText:      false,
 		retentionMaxArticles: DefaultRSSRetentionMaxArticles,
 		retentionMaxAge:      DefaultRSSRetentionMaxAge,
 	}
@@ -417,7 +417,6 @@ func getHeader(h http.Header, key string) string {
 	}
 	return ""
 }
-
 
 // DiscoverFeedURL probes a website's HTML for RSS/Atom/JSON Feed links,
 // or returns the original URL if it already appears to be a direct feed.

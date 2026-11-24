@@ -18,9 +18,10 @@ func TestCanonicalURL(t *testing.T) {
 		{"https://example.com:443/atom.xml", "https://example.com/atom.xml"},
 		{"https://example.com/feed/?utm_source=twitter&utm_medium=social&key=value#section", "https://example.com/feed?key=value"},
 		{"https://example.com/blog/?fbclid=xyz123", "https://example.com/blog"},
-		{"https://example.com/", "https://example.com/"},
+		{"https://example.com/", "https://example.com"},
 		{"daringfireball.net", "https://daringfireball.net"},
-		{"tonsky.me/", "https://tonsky.me/"},
+		{"tonsky.me/", "https://tonsky.me"},
+		{"example.com//", "https://example.com"},
 		{"//example.com/rss", "https://example.com/rss"},
 		{"example.com/feed/", "https://example.com/feed"},
 	}

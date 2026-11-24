@@ -31,6 +31,13 @@ func TestCleanSnippet(t *testing.T) {
 	if len([]rune(truncated)) != 53 || !strings.HasSuffix(truncated, "...") {
 		t.Fatalf("CleanSnippet should truncate to 50 runes + '...', got length %d: %q", len([]rune(truncated)), truncated)
 	}
+
+	// Entities must be decoded exactly once: a post quoting markup shows the
+	// literal "&amp;" text, not the "&" it decodes to.
+	quoted := CleanSnippet(`<p>A &amp;amp; B</p>`, "", 100)
+	if quoted != "A &amp; B" {
+		t.Fatalf("CleanSnippet must decode entities once, got %q; want %q", quoted, "A &amp; B")
+	}
 }
 
 func TestParseHTMLBlocks(t *testing.T) {

@@ -102,7 +102,6 @@ func (s *Store) DeleteRSSFeed(ctx context.Context, id string, hard bool) error {
 	}
 	stmts := []sqlite.Statement{
 		{SQL: `UPDATE rss_feeds SET deleted = 1, deleted_at = ?, updated_at = ? WHERE id = ?`, Args: []any{now, now, id}},
-		{SQL: `UPDATE rss_articles SET deleted = 1, deleted_at = ?, updated_at = ? WHERE feed_id = ? AND starred = 0 AND deleted = 0`, Args: []any{now, now, id}},
 	}
 	_, err := s.db.Transaction(ctx, stmts)
 	return err
