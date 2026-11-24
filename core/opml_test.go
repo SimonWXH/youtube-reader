@@ -504,11 +504,12 @@ func TestExportRSSOPMLRoundTrip(t *testing.T) {
 	}
 }
 
-// TestExportRSSOPMLDeterministicOrder verifies that an unchanged library exports
-// its feeds in the same order every time, including feeds that share a display
-// name and feeds reachable only through their own group membership, so repeated
-// backups of the same library are byte-identical.
-func TestExportRSSOPMLDeterministicOrder(t *testing.T) {
+// TestExportRSSOPMLStableOrder verifies that an unchanged library exports its
+// groups and feeds in the same order every time, including feeds that share a
+// display name and feeds reachable only through their own group membership, so
+// a backup's structure does not churn between exports. The head's dateCreated
+// and dateModified are stamped at export time, so the files are not byte-equal.
+func TestExportRSSOPMLStableOrder(t *testing.T) {
 	groups := []RSSGroup{
 		{ID: "g1", Name: "Mine", UpdatedAt: 1},
 	}

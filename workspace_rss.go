@@ -295,10 +295,7 @@ func (w *Window) rssSidebar(c *ui.Context, t mui.Tokens, sidebar ui.Element) {
 					w.openAddRSSDialog()
 				})
 
-				importBtnText := "Import OPML…"
-				if zh {
-					importBtnText = "导入 OPML…"
-				}
+				importBtnText := rssSidebarMenuCopy(c.Locale()).importOPML
 				importBtn := ui.ButtonBase(c).Key("rss-empty-import-btn").Height(26).PaddingX(mui.Space(3)).
 					Radius(mui.RadiusControl).Background(t.SurfaceAlt).Border(mui.Hairline, t.BorderSoft).
 					Cursor(ui.CursorPointer).Label(importBtnText)
