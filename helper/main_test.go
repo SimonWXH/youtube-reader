@@ -274,4 +274,3 @@ func TestCommitHelperResultLeavesRefreshAndHandoffOwnership(t *testing.T) {
 		t.Fatalf("helper changed app-owned handoff ID: %+v", settings)
 	}
 }
-
