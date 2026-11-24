@@ -1703,6 +1703,13 @@ func (a *App) VisibleRSSArticles() []core.RSSArticle {
 	}
 
 	q := strings.TrimSpace(strings.ToLower(a.Search))
+	var feedTitles map[string]string
+	if q != "" {
+		feedTitles = make(map[string]string, len(a.RSSFeeds))
+		for _, f := range a.RSSFeeds {
+			feedTitles[f.ID] = strings.ToLower(f.DisplayName())
+		}
+	}
 	out := make([]core.RSSArticle, 0, len(a.RSSArticles))
 
 	for _, art := range a.RSSArticles {
@@ -1718,7 +1725,7 @@ func (a *App) VisibleRSSArticles() []core.RSSArticle {
 		if q != "" {
 			titleMatch := strings.Contains(strings.ToLower(art.Title), q)
 			snippetMatch := strings.Contains(strings.ToLower(art.Snippet), q)
-			feedMatch := strings.Contains(strings.ToLower(a.FeedTitle(art.FeedID)), q)
+			feedMatch := strings.Contains(feedTitles[art.FeedID], q)
 			authorMatch := strings.Contains(strings.ToLower(art.Author), q)
 			if !titleMatch && !snippetMatch && !feedMatch && !authorMatch {
 				continue
@@ -1735,6 +1742,15 @@ func (a *App) VisibleRSSArticles() []core.RSSArticle {
 	})
 
 	return out
+}
+
+// feedTitlesByID returns each RSS feed's display title by feed ID.
+func (a *App) feedTitlesByID() map[string]string {
+	titles := make(map[string]string, len(a.RSSFeeds))
+	for _, f := range a.RSSFeeds {
+		titles[f.ID] = f.DisplayName()
+	}
+	return titles
 }
 
 // SelectedRSSArticle returns a pointer to the currently selected article, or nil.
@@ -1770,40 +1786,6 @@ func (a *App) MarkRSSArticleRead(id string, read bool) error {
 				a.RSSArticles[i].ReadAt = now
 			} else {
 				a.RSSArticles[i].ReadAt = 0
-			}
-			a.RSSArticles[i].UpdatedAt = now
-			break
-		}
-	}
-	a.reloadRSSCounts()
-	return nil
-}
-
-// ToggleRSSArticleRead flips the read/unread state of an article.
-func (a *App) ToggleRSSArticleRead(id string) error {
-	for _, art := range a.RSSArticles {
-		if art.ID == id {
-			return a.MarkRSSArticleRead(id, !art.Read)
-		}
-	}
-	return nil
-}
-
-// SetRSSArticleStarred marks an article as starred/unstarred in the store and in-memory.
-func (a *App) SetRSSArticleStarred(id string, starred bool) error {
-	now := time.Now().UnixMilli()
-	if a.Store != nil {
-		if err := a.Store.SetRSSArticleStarred(context.Background(), id, starred, now); err != nil {
-			return err
-		}
-	}
-	for i := range a.RSSArticles {
-		if a.RSSArticles[i].ID == id {
-			a.RSSArticles[i].Starred = starred
-			if starred {
-				a.RSSArticles[i].StarredAt = now
-			} else {
-				a.RSSArticles[i].StarredAt = 0
 			}
 			a.RSSArticles[i].UpdatedAt = now
 			break

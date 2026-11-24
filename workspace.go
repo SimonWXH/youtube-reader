@@ -528,13 +528,15 @@ func (w *Window) rssMainArea(c *ui.Context, t mui.Tokens, rowWidth float32) {
 // rssContent renders Column 2: the RSS middle timeline and search filter bar.
 func (w *Window) rssContent(c *ui.Context, t mui.Tokens) {
 	var articles []core.RSSArticle
+	var feedTitles map[string]string
 	if w.app != nil {
 		articles = w.app.VisibleRSSArticles()
+		feedTitles = w.app.feedTitlesByID()
 	}
 	ui.Column(c).Grow(1).MinWidth(0).Background(t.App).Children(func() {
 		w.rssColumnHeader(c, t)
 		w.rssContentStrip(c, t, len(articles))
-		w.rssArticlesArea(c, t, articles)
+		w.rssArticlesArea(c, t, articles, feedTitles)
 	})
 }
 
@@ -660,34 +662,15 @@ func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens, visibleCount int) 
 	}
 
 	var countText string
-	if visibleCount == 0 {
-		countText = "0 articles"
+	if visibleCount == 1 {
+		countText = "1 article"
 		if zh {
-			countText = "0 篇文章"
-		}
-	} else if w.app != nil && w.app.UnreadOnly {
-		if visibleCount == 1 {
-			countText = "1 unread"
-			if zh {
-				countText = "1 篇未读"
-			}
-		} else {
-			countText = fmt.Sprintf("%d unread", visibleCount)
-			if zh {
-				countText = fmt.Sprintf("%d 篇未读", visibleCount)
-			}
+			countText = "1 篇文章"
 		}
 	} else {
-		if visibleCount == 1 {
-			countText = "1 article"
-			if zh {
-				countText = "1 篇文章"
-			}
-		} else {
-			countText = fmt.Sprintf("%d articles", visibleCount)
-			if zh {
-				countText = fmt.Sprintf("%d 篇文章", visibleCount)
-			}
+		countText = fmt.Sprintf("%d articles", visibleCount)
+		if zh {
+			countText = fmt.Sprintf("%d 篇文章", visibleCount)
 		}
 	}
 
@@ -723,7 +706,9 @@ func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens, visibleCount int) 
 }
 
 // rssArticlesArea renders the scrollable list of article item rows or the empty state.
-func (w *Window) rssArticlesArea(c *ui.Context, t mui.Tokens, articles []core.RSSArticle) {
+func (w *Window) rssArticlesArea(c *ui.Context, t mui.Tokens, articles []core.RSSArticle, feedTitles map[string]string) {
+	revealID := w.rssRevealSelection
+	w.rssRevealSelection = ""
 	if len(articles) == 0 {
 		w.rssEmptyState(c, t)
 		return
@@ -743,18 +728,17 @@ func (w *Window) rssArticlesArea(c *ui.Context, t mui.Tokens, articles []core.RS
 
 	scroll.Children(func() {
 		ui.Column(c).Grow(1).Gap(mui.Space(1)).Children(func() {
-			for i, art := range articles {
+			for _, art := range articles {
 				isSelected := w.app.SelectedRSSArticleID == art.ID
-				w.rssArticleItemRow(c, t, art, i, isSelected)
+				w.rssArticleItemRow(c, t, art, isSelected, feedTitles, revealID == art.ID)
 			}
 		})
 	})
 }
 
 // rssArticleItemRow renders one NetNewsWire-style article card in the middle column.
-func (w *Window) rssArticleItemRow(c *ui.Context, t mui.Tokens, art core.RSSArticle, index int, isSelected bool) {
+func (w *Window) rssArticleItemRow(c *ui.Context, t mui.Tokens, art core.RSSArticle, isSelected bool, feedTitles map[string]string, reveal bool) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
-	dotClicked := false
 	row := ui.ButtonBase(c).Key("rss-article:"+art.ID).
 		FillWidth().Padding(mui.Space(2), mui.Space(2.5)).
 		Radius(mui.RadiusControl).Cursor(ui.CursorPointer).
@@ -793,13 +777,9 @@ func (w *Window) rssArticleItemRow(c *ui.Context, t mui.Tokens, art core.RSSArti
 			// Left indicator column: fixed 12pt wide, holds 6pt accent dot when unread
 			ui.Column(c).Width(12).AlignItems(ui.Center).Padding(4, 0, 0, 0).Children(func() {
 				if !art.Read {
-					dot := ui.ButtonBase(c).Key("rss-unread-dot:"+art.ID).
+					ui.Row(c).Key("rss-unread-dot:"+art.ID).
 						Size(6, 6).Radius(mui.RadiusCheck).Background(t.Accent).
-						Label("Unread: " + art.Title).Cursor(ui.CursorPointer)
-					if dot.Clicked() {
-						dotClicked = true
-						_ = w.app.MarkRSSArticleRead(art.ID, true)
-					}
+						Label("Unread: " + art.Title)
 				}
 			})
 
@@ -807,10 +787,7 @@ func (w *Window) rssArticleItemRow(c *ui.Context, t mui.Tokens, art core.RSSArti
 			ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 				// Line 1: Source Name (muted gray) + Published Date
 				ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
-					sourceName := ""
-					if w.app != nil {
-						sourceName = w.app.FeedTitle(art.FeedID)
-					}
+					sourceName := feedTitles[art.FeedID]
 					if sourceName == "" {
 						sourceName = art.Author
 					}
@@ -848,7 +825,11 @@ func (w *Window) rssArticleItemRow(c *ui.Context, t mui.Tokens, art core.RSSArti
 		})
 	})
 
-	if !dotClicked && row.Clicked() {
+	if reveal {
+		row.ScrollIntoView()
+	}
+
+	if row.Clicked() {
 		w.selectRSSArticle(art.ID)
 	}
 }
@@ -889,6 +870,7 @@ func (w *Window) moveRSSSelection(articles []core.RSSArticle, delta int) {
 		}
 	}
 	w.selectRSSArticle(articles[target].ID)
+	w.rssRevealSelection = articles[target].ID
 }
 
 // FormatArticleDate formats an article's published timestamp for display in the middle list row.
@@ -901,13 +883,7 @@ func FormatArticleDate(raw string, now time.Time) string {
 	}
 	t, err := time.Parse(time.RFC3339, raw)
 	if err != nil {
-		t, err = time.Parse("2006-01-02T15:04:05", raw)
-		if err != nil {
-			t, err = time.Parse("2006-01-02", raw)
-			if err != nil {
-				return raw
-			}
-		}
+		return raw
 	}
 	t = t.Local()
 	nowLocal := now.Local()

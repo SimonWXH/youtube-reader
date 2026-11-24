@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -64,11 +65,6 @@ func TestFormatArticleDate(t *testing.T) {
 			name: "future clock skew (<1m ahead)",
 			raw:  now.Add(10 * time.Second).Format(time.RFC3339),
 			want: "just now",
-		},
-		{
-			name: "ISO date only format without T",
-			raw:  "2026-04-12",
-			want: "Apr 12",
 		},
 	}
 
@@ -192,29 +188,6 @@ func TestRSSArticlesModelAndStoreIntegration(t *testing.T) {
 	storedArt, err = a.Store.GetRSSArticle(ctx, "art:1")
 	if err != nil || storedArt == nil || storedArt.Read {
 		t.Fatalf("art:1 in DB should be marked unread")
-	}
-
-	// Toggle art:1
-	if err := a.ToggleRSSArticleRead("art:1"); err != nil {
-		t.Fatal(err)
-	}
-	if !a.RSSArticles[0].Read {
-		t.Errorf("art:1 should be toggled to read")
-	}
-
-	// Star and unstar art:1
-	if err := a.SetRSSArticleStarred("art:1", true); err != nil {
-		t.Fatal(err)
-	}
-	if !a.RSSArticles[0].Read {
-		t.Errorf("art:1 should remain read")
-	}
-	if !a.RSSArticles[0].Starred {
-		t.Errorf("art:1 should be starred")
-	}
-	storedArt, err = a.Store.GetRSSArticle(ctx, "art:1")
-	if err != nil || !storedArt.Starred {
-		t.Fatalf("art:1 in DB should be starred")
 	}
 }
 
@@ -446,40 +419,21 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 		t.Fatalf("after KeyUp, SelectedRSSArticleID = %q, want 'art-2'", a.SelectedRSSArticleID)
 	}
 
-	// 7. Click unread dot on art-1 to mark as read
+	// 7. The unread dot is a status indicator: clicking its area selects the row
+	// and leaves the article unread.
 	unreadCountBefore := a.RSSUnreadCount("")
 	if err := tt.Click("Unread: Quantum Computing Advances"); err != nil {
-		t.Fatalf("click unread dot: %v", err)
+		t.Fatalf("click unread dot area: %v", err)
 	}
 	tt.Frame()
-	unreadCountAfter := a.RSSUnreadCount("")
-	if unreadCountAfter != unreadCountBefore-1 {
-		t.Fatalf("unread count = %d, want %d", unreadCountAfter, unreadCountBefore-1)
+	if a.SelectedRSSArticleID != "art-1" {
+		t.Fatalf("clicking the dot area should select art-1, SelectedRSSArticleID = %q", a.SelectedRSSArticleID)
 	}
-	if a.SelectedRSSArticleID != "art-2" {
-		t.Fatalf("clicking the dot should not change selection, SelectedRSSArticleID = %q", a.SelectedRSSArticleID)
-	}
-	storedDot, err := a.Store.GetRSSArticle(ctx, "art-1")
-	if err != nil || storedDot == nil || !storedDot.Read {
-		t.Fatalf("art-1 should be persisted as read after dot click: %v %+v", err, storedDot)
-	}
-	if _, ok := tt.Find("Unread: Quantum Computing Advances"); ok {
-		t.Errorf("unread dot should disappear after marking art-1 read")
-	}
-	if !tt.HasText("1 unread") {
-		t.Fatalf("header should update to '1 unread': texts = %v", tt.Texts())
+	if got := a.RSSUnreadCount(""); got != unreadCountBefore {
+		t.Fatalf("clicking the dot must not mark the article read, unread count = %d, want %d", got, unreadCountBefore)
 	}
 
-	// 8. Toggle read back via ToggleRSSArticleRead
-	if err := a.ToggleRSSArticleRead("art-1"); err != nil {
-		t.Fatal(err)
-	}
-	tt.Frame()
-	if !tt.HasText("2 unread") {
-		t.Fatalf("header should restore '2 unread'")
-	}
-
-	// 9. Context menu right-click mark as read
+	// 8. Context menu right-click marks the article read
 	if err := tt.RightClick("Quantum Computing Advances"); err != nil {
 		t.Fatalf("right-click article row: %v", err)
 	}
@@ -491,8 +445,33 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 	if err != nil || storedMenu == nil || !storedMenu.Read {
 		t.Fatalf("art-1 should be marked read via context menu: %v %+v", err, storedMenu)
 	}
+	if got := a.RSSUnreadCount(""); got != unreadCountBefore-1 {
+		t.Fatalf("unread count after context-menu read = %d, want %d", got, unreadCountBefore-1)
+	}
 	if !tt.HasText("1 unread") {
-		t.Errorf("header should show '1 unread' after context-menu read: texts = %v", tt.Texts())
+		t.Fatalf("header should show '1 unread' after context-menu read: texts = %v", tt.Texts())
+	}
+	if _, ok := tt.Find("Unread: Quantum Computing Advances"); ok {
+		t.Errorf("unread dot should disappear after marking art-1 read")
+	}
+
+	// 9. Context menu right-click marks the article unread again
+	if err := tt.RightClick("Quantum Computing Advances"); err != nil {
+		t.Fatalf("right-click article row: %v", err)
+	}
+	if err := tt.ChooseMenuItem("Mark as Unread"); err != nil {
+		t.Fatalf("choose 'Mark as Unread': %v", err)
+	}
+	tt.Frame()
+	storedMenu, err = a.Store.GetRSSArticle(ctx, "art-1")
+	if err != nil || storedMenu == nil || storedMenu.Read {
+		t.Fatalf("art-1 should be marked unread via context menu: %v %+v", err, storedMenu)
+	}
+	if !tt.HasText("2 unread") {
+		t.Fatalf("header should restore '2 unread': texts = %v", tt.Texts())
+	}
+	if _, ok := tt.Find("Unread: Quantum Computing Advances"); !ok {
+		t.Errorf("unread dot should return after marking art-1 unread")
 	}
 
 	// 10. Search filtering in UI
@@ -530,6 +509,69 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 	}
 	if !tt.HasText("Quantum Computing Advances") {
 		t.Fatal("RSS workspace must restore RSS articles")
+	}
+}
+
+func TestRSSArticleKeyboardNavigationRevealsSelection(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+	ctx := context.Background()
+
+	now := time.Now().UnixMilli()
+	feed := core.RSSFeed{ID: "f-feed", FeedURL: "https://feed.example.com/rss", Title: "Daily Feed", UpdatedAt: now}
+	if err := a.Store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatal(err)
+	}
+
+	articles := make([]core.RSSArticle, 0, 30)
+	for i := 0; i < 30; i++ {
+		articles = append(articles, core.RSSArticle{
+			ID:          fmt.Sprintf("art-%02d", i),
+			FeedID:      feed.ID,
+			Title:       fmt.Sprintf("Article %02d", i),
+			Snippet:     "Snippet body long enough to fill the two summary lines of the row.",
+			PublishedAt: time.Now().Add(-time.Duration(i) * time.Hour).Format(time.RFC3339),
+			UpdatedAt:   now,
+		})
+	}
+	if err := a.Store.SaveRSSArticles(ctx, articles); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ReloadRSS(); err != nil {
+		t.Fatalf("ReloadRSS failed: %v", err)
+	}
+
+	w := &Window{app: a, selectedIndex: new(int)}
+	w.selectWorkspace(WorkspaceRSS)
+	tt := ui.NewTester(w.shell, 1280, 808)
+	tt.Frame()
+
+	if err := tt.Click("Article 00"); err != nil {
+		t.Fatalf("click first article row: %v", err)
+	}
+	tt.Frame()
+	if a.SelectedRSSArticleID != "art-00" {
+		t.Fatalf("SelectedRSSArticleID = %q, want art-00", a.SelectedRSSArticleID)
+	}
+
+	const moves = 12
+	for i := 0; i < moves; i++ {
+		tt.Key(0, ui.KeyDown)
+		tt.Frame()
+	}
+	want := fmt.Sprintf("art-%02d", moves)
+	if a.SelectedRSSArticleID != want {
+		t.Fatalf("after %d KeyDown, SelectedRSSArticleID = %q, want %q", moves, a.SelectedRSSArticleID, want)
+	}
+
+	selected := fmt.Sprintf("Article %02d", moves)
+	if err := tt.Click(selected); err != nil {
+		t.Fatalf("selected row %q is not reachable in the viewport: %v", selected, err)
+	}
+	tt.Frame()
+	if a.SelectedRSSArticleID != want {
+		t.Fatalf("SelectedRSSArticleID = %q, want %q", a.SelectedRSSArticleID, want)
 	}
 }
 
@@ -717,7 +759,10 @@ func TestRSSScenariosEndToEnd(t *testing.T) {
 		tt.Frame()
 
 		if !tt.HasText("3 unread") {
-			t.Errorf("with unread filter active, expected '3 unread', texts = %v", tt.Texts())
+			t.Errorf("with unread filter active, expected header '3 unread', texts = %v", tt.Texts())
+		}
+		if !tt.HasText("3 articles") {
+			t.Errorf("with unread filter active, expected strip '3 articles', texts = %v", tt.Texts())
 		}
 		if !tt.HasText("Next-Gen Quantum Processors Exceed 1000 Qubits with High Fidelity") {
 			t.Errorf("unread article should remain visible under unread filter")

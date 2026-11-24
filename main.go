@@ -146,6 +146,7 @@ type Window struct {
 
 	grid               ui.GridState
 	gridKeyboardFocus  bool
+	rssRevealSelection string // article ID a keyboard move just selected
 	selectedIndex      *int
 	sidebarFocus       string // sidebar row that takes the focus in the next frame
 	sidebarKeyboard    string // sidebar row that arrow navigation focused
