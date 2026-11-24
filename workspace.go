@@ -69,7 +69,22 @@ type WorkspaceState struct {
 	Selected       string
 	SelectedItemID string
 	SelectedIndex  *int
-	ScrollY        float32
+	// SidebarScroll is where the workspace's sidebar list is scrolled. Each
+	// workspace keeps its own ScrollState, tracked directly by the sidebar
+	// scroll container, so switching pages keeps each page's own place.
+	SidebarScroll ui.ScrollState
+}
+
+// workspaceSidebarScroll returns the sidebar scroll state of a workspace,
+// created on first use so a page keeps its own place.
+func (w *Window) workspaceSidebarScroll(id string) *ui.ScrollState {
+	w.ensureWorkspaceInit()
+	st := w.workspaceStates[id]
+	if st == nil {
+		st = &WorkspaceState{Selected: "all"}
+		w.workspaceStates[id] = st
+	}
+	return &st.SidebarScroll
 }
 
 func (w *Window) ensureWorkspaceInit() {
@@ -165,18 +180,6 @@ func (w *Window) moveWorkspace(id string, to int) {
 		to = len(order)
 	}
 	order = slices.Insert(order, to, id)
-	if w.app != nil {
-		_ = w.app.SetWorkspaceOrder(order)
-	}
-}
-
-// swapWorkspace swaps dock items at index i and j.
-func (w *Window) swapWorkspace(i, j int) {
-	order := w.currentWorkspaceOrder()
-	if i < 0 || i >= len(order) || j < 0 || j >= len(order) || i == j {
-		return
-	}
-	order[i], order[j] = order[j], order[i]
 	if w.app != nil {
 		_ = w.app.SetWorkspaceOrder(order)
 	}
@@ -409,16 +412,6 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 			if slot.Clicked() {
 				w.selectWorkspace(id)
 			}
-
-			// Keyboard reorder shortcuts on the dock slot:
-			if slot.Shortcut(ui.Alt, ui.KeyLeft) && i > 0 {
-				w.swapWorkspace(i, i-1)
-				c.Invalidate()
-			}
-			if slot.Shortcut(ui.Alt, ui.KeyRight) && i < len(order)-1 {
-				w.swapWorkspace(i, i+1)
-				c.Invalidate()
-			}
 		}
 	})
 }
@@ -439,7 +432,9 @@ func (w *Window) rssSidebar(c *ui.Context, t mui.Tokens) {
 		noFeedsDesc = "添加订阅源后，文章将显示在此处。"
 	}
 
-	ui.Scroll(c).Grow(1).MinHeight(0).Clip().Padding(0, mui.Space(2), mui.Space(2)+mui.ScrollBottomInset).Children(func() {
+	ui.Scroll(c.Key("rss-sidebar-scroll")).Grow(1).MinHeight(0).Clip().
+		TrackScroll(w.workspaceSidebarScroll(WorkspaceRSS)).
+		Padding(0, mui.Space(2), mui.Space(2)+mui.ScrollBottomInset).Children(func() {
 		sectionHeader(c, t, feedsHeader)
 		rssNavRow(c, t, "rss-all", allArticlesLabel, "newspaper", "0", w.app != nil && w.app.Selected == "all", func() {
 			if w.app != nil {
@@ -507,7 +502,9 @@ func (w *Window) readLaterSidebar(c *ui.Context, t mui.Tokens) {
 		desc = "保存的项目将显示在此处。"
 	}
 
-	ui.Scroll(c).Grow(1).MinHeight(0).Clip().Padding(mui.Space(4), mui.Space(2)).Children(func() {
+	ui.Scroll(c.Key("read-later-sidebar-scroll")).Grow(1).MinHeight(0).Clip().
+		TrackScroll(w.workspaceSidebarScroll(WorkspaceReadLater)).
+		Padding(mui.Space(4), mui.Space(2)).Children(func() {
 		sectionHeader(c, t, title)
 		ui.Column(c).FillWidth().Padding(mui.Space(4), mui.Space(2)).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, desc).FontSize(12).TextColor(t.Muted).SingleLine()
@@ -525,7 +522,9 @@ func (w *Window) wechatNotesSidebar(c *ui.Context, t mui.Tokens) {
 		desc = "同步的读书笔记将显示在此处。"
 	}
 
-	ui.Scroll(c).Grow(1).MinHeight(0).Clip().Padding(mui.Space(4), mui.Space(2)).Children(func() {
+	ui.Scroll(c.Key("wechat-notes-sidebar-scroll")).Grow(1).MinHeight(0).Clip().
+		TrackScroll(w.workspaceSidebarScroll(WorkspaceWeChatNotes)).
+		Padding(mui.Space(4), mui.Space(2)).Children(func() {
 		sectionHeader(c, t, title)
 		ui.Column(c).FillWidth().Padding(mui.Space(4), mui.Space(2)).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, desc).FontSize(12).TextColor(t.Muted).SingleLine()

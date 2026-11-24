@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
 
@@ -476,5 +477,69 @@ func TestThreeColumnResizableLayoutOnVideoAndRSS(t *testing.T) {
 	// Verify details width on Videos page reflects the newly persisted DetailsWidth:
 	if w.detail.width != newDetailsWidth {
 		t.Fatalf("Videos page details width = %v, want %v", w.detail.width, newDetailsWidth)
+	}
+}
+
+// TestWorkspaceScrollPositionIsIsolated verifies that each workspace keeps its
+// own sidebar scroll position: scrolling the video list, switching to RSS and
+// back restores the video list's scroll without bleeding the other page's.
+func TestWorkspaceScrollPositionIsIsolated(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	t.Cleanup(func() { a.Close() })
+
+	// Enough channels that the sidebar list scrolls at 808 pt tall.
+	channels := make([]core.Channel, 60)
+	synced := make(map[string]core.Channel, len(channels))
+	for i := range channels {
+		id := fmt.Sprintf("ch-%02d", i)
+		channels[i] = core.Channel{ID: id, Title: fmt.Sprintf("Channel %02d", i), UpdatedAt: 100}
+		synced[id] = channels[i]
+	}
+	a.Sync.Channels = synced
+	a.Channels = channels
+	a.Selected = "all"
+	a.Settings.APIKey = "test-key"
+	a.Settings.LastRefresh = "2026-01-01T00:00:00Z"
+	a.Settings.SidebarWidth = defaultSidebarWidth
+	a.Settings.DetailsWidth = defaultDetailsWidth
+
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 808)
+	tt.Frame()
+
+	if w.activeWorkspaceName() != WorkspaceVideos {
+		t.Fatalf("initial workspace = %q, want videos", w.activeWorkspaceName())
+	}
+
+	// Scroll the video sidebar down with the pointer over the list.
+	for range 10 {
+		tt.Scroll(120, 300, 0, 200)
+	}
+	tt.Frame()
+
+	videosScroll := w.workspaceSidebarScroll(WorkspaceVideos)
+	if videosScroll.Y <= 0 {
+		t.Fatalf("video sidebar did not scroll: Y = %v", videosScroll.Y)
+	}
+	scrolledY := videosScroll.Y
+
+	// Switch to RSS: its sidebar must start at the top.
+	w.selectWorkspace(WorkspaceRSS)
+	tt.Frame()
+
+	rssScroll := w.workspaceSidebarScroll(WorkspaceRSS)
+	if rssScroll.Y != 0 {
+		t.Fatalf("RSS sidebar inherited scroll %v; want its own 0", rssScroll.Y)
+	}
+	if videosScroll.Y != scrolledY {
+		t.Fatalf("video scroll changed while hidden: %v -> %v", scrolledY, videosScroll.Y)
+	}
+
+	// Switch back to Videos: the video sidebar keeps its place.
+	w.selectWorkspace(WorkspaceVideos)
+	tt.Frame()
+	if got := w.workspaceSidebarScroll(WorkspaceVideos).Y; got != scrolledY {
+		t.Fatalf("video sidebar scroll restored to %v; want %v", got, scrolledY)
 	}
 }

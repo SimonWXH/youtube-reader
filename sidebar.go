@@ -100,8 +100,12 @@ func (w *Window) videosSidebar(c *ui.Context, t mui.Tokens, sidebar ui.Element) 
 	var chDrag channelDragFrame
 
 	// The list clips at its own edge, so a row scrolled past the last
-	// visible one stops at the footer instead of painting under it.
-	ui.Scroll(c).Grow(1).MinHeight(0).Clip().Padding(0, mui.Space(2), mui.Space(2)+mui.ScrollBottomInset).Children(func() {
+	// visible one stops at the footer instead of painting under it. The
+	// scroll container is keyed and tracked per workspace, so switching
+	// pages keeps each page's own scroll place.
+	ui.Scroll(c.Key("videos-sidebar-scroll")).Grow(1).MinHeight(0).Clip().
+		TrackScroll(w.workspaceSidebarScroll(WorkspaceVideos)).
+		Padding(0, mui.Space(2), mui.Space(2)+mui.ScrollBottomInset).Children(func() {
 		sectionHeader(c, t, "Library")
 		nav.row(c, t, mui.SidebarRow{
 			Key: "all", Label: "All videos", Symbol: "play.rectangle", Count: fmt.Sprintf("%d", counts.total),
