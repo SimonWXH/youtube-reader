@@ -277,6 +277,12 @@ func (s *SyncState) MergeImported(groups []ChannelGroup, channels []Channel, now
 		ch.GroupIDs = ids
 		s.Channels[ch.ID] = ch
 	}
+	// An import merges channel lists, so the merged order is only as sorted as
+	// the two documents were; the groups this import touched take the order
+	// every group keeps.
+	for _, g := range groups {
+		s.SortGroupChannels(g.ID)
+	}
 	s.UpdatedAt = now
 }
 
@@ -292,6 +298,9 @@ func (s *SyncState) ReplaceGroups(groups []ChannelGroup, channels []Channel, now
 		ch.UpdatedAt = now
 		s.Channels[ch.ID] = ch
 	}
+	// An OPML document lists its channels in its own order; a replaced group
+	// takes the order every group keeps instead.
+	s.SortAllGroupChannels()
 	s.UpdatedAt = now
 }
 

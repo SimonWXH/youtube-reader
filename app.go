@@ -308,6 +308,22 @@ func (a *App) SelectDestination(destination string) {
 	})
 }
 
+// channelTitle is the title a group sorts a channel by: the sync state's, or
+// the library's for a channel the sync state does not hold yet, as one being
+// moved in from the sidebar may not be. An unknown channel answers an empty
+// title, which sorts by its ID.
+func (a *App) channelTitle(id string) string {
+	if ch, ok := a.Sync.Channels[id]; ok {
+		return ch.Title
+	}
+	for _, ch := range a.Channels {
+		if ch.ID == id {
+			return ch.Title
+		}
+	}
+	return ""
+}
+
 func (a *App) reload() error {
 	ctx := context.Background()
 	var err error
@@ -319,6 +335,10 @@ func (a *App) reload() error {
 	if err != nil {
 		return err
 	}
+	// Groups keep their channels in title order, and state written before this
+	// version did is put in that order here, so an existing library shows
+	// sorted on its first launch instead of waiting on a migration.
+	a.Sync.SortAllGroupChannels()
 	a.Groups = orderGroups(a.Sync.Groups, a.settingsSnapshot().GroupOrder)
 	if rev := a.Store.Meta(ctx, "revision"); rev != "" {
 		fmt.Sscan(rev, &a.Revision)
@@ -536,6 +556,7 @@ func (a *App) MoveChannelToGroup(channelID string, targetGroupID string) (bool, 
 		}
 		if !hasChan {
 			tg.ChannelIDs = append(tg.ChannelIDs, channelID)
+			core.SortChannelIDs(tg.ChannelIDs, a.channelTitle)
 		}
 		tg.UpdatedAt = now
 		a.Sync.Groups[targetGroupID] = tg
@@ -718,6 +739,7 @@ func (a *App) AddSubscription(channel core.Channel, groupID string) error {
 		group := a.Sync.Groups[groupID]
 		if !slices.Contains(group.ChannelIDs, channel.ID) {
 			group.ChannelIDs = append(group.ChannelIDs, channel.ID)
+			core.SortChannelIDs(group.ChannelIDs, a.channelTitle)
 		}
 		group.UpdatedAt = now
 		a.Sync.Groups[groupID] = group
