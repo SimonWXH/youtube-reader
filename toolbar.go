@@ -228,7 +228,16 @@ func (w *Window) overflowMenu(m *ui.Menu) {
 	}
 	m.Separator()
 	if m.Item("Import OPML…").Chosen() {
-		w.importOPML(w.frame)
+		if w.activeWorkspaceName() == WorkspaceRSS {
+			w.importRSSOPML(w.frame)
+		} else {
+			w.importOPML(w.frame)
+		}
+	}
+	if w.activeWorkspaceName() == WorkspaceRSS {
+		if m.Item("Export OPML…").Chosen() {
+			w.exportRSSOPML(w.frame)
+		}
 	}
 	if m.Item("Export Favorites…").Chosen() {
 		w.exportFavorites(w.frame)
@@ -467,7 +476,16 @@ func (w *Window) installMenu() {
 		{Role: mygo.RoleQuit},
 	}}
 	fileMenu := &mygo.MenuItem{Label: "File", Submenu: []*mygo.MenuItem{
-		{Label: "Import OPML…", Click: func(*mygo.MenuItem, *mygo.Window) { w.importOPML(nil) }},
+		{Label: "Import OPML…", Click: func(*mygo.MenuItem, *mygo.Window) {
+			if w.activeWorkspaceName() == WorkspaceRSS {
+				w.importRSSOPML(nil)
+			} else {
+				w.importOPML(nil)
+			}
+		}},
+		{Label: "Export OPML…", Click: func(*mygo.MenuItem, *mygo.Window) {
+			w.exportRSSOPML(nil)
+		}},
 		{Label: "Export Favorites…", Click: func(*mygo.MenuItem, *mygo.Window) { w.exportFavorites(nil) }},
 		{Label: "Restore Favorites…", Click: func(*mygo.MenuItem, *mygo.Window) { w.restoreFavorites(nil) }},
 		mygo.Separator(),
