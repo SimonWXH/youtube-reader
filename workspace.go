@@ -146,6 +146,9 @@ func (w *Window) selectWorkspace(target string) {
 	if !isValidWorkspace(target) || target == w.activeWorkspace {
 		return
 	}
+	if w.renamingGroupID != "" {
+		w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
+	}
 	w.saveWorkspaceState(w.activeWorkspace)
 	w.activeWorkspace = target
 	if w.app != nil {
@@ -535,7 +538,7 @@ func (w *Window) wechatNotesSidebar(c *ui.Context, t mui.Tokens) {
 // rssMainArea renders the 3-column RSS layout with middle timeline and right reader view.
 func (w *Window) rssMainArea(c *ui.Context, t mui.Tokens, rowWidth float32) {
 	d := &w.detail
-	detailsWidth := detailWidthForRoom(d.width, w.detailFitWidth(c))
+	detailsWidth := detailWidthForRoom(d.width, rowWidth)
 	column2Width := max(rowWidth-detailsWidth-splitDividerWidth(), 0)
 	w.contentWidth = column2Width
 	w.gridAvailableWidth = column2Width
@@ -572,8 +575,19 @@ func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens) {
 		countText = "0 篇文章"
 	}
 
+	labelWidth, _ := c.MeasureText(0, ui.Span{Text: unreadLabel, Size: mui.Control.Size, Weight: int(mui.Control.Weight)})
+	countWidth, _ := c.MeasureText(0, ui.Span{Text: countText, Size: mui.Metadata.Size, Weight: int(mui.Metadata.Weight)})
+	checkboxWidth := mui.Space(4) + mui.Space(2) + labelWidth
+	available := w.contentWidth
+	if available <= 0 {
+		available = windowWidth(c)
+	}
+	_, searchWidth, gap, _ := fitFilterStrip(
+		max(0, available-2*mui.Space(4)), 0, checkboxWidth, 0, countWidth+2, 3,
+	)
+
 	strip := ui.Row(c.Key("rss-filter-strip")).Height(contentStripHeight).Shrink(0).FillWidth().
-		Padding(0, mui.Space(4)).AlignItems(ui.Center).Gap(mui.Space(3)).
+		Padding(0, mui.Space(4)).AlignItems(ui.Center).Gap(gap).
 		Role(ui.RoleGroup).Label("Article filters")
 	strip.Draw(func(p *ui.Painter, r ui.Rect) {
 		p.Fill(ui.Rect{X: r.X, Y: r.Y + r.H - mui.Hairline, W: r.W, H: mui.Hairline}, t.BorderSoft, 0)
@@ -582,13 +596,13 @@ func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens) {
 	strip.Children(func() {
 		if w.app != nil {
 			ui.SearchField(c.Key("rss-search"), &w.app.Search).
-				Width(searchFieldWidth).MinWidth(searchFieldMin).Shrink(0).
+				Width(searchWidth).MinWidth(searchWidth).MaxWidth(searchWidth).Shrink(0).
 				Height(toolbarControl).FontSize(mui.Control.Size).Label(searchLabel)
 			ui.Checkbox(c.Key("rss-unread"), &w.app.UnreadOnly, unreadLabel).
 				FontSize(mui.Control.Size).FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
 		}
 		ui.Spacer(c)
-		ui.Text(c, countText).FontSize(mui.Metadata.Size).TextColor(t.Muted).SingleLine()
+		ui.Text(c, countText).FontSize(mui.Metadata.Size).TextColor(t.Muted).SingleLine().Shrink(0)
 	})
 }
 

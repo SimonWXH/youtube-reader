@@ -33,7 +33,7 @@ func TestFitFilterStrip(t *testing.T) {
 		{inner: 284, channel: 36, search: 124, collapsed: true},
 	}
 	for _, tt := range tests {
-		channel, search, gap, collapsed := fitFilterStrip(tt.inner, checkbox, toolbarControl, countText)
+		channel, search, gap, collapsed := fitFilterStrip(tt.inner, channelMenuWidth, checkbox, toolbarControl, countText, 4)
 		if channel != tt.channel || search != tt.search || collapsed != tt.collapsed {
 			t.Fatalf("fitFilterStrip(%v) = %v, %v, collapsed %v; want %v, %v, collapsed %v",
 				tt.inner, channel, search, collapsed, tt.channel, tt.search, tt.collapsed)

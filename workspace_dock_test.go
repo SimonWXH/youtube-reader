@@ -8,6 +8,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/simon/youtube-reader/core"
+	mui "github.com/simon/youtube-reader/ui"
 )
 
 // setupWorkspaceTestApp creates an isolated app with channels and videos for testing.
@@ -541,5 +542,127 @@ func TestWorkspaceScrollPositionIsIsolated(t *testing.T) {
 	tt.Frame()
 	if got := w.workspaceSidebarScroll(WorkspaceVideos).Y; got != scrolledY {
 		t.Fatalf("video sidebar scroll restored to %v; want %v", got, scrolledY)
+	}
+}
+
+// TestRSSFilterStripFitsItsColumn checks the RSS filter row keeps its search
+// field, Unread check box and article count on one line inside the middle
+// column at the minimum 960 pt window, including the widest sidebar and
+// reader the dividers allow, with the count still visible as text.
+func TestRSSFilterStripFitsItsColumn(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		width        int
+		detailsWidth float32
+		sidebarWidth float32
+		fullSearch   bool
+	}{
+		{name: "design width", width: 1280, fullSearch: true},
+		{name: "minimum width", width: 960},
+		{name: "minimum width, widest reader", width: 960, detailsWidth: maxDetailsWidth, sidebarWidth: maxSidebarWidth},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, w := setupWorkspaceTestApp(t)
+			a.Settings.ActiveWorkspace = WorkspaceRSS
+			if tc.detailsWidth > 0 {
+				a.Settings.DetailsWidth = tc.detailsWidth
+			}
+			if tc.sidebarWidth > 0 {
+				a.Settings.SidebarWidth = tc.sidebarWidth
+			}
+			tt := ui.NewTester(w.view, tc.width, 808)
+			tt.Frame()
+
+			if w.activeWorkspaceName() != WorkspaceRSS {
+				t.Fatalf("active workspace = %q, want %q", w.activeWorkspaceName(), WorkspaceRSS)
+			}
+
+			strip := chromeControl(t, tt, "Article filters").Bounds
+			search, ok := tt.Find("Search articles")
+			if !ok {
+				t.Fatal("no article search field")
+			}
+			unread := chromeControl(t, tt, "Unread")
+			count := chromeControl(t, tt, "0 articles").Bounds
+
+			if tc.fullSearch && search.W != searchFieldWidth {
+				t.Fatalf("search is %v wide, want %v with the column's full room", search.W, searchFieldWidth)
+			}
+			if search.W < searchFieldMin || search.W > searchFieldWidth {
+				t.Fatalf("search is %v wide, want %v..%v", search.W, searchFieldMin, searchFieldWidth)
+			}
+			if unread.Role != ui.RoleCheckBox {
+				t.Fatalf("Unread role = %v, want a check box", unread.Role)
+			}
+			if count.W <= toolbarControl {
+				t.Fatalf("article count is %v wide, want visible text", count.W)
+			}
+			for _, box := range []ui.Rect{search, unread.Bounds, count} {
+				if box.X < strip.X || box.X+box.W > strip.X+strip.W ||
+					box.Y < strip.Y || box.Y+box.H > strip.Y+strip.H {
+					t.Fatalf("%v leaves the filter strip %v", box, strip)
+				}
+			}
+			if search.X+search.W > unread.Bounds.X || unread.Bounds.X+unread.Bounds.W > count.X {
+				t.Fatalf("article filters overlap: %v %v %v", search, unread.Bounds, count)
+			}
+			if right := strip.X + strip.W - mui.Space(4); count.X+count.W < right-mui.Space(2) {
+				t.Fatalf("count ends at %v, strip's right inset is %v", count.X+count.W, right)
+			}
+		})
+	}
+}
+
+// TestWorkspaceSwitchCommitsPendingGroupRename checks that switching pages
+// from the sidebar settles an inline group rename in progress, exactly as the
+// sidebar's own row actions do, so the typed name is not dropped on the floor.
+func TestWorkspaceSwitchCommitsPendingGroupRename(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	t.Cleanup(func() { a.Close() })
+
+	g := core.ChannelGroup{ID: "group-1", Name: "Science", ChannelIDs: []string{"ch-1"}, UpdatedAt: 100}
+	a.Sync.Groups = map[string]core.ChannelGroup{"group-1": g}
+	a.Groups = []core.ChannelGroup{g}
+	a.Channels = []core.Channel{{ID: "ch-1", Title: "Science Channel"}}
+	a.Sync.Channels = map[string]core.Channel{"ch-1": a.Channels[0]}
+	a.Selected = "group:group-1"
+	a.Settings.APIKey = "test-key"
+	a.Settings.LastRefresh = "2026-01-01T00:00:00Z"
+	a.Settings.SidebarWidth = defaultSidebarWidth
+	a.Settings.DetailsWidth = defaultDetailsWidth
+
+	w := &Window{app: a, selectedIndex: new(int)}
+	tt := ui.NewTester(w.view, 1280, 840)
+	tt.Frame()
+
+	if err := tt.RightClick("Science"); err != nil {
+		t.Fatalf("right click group row: %v", err)
+	}
+	if err := tt.ChooseMenuItem("Rename"); err != nil {
+		t.Fatalf("choose Rename: %v", err)
+	}
+	w.renamingGroupName = "Computer Science"
+	tt.Frame()
+
+	dock, ok := tt.Find("RSS")
+	if !ok {
+		t.Fatal("could not find RSS dock item")
+	}
+	tt.Press(dock.X+dock.W/2, dock.Y+dock.H/2)
+	tt.Release(dock.X+dock.W/2, dock.Y+dock.H/2)
+	tt.Frame()
+
+	if w.activeWorkspaceName() != WorkspaceRSS {
+		t.Fatalf("active workspace = %q, want %q", w.activeWorkspaceName(), WorkspaceRSS)
+	}
+	if w.renamingGroupID != "" {
+		t.Fatalf("rename still pending on %q after the page switch", w.renamingGroupID)
+	}
+	if got := a.Sync.Groups["group-1"].Name; got != "Computer Science" {
+		t.Fatalf("group name after the page switch = %q, want Computer Science", got)
+	}
+	if len(a.Groups) != 1 || a.Groups[0].Name != "Computer Science" {
+		t.Fatalf("app groups after the page switch = %+v, want one Computer Science group", a.Groups)
 	}
 }
