@@ -48,10 +48,11 @@ const (
 	// separator never shrink to a stub. It is the 24 pt gutter, mui.Space(6).
 	rssHeaderFeedMin float32 = 24
 	// The text size control in the reader's header is a three-segment track
-	// as tall as the header's actions, one segment per body size.
+	// as tall as the header's actions, one segment per body size: the segment
+	// fills what the track's border and inset leave.
 	rssTextSizeTrackH   float32 = 28
-	rssTextSizeSegmentH float32 = 24
 	rssTextSizeInset    float32 = 2
+	rssTextSizeSegmentH float32 = rssTextSizeTrackH - 2*mui.Hairline - 2*rssTextSizeInset
 	rssTextSizeGap      float32 = 2
 	rssTextSizePadX     float32 = 7
 	rssTextSizeRadius   float32 = 4
@@ -715,10 +716,10 @@ func rssHeaderActionWidth(c *ui.Context, label string) float32 {
 	return rssTextWidth(c, mui.Control, label) + 2*mui.Space(3) + 2*mui.Hairline
 }
 
-// rssTextSizeGlyph is the A one size segment draws, so the header's width model
-// measures the style the drawn control uses.
+// rssTextSizeGlyph is the A one size segment draws, its line box the chip's
+// inner height so the letter sits inside the segment's border.
 func rssTextSizeGlyph(size float32) mui.TextStyle {
-	return mui.TextStyle{Size: size, LineHeight: size + 6, Weight: mui.Medium}
+	return mui.TextStyle{Size: size, LineHeight: rssTextSizeSegmentH - 2*mui.Hairline, Weight: mui.Medium}
 }
 
 // rssTextSizeControlWidth is the size control's width: the track's border,

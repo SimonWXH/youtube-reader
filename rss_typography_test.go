@@ -179,8 +179,8 @@ func TestRSSReadingColumnNarrowsWithTheWindow(t *testing.T) {
 // TestRSSHeaderSizeControlFitsTheReader checks the control never leaves the
 // pane: on the shipped default window and the widest reader it shares the
 // actions' row, and on readers too narrow for it and a readable feed name it
-// takes its own row above them, each segment inside the reader and the feed
-// name never squeezed below its minimum.
+// takes its own row above them, each segment inside the reader and the track's
+// inset, and the feed name never squeezed below its minimum.
 func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -214,6 +214,13 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 			if len(segments) != 3 {
 				t.Fatalf("the size control has %d segments, want the three steps", len(segments))
 			}
+			track, ok := rssHeaderNode(t, tt, header.Bounds, "Text Size")
+			if !ok {
+				t.Fatal("the size control has no track")
+			}
+			if track.H != 28 {
+				t.Fatalf("the size control's track is %v tall, want the header's 28 pt control height", track.H)
+			}
 			action, ok := tt.Find("Open in Browser")
 			if !ok {
 				t.Fatal("the reader's Open in Browser action is missing")
@@ -222,6 +229,10 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 				box := segment.Bounds
 				if box.X < header.Bounds.X || box.X+box.W > header.Bounds.X+header.Bounds.W {
 					t.Fatalf("segment %d at %v leaves the header %v", i, box, header.Bounds)
+				}
+				if box.H != 22 || box.Y != track.Y+3 {
+					t.Fatalf("segment %d at %v does not fill the track's 2 pt inset and 1 pt border, want y %v, height 22",
+						i, box, track.Y+3)
 				}
 				if box.Y < header.Bounds.Y || box.Y+box.H > header.Bounds.Y+header.Bounds.H {
 					t.Fatalf("segment %d at %v leaves the header %v", i, box, header.Bounds)
