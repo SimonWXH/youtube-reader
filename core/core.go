@@ -105,6 +105,12 @@ type Settings struct {
 	WorkspaceOrder []string `json:"workspaceOrder,omitempty"`
 	// ActiveWorkspace is the active workspace: "videos", "rss", "read_later", or "wechat_notes".
 	ActiveWorkspace string `json:"activeWorkspace,omitempty"`
+	// RSSGroupOrder is the sidebar's RSS group order, by group ID.
+	RSSGroupOrder []string `json:"rssGroupOrder,omitempty"`
+	// RSSUngroupedOrder is the order of ungrouped feeds in the sidebar.
+	RSSUngroupedOrder []string `json:"rssUngroupedOrder,omitempty"`
+	// RSSExpandedGroups tracks folded/expanded state for RSS groups.
+	RSSExpandedGroups map[string]bool `json:"rssExpandedGroups,omitempty"`
 	// NotificationPermissionDenied remembers that macOS refused a
 	// notification, so the Notifications pane can offer System Settings.
 	NotificationPermissionDenied bool `json:"notificationPermissionDenied,omitempty"`

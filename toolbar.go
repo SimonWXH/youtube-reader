@@ -59,6 +59,7 @@ func (w *Window) shell(c *ui.Context) {
 		// The add-subscription panel is the window's one modal surface: it
 		// covers the toolbar as well as the panes behind its scrim.
 		w.addDialogModal(c, tokens)
+		w.addRSSDialogModal(c, tokens)
 	})
 }
 

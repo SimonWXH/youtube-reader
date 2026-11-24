@@ -30,6 +30,12 @@ type App struct {
 	Channels []core.Channel
 	Videos   []core.Video
 
+	RSSFeeds        []core.RSSFeed
+	RSSGroups       []core.RSSGroup
+	RSSUnreadMap    map[string]int
+	RSSTotalUnread  int
+	RSSStarredTotal int
+
 	Selected        string
 	Search          string
 	ChannelFilter   string
@@ -369,6 +375,7 @@ func (a *App) reload() error {
 	if rev := a.Store.Meta(ctx, "revision"); rev != "" {
 		fmt.Sscan(rev, &a.Revision)
 	}
+	_ = a.ReloadRSS()
 	return nil
 }
 

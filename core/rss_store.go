@@ -205,6 +205,23 @@ func (s *Store) DeleteRSSGroup(ctx context.Context, id string, hard bool) error 
 	return err
 }
 
+// UpdateRSSGroupSortOrder updates the sort_order of RSS groups based on their position in groupIDs.
+func (s *Store) UpdateRSSGroupSortOrder(ctx context.Context, groupIDs []string) error {
+	if len(groupIDs) == 0 {
+		return nil
+	}
+	now := time.Now().UnixMilli()
+	stmts := make([]sqlite.Statement, 0, len(groupIDs))
+	for i, id := range groupIDs {
+		stmts = append(stmts, sqlite.Statement{
+			SQL:  `UPDATE rss_groups SET sort_order = ?, updated_at = ? WHERE id = ?`,
+			Args: []any{i, now, id},
+		})
+	}
+	_, err := s.db.Transaction(ctx, stmts)
+	return err
+}
+
 func rowToGroup(r []any) RSSGroup {
 	var g RSSGroup
 	g.ID, _ = r[0].(string)
@@ -377,6 +394,45 @@ func (s *Store) SetRSSArticleStarred(ctx context.Context, id string, starred boo
 	}
 	_, err := s.db.Execute(ctx, `UPDATE rss_articles SET starred = ?, starred_at = ?, updated_at = ? WHERE id = ?`, boolInt(starred), starredAt, now, id)
 	return err
+}
+
+// RSSUnreadCounts returns a map of feedID -> unread article count for non-deleted feeds.
+func (s *Store) RSSUnreadCounts(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.Query(ctx, `SELECT feed_id, COUNT(*) FROM rss_articles
+	WHERE read = 0 AND feed_id NOT IN (SELECT id FROM rss_feeds WHERE deleted = 1)
+	GROUP BY feed_id`)
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int, len(rows.Values))
+	for _, r := range rows.Values {
+		feedID, _ := r[0].(string)
+		cnt, _ := intFromAny(r[1])
+		counts[feedID] = cnt
+	}
+	return counts, nil
+}
+
+// RSSTotalUnreadCount returns the total number of unread articles across all active feeds.
+func (s *Store) RSSTotalUnreadCount(ctx context.Context) (int, error) {
+	rows, err := s.db.Query(ctx, `SELECT COUNT(*) FROM rss_articles
+	WHERE read = 0 AND feed_id NOT IN (SELECT id FROM rss_feeds WHERE deleted = 1)`)
+	if err != nil || len(rows.Values) == 0 {
+		return 0, err
+	}
+	cnt, _ := intFromAny(rows.Values[0][0])
+	return cnt, nil
+}
+
+// RSSStarredCount returns the total number of starred articles.
+func (s *Store) RSSStarredCount(ctx context.Context) (int, error) {
+	rows, err := s.db.Query(ctx, `SELECT COUNT(*) FROM rss_articles
+	WHERE starred = 1 AND feed_id NOT IN (SELECT id FROM rss_feeds WHERE deleted = 1)`)
+	if err != nil || len(rows.Values) == 0 {
+		return 0, err
+	}
+	cnt, _ := intFromAny(rows.Values[0][0])
+	return cnt, nil
 }
 
 // retentionUnpurged matches article rows whose body is still cached. Purged rows keep
