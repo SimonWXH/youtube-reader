@@ -681,7 +681,7 @@ func (w *Window) rssReaderBody(c *ui.Context, t mui.Tokens, art core.RSSArticle,
 	body.Children(func() {
 		ui.Column(c.Key("rss-reader-content:" + art.ID)).FillWidth().Gap(mui.Space(4)).Children(func() {
 			if degraded {
-				w.rssDegradedNotice(c, t)
+				w.rssDegradedNotice(c, t, art)
 			}
 			if art.HeroImage != "" && !rssBlocksHoldImage(blocks, art.HeroImage) {
 				w.rssImageBlock(c, t, art.ID+":hero", core.ArticleBlock{Type: core.BlockImage, URL: art.HeroImage}, w.rssLayout.readerWidth, true)
@@ -755,19 +755,28 @@ func rssReaderDate(raw string) string {
 
 // rssDegradedNotice tells the reader the body is the feed's own text and the
 // full article is one click away in the browser.
-func (w *Window) rssDegradedNotice(c *ui.Context, t mui.Tokens) {
+func (w *Window) rssDegradedNotice(c *ui.Context, t mui.Tokens, art core.RSSArticle) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	sentence := "Showing the feed's summary. Open the original article in your browser for the full text."
 	if zh {
-		sentence = "正在显示订阅源摘要。完整正文请在浏览器中打开原文。"
+		sentence = "当前展示摘要，可点击在浏览器中查看原网页"
 	}
 	notice := ui.Row(c.Key("rss-reader-summary-notice")).FillWidth().Gap(mui.Space(2)).
-		Padding(mui.Space(2), mui.Space(3)).Radius(mui.RadiusNotice).
-		Background(t.SurfaceAlt).AlignItems(ui.Start).
-		Role(ui.RoleGroup).Label(sentence)
+		Padding(mui.Space(2.5), mui.Space(3)).Radius(mui.RadiusNotice).
+		Background(t.SurfaceAlt).Border(1, t.BorderSoft).AlignItems(ui.Center).
+		Role(ui.RoleLink).Label(sentence)
+	if strings.TrimSpace(art.Link) != "" {
+		open := func() { c.OpenURL(art.Link) }
+		notice.Cursor(ui.CursorPointer).Tooltip(art.Link).
+			Focusable().FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
+			OnClick(open).OnShortcut(0, ui.KeyEnter, open)
+	}
 	notice.Children(func() {
 		sfsymbols.Symbol(c, "doc.plaintext").Size(mui.Space(4)).Color(t.Warning).Element.Role(ui.RoleNone)
 		mui.Secondary.Apply(ui.Text(c, sentence)).TextColor(t.Muted).Wrap().Grow(1)
+		if strings.TrimSpace(art.Link) != "" {
+			sfsymbols.Symbol(c, "link").Size(mui.Space(3.5)).Color(t.Accent).Element.Role(ui.RoleNone)
+		}
 	})
 }
 
@@ -1048,7 +1057,9 @@ func (w *Window) rssBlock(c *ui.Context, t mui.Tokens, art core.RSSArticle, bloc
 }
 
 // rssImageBlock is one inline picture in the reading body, held in a neutral
-// frame while it comes and captioned when the feed supplies a caption.
+// frame while it comes and captioned when the feed supplies a caption. A
+// picture that never comes - an anti-hotlink 403, a 404, a timeout - leaves a
+// bordered placeholder naming it by its alt text rather than a blank frame.
 func (w *Window) rssImageBlock(c *ui.Context, t mui.Tokens, key string, block core.ArticleBlock, readerWidth float32, hero bool) ui.Element {
 	url := strings.TrimSpace(block.URL)
 	if url == "" {
@@ -1072,8 +1083,40 @@ func (w *Window) rssImageBlock(c *ui.Context, t mui.Tokens, key string, block co
 			ui.Image(c, src).Fit(ui.Contain).Size(width, height)
 		})
 	case err != nil:
-		frame.MinHeight(mui.Space(30)).Tooltip("Image unavailable").Children(func() {
-			sfsymbols.Symbol(c, "photo").Size(mui.Space(6)).Color(t.Faint).Element.Role(ui.RoleNone)
+		zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
+		openImageLabel := "Open original image in browser"
+		imageFailedText := "Image failed to load"
+		if zh {
+			openImageLabel = "在浏览器中打开原图"
+			imageFailedText = "图片无法加载"
+		}
+		altText := strings.TrimSpace(block.Alt)
+		altLabel := altText
+		if altLabel == "" {
+			altLabel = imageFailedText
+		}
+
+		// The frame is the picture's way out, so it becomes a link rather than
+		// the image role it was built with: RoleLink takes Return but leaves
+		// Space to the reading view, as every other reader link does.
+		frame.MinHeight(mui.Space(24)).Padding(mui.Space(4), mui.Space(4)).
+			Background(t.SurfaceAlt).Border(1, t.BorderSoft).
+			Cursor(ui.CursorPointer).Tooltip(url).Role(ui.RoleLink).
+			Focusable().FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
+			OnClick(func() { c.OpenURL(url) }).
+			OnShortcut(0, ui.KeyEnter, func() { c.OpenURL(url) })
+
+		frame.Children(func() {
+			ui.Column(c).FillWidth().Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
+				ui.Row(c).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
+					sfsymbols.Symbol(c, "photo").Size(mui.Space(5)).Color(t.Faint).Element.Role(ui.RoleNone)
+					mui.Secondary.Apply(ui.Text(c, altLabel)).TextColor(t.Muted).Wrap()
+				})
+				ui.Row(c).Gap(mui.Space(1)).AlignItems(ui.Center).Children(func() {
+					sfsymbols.Symbol(c, "link").Size(mui.Space(3)).Color(t.Accent).Element.Role(ui.RoleNone)
+					mui.Helper.Apply(ui.Text(c, openImageLabel)).TextColor(t.Accent).Underline().SingleLine()
+				})
+			})
 		})
 	default:
 		frame.MinHeight(mui.Space(30)).Children(func() {

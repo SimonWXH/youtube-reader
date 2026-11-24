@@ -15,6 +15,13 @@ import (
 	"github.com/go-shiori/go-readability"
 )
 
+const (
+	// MinFullTextLength is the minimum number of effective text runes required
+	// for an extracted article to be considered valid full text. Content with
+	// fewer runes smoothly degrades to the feed's original summary.
+	MinFullTextLength = 100
+)
+
 var (
 	htmlTagRegex    = regexp.MustCompile(`<[^>]*>`)
 	brRegex         = regexp.MustCompile(`(?i)<br\s*/?>|</p>|</div>|</h[1-6]>|</li>`)
@@ -283,8 +290,8 @@ func collectBlocks(sel *goquery.Selection, blocks *[]ArticleBlock) {
 }
 
 // ExtractFullText attempts to fetch full readable content from pageURL using go-readability.
-// When extraction fails, times out, or returns empty text, it smoothly degrades to fallbackHTML
-// or fallbackSnippet without failing the caller or dropping the article.
+// When extraction fails, times out, or returns empty or insufficient text, it smoothly degrades
+// to fallbackHTML or fallbackSnippet without returning an error to the caller or failing the pipeline.
 func ExtractFullText(ctx context.Context, client *http.Client, pageURL string, fallbackHTML, fallbackSnippet string) (contentHTML string, blocks []ArticleBlock, isFullText bool, heroImage string, err error) {
 	if client != nil && pageURL != "" && (strings.HasPrefix(pageURL, "http://") || strings.HasPrefix(pageURL, "https://")) {
 		parsedURL, parseErr := url.Parse(pageURL)
@@ -292,6 +299,7 @@ func ExtractFullText(ctx context.Context, client *http.Client, pageURL string, f
 			req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
 			if reqErr == nil {
 				req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) YouTubeReader/1.0")
+				req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 				resp, doErr := client.Do(req)
 				if doErr == nil && resp != nil {
 					defer resp.Body.Close()
@@ -299,12 +307,18 @@ func ExtractFullText(ctx context.Context, client *http.Client, pageURL string, f
 						// Limit read to 10MB to avoid excessive memory usage
 						limitReader := io.LimitReader(resp.Body, 10*1024*1024)
 						art, readErr := readability.FromReader(limitReader, parsedURL)
-						if readErr == nil && len(strings.TrimSpace(art.TextContent)) >= 50 {
-							contentHTML = art.Content
-							heroImage = art.Image
-							blocks = ParseHTMLBlocks(contentHTML)
-							isFullText = true
-							return contentHTML, blocks, true, heroImage, nil
+						if readErr == nil {
+							cleanText := strings.TrimSpace(art.TextContent)
+							if utf8.RuneCountInString(cleanText) >= MinFullTextLength {
+								parsed := ParseHTMLBlocks(art.Content)
+								if len(parsed) > 0 {
+									contentHTML = art.Content
+									heroImage = art.Image
+									blocks = parsed
+									isFullText = true
+									return contentHTML, blocks, true, heroImage, nil
+								}
+							}
 						}
 					}
 				}

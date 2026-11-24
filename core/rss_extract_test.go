@@ -228,3 +228,164 @@ func TestExtractFullTextFailureDegradation(t *testing.T) {
 		t.Fatalf("isFullText must be false on network failure")
 	}
 }
+
+func TestExtractFullTextAntiHotlink403(t *testing.T) {
+	client403 := &http.Client{
+		Transport: &mockTransport{
+			roundTripFunc: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusForbidden,
+					Status:     "403 Forbidden",
+					Body:       io.NopCloser(strings.NewReader("Cloudflare WAF / Anti-hotlink 403 Forbidden")),
+				}, nil
+			},
+		},
+	}
+
+	fallbackHTML := "<p>Feed summary for 403 hotlink article.</p>"
+	fallbackSnippet := "Feed summary for 403 hotlink article."
+
+	contentHTML, blocks, isFullText, _, err := ExtractFullText(
+		context.Background(),
+		client403,
+		"https://anti-hotlink.example.com/post/1",
+		fallbackHTML,
+		fallbackSnippet,
+	)
+
+	if err != nil {
+		t.Fatalf("unexpected error on 403 anti-hotlink: %v", err)
+	}
+	if isFullText {
+		t.Fatalf("isFullText should be false on 403 anti-hotlink")
+	}
+	if contentHTML != fallbackHTML {
+		t.Fatalf("contentHTML = %q, want %q", contentHTML, fallbackHTML)
+	}
+	if len(blocks) != 1 || blocks[0].Text != fallbackSnippet {
+		t.Fatalf("blocks should hold fallback snippet, got: %+v", blocks)
+	}
+}
+
+func TestExtractFullTextMalformedTruncatedHTML(t *testing.T) {
+	truncated := `<!DOCTYPE html><html><head><title>Truncated</title></head><body><article><h1>Broken</h1><p>Cut off mid-stream <div class="unclosed`
+	client := &http.Client{
+		Transport: &mockTransport{
+			roundTripFunc: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Header:     http.Header{"Content-Type": []string{"text/html"}},
+					Body:       io.NopCloser(strings.NewReader(truncated)),
+				}, nil
+			},
+		},
+	}
+
+	fallbackHTML := "<p>Truncated article fallback summary.</p>"
+	fallbackSnippet := "Truncated article fallback summary."
+
+	contentHTML, blocks, isFullText, _, err := ExtractFullText(
+		context.Background(),
+		client,
+		"https://example.com/truncated",
+		fallbackHTML,
+		fallbackSnippet,
+	)
+
+	if err != nil {
+		t.Fatalf("malformed truncated HTML must not cause error: %v", err)
+	}
+	if isFullText {
+		t.Fatalf("isFullText should be false for insufficient truncated text")
+	}
+	if len(blocks) == 0 {
+		t.Fatalf("blocks should not be empty")
+	}
+	if !strings.Contains(contentHTML, "Truncated article fallback summary") {
+		t.Fatalf("contentHTML missing fallback: %s", contentHTML)
+	}
+}
+
+func TestExtractFullTextTimeoutResponse(t *testing.T) {
+	clientTimeout := &http.Client{
+		Transport: &mockTransport{
+			roundTripFunc: func(req *http.Request) (*http.Response, error) {
+				return nil, context.DeadlineExceeded
+			},
+		},
+	}
+
+	fallbackHTML := "<p>Timeout fallback content</p>"
+	fallbackSnippet := "Timeout fallback content"
+
+	_, blocks, isFullText, _, err := ExtractFullText(
+		context.Background(),
+		clientTimeout,
+		"https://slow.example.com/timeout",
+		fallbackHTML,
+		fallbackSnippet,
+	)
+
+	if err != nil {
+		t.Fatalf("expected nil error on timeout degradation, got: %v", err)
+	}
+	if isFullText {
+		t.Fatalf("isFullText must be false on timeout")
+	}
+	if len(blocks) == 0 || blocks[0].Text != fallbackSnippet {
+		t.Fatalf("expected degraded blocks on timeout, got: %+v", blocks)
+	}
+}
+
+func TestExtractFullTextEmptyAndShortText(t *testing.T) {
+	// 1. Completely empty article body
+	emptyHTML := `<html><body><article></article></body></html>`
+	clientEmpty := &http.Client{
+		Transport: &mockTransport{
+			roundTripFunc: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Body:       io.NopCloser(strings.NewReader(emptyHTML)),
+				}, nil
+			},
+		},
+	}
+
+	_, _, isFullText1, _, err1 := ExtractFullText(
+		context.Background(),
+		clientEmpty,
+		"https://example.com/empty",
+		"<p>Fallback</p>",
+		"Fallback",
+	)
+	if err1 != nil || isFullText1 {
+		t.Fatalf("empty HTML should degrade with nil error: err=%v, isFullText=%v", err1, isFullText1)
+	}
+
+	// 2. Short text below 100 runes (e.g. paywall stub "Please subscribe to read the full article.")
+	shortHTML := `<html><body><article><h1>Subscribers Only</h1><p>Please log in or subscribe to read the full article.</p></article></body></html>`
+	clientShort := &http.Client{
+		Transport: &mockTransport{
+			roundTripFunc: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Body:       io.NopCloser(strings.NewReader(shortHTML)),
+				}, nil
+			},
+		},
+	}
+
+	_, _, isFullText2, _, err2 := ExtractFullText(
+		context.Background(),
+		clientShort,
+		"https://example.com/paywall",
+		"<p>Fallback</p>",
+		"Fallback",
+	)
+	if err2 != nil || isFullText2 {
+		t.Fatalf("short paywall text should degrade with nil error: err=%v, isFullText=%v", err2, isFullText2)
+	}
+}

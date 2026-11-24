@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/netimage"
 	"github.com/simon/youtube-reader/core"
 	mui "github.com/simon/youtube-reader/ui"
 )
@@ -78,6 +80,10 @@ func runNotifyOnly(app *App) {
 }
 
 func realMain() {
+	// A picture whose server accepts the connection and then stalls has to end
+	// in the reader's failed-image placeholder, not hold the frame forever, so
+	// bound every image download netimage makes rather than wait on it.
+	netimage.SetClient(&http.Client{Timeout: 15 * time.Second})
 	app, err := LoadApp()
 	if err != nil {
 		log.Fatal(err)
