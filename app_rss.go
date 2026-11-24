@@ -170,6 +170,23 @@ func (a *App) RSSGroupByID(groupID string) core.RSSGroup {
 	return core.RSSGroup{}
 }
 
+// uniqueRSSGroupName returns name, or name with the first free numeric suffix,
+// so no two active groups share a name case-insensitively.
+func (a *App) uniqueRSSGroupName(name, exceptID string) string {
+	name = strings.TrimSpace(name)
+	taken := make(map[string]bool, len(a.RSSGroups))
+	for _, g := range a.RSSGroups {
+		if g.ID != exceptID {
+			taken[strings.ToLower(strings.TrimSpace(g.Name))] = true
+		}
+	}
+	candidate := name
+	for n := 2; taken[strings.ToLower(candidate)]; n++ {
+		candidate = fmt.Sprintf("%s %d", name, n)
+	}
+	return candidate
+}
+
 // CreateRSSGroup creates a new RSS group with the given name, appends it to the group order,
 // and persists it to the local store.
 func (a *App) CreateRSSGroup(name string) (core.RSSGroup, error) {
@@ -177,6 +194,7 @@ func (a *App) CreateRSSGroup(name string) (core.RSSGroup, error) {
 	if name == "" {
 		return core.RSSGroup{}, errors.New("group name cannot be empty")
 	}
+	name = a.uniqueRSSGroupName(name, "")
 
 	groupID := "rss-group-" + core.NewGroupID()
 	now := time.Now().UnixMilli()
@@ -212,6 +230,7 @@ func (a *App) RenameRSSGroup(id, newName string) error {
 	if newName == "" {
 		return errors.New("group name cannot be empty")
 	}
+	newName = a.uniqueRSSGroupName(newName, id)
 
 	if a.Store != nil {
 		ctx := context.Background()

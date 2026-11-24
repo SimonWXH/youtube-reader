@@ -466,6 +466,125 @@ func TestImportRSSOPMLPrefersActiveGroupOverTombstone(t *testing.T) {
 	}
 }
 
+// TestRSSGroupNamesStayUnique verifies that creating and renaming RSS groups
+// keeps their names distinct ignoring case, so an export's folder names keep
+// identifying one group each.
+func TestRSSGroupNamesStayUnique(t *testing.T) {
+	a, _ := setupRSSTestApp(t)
+
+	first, err := a.CreateRSSGroup(defaultNewGroupName("en"))
+	if err != nil {
+		t.Fatalf("create first group: %v", err)
+	}
+	second, err := a.CreateRSSGroup(defaultNewGroupName("en"))
+	if err != nil {
+		t.Fatalf("create second group: %v", err)
+	}
+	if first.Name != "New Group" || second.Name != "New Group 2" {
+		t.Fatalf("default names = %q, %q; want New Group and New Group 2", first.Name, second.Name)
+	}
+
+	if err := a.RenameRSSGroup(second.ID, "new group"); err != nil {
+		t.Fatalf("rename second group: %v", err)
+	}
+	if got := a.RSSGroupByID(second.ID).Name; got != "new group 2" {
+		t.Errorf("rename onto another group's name gave %q; want a numbered name", got)
+	}
+
+	if err := a.RenameRSSGroup(first.ID, "NEW GROUP"); err != nil {
+		t.Fatalf("rename first group: %v", err)
+	}
+	if got := a.RSSGroupByID(first.ID).Name; got != "NEW GROUP" {
+		t.Errorf("case-only rename gave %q; want NEW GROUP", got)
+	}
+
+	seen := make(map[string]bool, len(a.RSSGroups))
+	for _, g := range a.RSSGroups {
+		key := strings.ToLower(g.Name)
+		if seen[key] {
+			t.Errorf("two active groups are named %q", g.Name)
+		}
+		seen[key] = true
+	}
+}
+
+// TestExportRSSOPMLRoundTripKeepsRenamedGroupsApart covers two groups born with
+// the same default name: once renamed apart, an export must re-import with each
+// feed under its own group only.
+func TestExportRSSOPMLRoundTripKeepsRenamedGroupsApart(t *testing.T) {
+	a1, _ := setupRSSTestApp(t)
+	dir := t.TempDir()
+
+	reading, err := a1.CreateRSSGroup(defaultNewGroupName("en"))
+	if err != nil {
+		t.Fatalf("create first group: %v", err)
+	}
+	notes, err := a1.CreateRSSGroup(defaultNewGroupName("en"))
+	if err != nil {
+		t.Fatalf("create second group: %v", err)
+	}
+	if strings.EqualFold(reading.Name, notes.Name) {
+		t.Fatalf("two default-created groups share the name %q; want distinct names", reading.Name)
+	}
+	if err := a1.RenameRSSGroup(reading.ID, "Reading"); err != nil {
+		t.Fatalf("rename first group: %v", err)
+	}
+	if err := a1.RenameRSSGroup(notes.ID, "Notes"); err != nil {
+		t.Fatalf("rename second group: %v", err)
+	}
+
+	alpha := core.RSSFeed{
+		ID:      core.FeedID("https://alpha.example/rss"),
+		FeedURL: "https://alpha.example/rss",
+		Title:   "Alpha",
+	}
+	if err := a1.SubscribeRSSFeed(alpha, reading.ID); err != nil {
+		t.Fatalf("subscribe Alpha: %v", err)
+	}
+	beta := core.RSSFeed{
+		ID:      core.FeedID("https://beta.example/rss"),
+		FeedURL: "https://beta.example/rss",
+		Title:   "Beta",
+	}
+	if err := a1.SubscribeRSSFeed(beta, notes.ID); err != nil {
+		t.Fatalf("subscribe Beta: %v", err)
+	}
+
+	exportPath := filepath.Join(dir, "renamed.opml")
+	if err := a1.ExportRSSOPMLToFile(exportPath); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	a2, _ := setupRSSTestApp(t)
+	res, err := importRSSOPMLForTest(t, a2, []string{exportPath})
+	if err != nil {
+		t.Fatalf("round-trip import: %v", err)
+	}
+	if res.FeedsImported != 2 || res.GroupsImported != 2 {
+		t.Fatalf("round-trip result = %+v; want 2 feeds and 2 groups", res)
+	}
+	if len(a2.RSSFeeds) != 2 || len(a2.RSSGroups) != 2 {
+		t.Fatalf("round-trip feeds=%d groups=%d; want 2 of each", len(a2.RSSFeeds), len(a2.RSSGroups))
+	}
+
+	groupName := make(map[string]string, len(a2.RSSGroups))
+	for _, g := range a2.RSSGroups {
+		if len(g.FeedIDs) != 1 {
+			t.Errorf("group %q holds %d feeds; want exactly 1", g.Name, len(g.FeedIDs))
+		}
+		groupName[g.ID] = g.Name
+	}
+	wantGroup := map[string]string{"Alpha": "Reading", "Beta": "Notes"}
+	for _, f := range a2.RSSFeeds {
+		if len(f.GroupIDs) != 1 {
+			t.Fatalf("feed %q GroupIDs = %v; want exactly one group", f.Title, f.GroupIDs)
+		}
+		if got, want := groupName[f.GroupIDs[0]], wantGroup[f.Title]; got != want {
+			t.Errorf("feed %q landed in %q; want %q", f.Title, got, want)
+		}
+	}
+}
+
 // TestExportRSSOPMLToFileAndRoundTrip verifies export from database to file,
 // followed by import into another fresh App instance.
 func TestExportRSSOPMLToFileAndRoundTrip(t *testing.T) {
