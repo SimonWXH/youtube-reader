@@ -504,6 +504,46 @@ func TestExportRSSOPMLRoundTrip(t *testing.T) {
 	}
 }
 
+// TestExportRSSOPMLDeterministicOrder verifies that an unchanged library exports
+// its feeds in the same order every time, including feeds that share a display
+// name and feeds reachable only through their own group membership, so repeated
+// backups of the same library are byte-identical.
+func TestExportRSSOPMLDeterministicOrder(t *testing.T) {
+	groups := []RSSGroup{
+		{ID: "g1", Name: "Mine", UpdatedAt: 1},
+	}
+	feeds := []RSSFeed{
+		{ID: "f-b", FeedURL: "https://b.example/rss", Title: "Daily", GroupIDs: []string{"g1"}, UpdatedAt: 1},
+		{ID: "f-d", FeedURL: "https://d.example/rss", Title: "News", UpdatedAt: 1},
+		{ID: "f-a", FeedURL: "https://a.example/rss", Title: "Daily", GroupIDs: []string{"g1"}, UpdatedAt: 1},
+		{ID: "f-c", FeedURL: "https://c.example/rss", Title: "news", UpdatedAt: 1},
+	}
+	want := []string{
+		"https://a.example/rss",
+		"https://b.example/rss",
+		"https://c.example/rss",
+		"https://d.example/rss",
+	}
+
+	for attempt := 0; attempt < 8; attempt++ {
+		exported, err := ExportRSSOPML(groups, feeds, "Order")
+		if err != nil {
+			t.Fatalf("ExportRSSOPML failed: %v", err)
+		}
+		parsed, err := ParseRSSOPML(exported)
+		if err != nil {
+			t.Fatalf("ParseRSSOPML on exported XML failed: %v", err)
+		}
+		got := make([]string, 0, len(parsed.Feeds))
+		for _, f := range parsed.Feeds {
+			got = append(got, f.FeedURL)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("export %d feed order = %v; want %v", attempt, got, want)
+		}
+	}
+}
+
 // TestParseAndExportRSSOPMLFile verifies reading and writing from disk.
 func TestParseAndExportRSSOPMLFile(t *testing.T) {
 	dir := t.TempDir()

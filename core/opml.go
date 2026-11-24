@@ -334,12 +334,25 @@ func ExportRSSOPML(groups []RSSGroup, feeds []RSSFeed, title string) ([]byte, er
 		},
 	}
 
-	activeFeeds := make(map[string]RSSFeed, len(feeds))
+	byID := make(map[string]RSSFeed, len(feeds))
 	for _, f := range feeds {
 		if !f.Deleted {
-			activeFeeds[f.ID] = f
+			byID[f.ID] = f
 		}
 	}
+	activeFeeds := make([]RSSFeed, 0, len(byID))
+	for _, f := range byID {
+		activeFeeds = append(activeFeeds, f)
+	}
+	slices.SortFunc(activeFeeds, func(a, b RSSFeed) int {
+		if c := strings.Compare(strings.ToLower(a.DisplayName()), strings.ToLower(b.DisplayName())); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.FeedURL, b.FeedURL); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
 
 	exportedFeedIDs := make(map[string]bool)
 
@@ -356,7 +369,7 @@ func ExportRSSOPML(groups []RSSGroup, feeds []RSSFeed, title string) ([]byte, er
 		var groupFeeds []RSSFeed
 		seenInGroup := make(map[string]bool)
 		for _, fid := range g.FeedIDs {
-			if f, ok := activeFeeds[fid]; ok && !seenInGroup[fid] {
+			if f, ok := byID[fid]; ok && !seenInGroup[fid] {
 				groupFeeds = append(groupFeeds, f)
 				seenInGroup[fid] = true
 				exportedFeedIDs[fid] = true
@@ -389,9 +402,6 @@ func ExportRSSOPML(groups []RSSGroup, feeds []RSSFeed, title string) ([]byte, er
 			ungrouped = append(ungrouped, f)
 		}
 	}
-	slices.SortStableFunc(ungrouped, func(a, b RSSFeed) int {
-		return strings.Compare(strings.ToLower(a.DisplayName()), strings.ToLower(b.DisplayName()))
-	})
 
 	for _, f := range ungrouped {
 		doc.Body.Outlines = append(doc.Body.Outlines, OPMLOutline{
