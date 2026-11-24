@@ -332,9 +332,9 @@ func MergeRSSSync(states ...RSSSyncState) RSSSyncState {
 // IDENTIFIERS & NORMALIZATION HELPERS
 // ======================================================================================
 
-// CanonicalURL normalizes a URL by trimming whitespace, lowercasing scheme and host,
-// removing default ports, removing trailing slashes, stripping tracking query parameters,
-// and discarding fragments.
+// CanonicalURL normalizes a URL by trimming whitespace, prepending a default https://
+// scheme when missing, lowercasing scheme and host, removing default ports, removing
+// trailing slashes, stripping tracking query parameters, and discarding fragments.
 func CanonicalURL(rawURL string) string {
 	raw := strings.TrimSpace(rawURL)
 	if raw == "" {

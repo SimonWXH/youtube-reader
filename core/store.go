@@ -367,6 +367,7 @@ func (s *Store) DrainQueue(ctx context.Context) ([]json.RawMessage, error) {
 	return out, nil
 }
 
+// Count returns the number of rows in the specified table ("videos", "channels", "rss_feeds", or "rss_articles").
 func (s *Store) Count(ctx context.Context, table string) int {
 	if table != "videos" && table != "channels" && table != "rss_feeds" && table != "rss_articles" {
 		return 0

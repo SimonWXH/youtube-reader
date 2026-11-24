@@ -106,7 +106,7 @@ func WithRetention(maxArticles int, maxAge time.Duration) RSSFetcherOption {
 }
 
 // RSSFetcher coordinates fetching RSS/Atom/JSON feeds, parsing entries,
-// condition requests (ETag/Last-Modified 304), full-text extraction, and storage.
+// conditional requests (ETag/Last-Modified 304), optional full-text extraction, and storage.
 type RSSFetcher struct {
 	store                *Store
 	client               *http.Client
