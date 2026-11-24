@@ -295,8 +295,8 @@ func rssHeaderFeedBox(t *testing.T, tt *ui.Tester, header ui.Rect) {
 	if !ok {
 		t.Fatal("the header draws no feed name")
 	}
-	if feed.W < 56 {
-		t.Fatalf("the feed name is %v wide, want at least its 56 pt readable minimum", feed.W)
+	if feed.W < 24 {
+		t.Fatalf("the feed name is %v wide, want at least the 24 pt gutter", feed.W)
 	}
 	sep, ok := rssHeaderNode(t, tt, header, "·")
 	if !ok {

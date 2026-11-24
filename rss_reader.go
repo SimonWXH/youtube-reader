@@ -45,9 +45,8 @@ const (
 	rssReaderImageMax float32 = 560 // the tallest an inline picture may show
 	// rssHeaderFeedMin is the least room the header's metadata row leaves the
 	// feed name before giving up the inline layout, so the name and its
-	// separator never shrink to a stub: enough for the opening of a short
-	// feed title.
-	rssHeaderFeedMin float32 = 56
+	// separator never shrink to a stub. It is the 24 pt gutter, mui.Space(6).
+	rssHeaderFeedMin float32 = 24
 	// The text size control in the reader's header reuses the settings panes'
 	// segmented-control metrics, the track and chip filling the header's 28 pt
 	// control height, and keeps its own padding for the single-letter segments.
@@ -673,14 +672,15 @@ func (w *Window) rssTextSizeControl(c *ui.Context, t mui.Tokens) {
 }
 
 // rssHeaderRowWidth is the width the header's metadata row needs to stay
-// inline: the date, the text size control, and both actions, as their roles
-// draw them, the row's own gaps, and the least room the feed name and its
-// separator keep. Below it the row stacks rather than shrinking the feed name
-// to a stub. The re-fetch action is measured at its wider label so a re-fetch
-// never flips the row to the stacked layout.
+// inline: the date, the text size control, the star toggle, and both actions,
+// as their roles draw them, the row's own gaps, and the least room the feed
+// name and its separator keep. Below it the row stacks rather than shrinking
+// the feed name to a stub. The re-fetch action is measured at its wider label
+// so a re-fetch never flips the row to the stacked layout.
 func rssHeaderRowWidth(c *ui.Context, feedName, date, openLabel, refetchLabel, refetchingLabel string) float32 {
 	refetch := max(rssHeaderActionWidth(c, refetchLabel), rssHeaderActionWidth(c, refetchingLabel))
-	width := rssTextSizeControlWidth(c) + rssHeaderActionWidth(c, openLabel) + refetch + mui.Space(2)
+	actions := mui.Space(7) + rssHeaderActionWidth(c, openLabel) + refetch + 2*mui.Space(2)
+	width := rssTextSizeControlWidth(c) + actions
 	children := 4 // the feed name, the spacer, the size control, and the actions
 	if feedName != "" {
 		width += rssHeaderFeedMin
