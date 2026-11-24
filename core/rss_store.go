@@ -379,20 +379,24 @@ func (s *Store) SetRSSArticleStarred(ctx context.Context, id string, starred boo
 	return err
 }
 
+// retentionUnpurged matches article rows whose body is still cached. Purged rows keep
+// their metadata and read state, so they must not be counted or purged again.
+const retentionUnpurged = `(COALESCE(content_html, '') != '' OR COALESCE(blocks_json, '') != '')`
+
 // CleanOldRSSArticles purges the bodies of old read articles for a feed once the feed
 // exceeds its read-article cap.
 //
 // RETENTION POLICY:
-// An article is purged only when BOTH hold: the feed has more read, unstarred articles
-// than maxReadArticles, AND the article was published before the retention cutoff.
-// Unread and starred articles are never touched. Purged rows keep their metadata and
-// read state so a later refresh cannot resurrect them as unread.
+// An article is purged only when BOTH hold: the feed has more cached read, unstarred
+// articles than maxReadArticles, AND the article was published before the retention
+// cutoff. Unread and starred articles are never touched. Purged rows keep their metadata
+// and read state so a later refresh cannot resurrect them as unread.
 func (s *Store) CleanOldRSSArticles(ctx context.Context, feedID string, maxReadArticles int, olderThan time.Duration, now time.Time) (int64, error) {
 	if maxReadArticles <= 0 || olderThan <= 0 {
 		return 0, nil
 	}
 
-	rows, err := s.db.Query(ctx, `SELECT COUNT(*) FROM rss_articles WHERE feed_id = ? AND read = 1 AND starred = 0`, feedID)
+	rows, err := s.db.Query(ctx, `SELECT COUNT(*) FROM rss_articles WHERE feed_id = ? AND read = 1 AND starred = 0 AND `+retentionUnpurged, feedID)
 	if err != nil || len(rows.Values) == 0 {
 		return 0, err
 	}
@@ -403,35 +407,15 @@ func (s *Store) CleanOldRSSArticles(ctx context.Context, feedID string, maxReadA
 	}
 
 	cutoffDate := now.Add(-olderThan).UTC().Format(time.RFC3339)
-	candidateQuery := fmt.Sprintf(`SELECT id FROM rss_articles
-	WHERE feed_id = ? AND read = 1 AND starred = 0 AND published_at < ?
-	ORDER BY published_at ASC, id ASC
-	LIMIT %d`, excess)
-	candidateRows, err := s.db.Query(ctx, candidateQuery, feedID, cutoffDate)
-	if err != nil {
-		return 0, err
-	}
-
-	var purgeIDs []string
-	for _, r := range candidateRows.Values {
-		if id, ok := r[0].(string); ok && id != "" {
-			purgeIDs = append(purgeIDs, id)
-		}
-	}
-	if len(purgeIDs) == 0 {
-		return 0, nil
-	}
-
-	placeholders := make([]string, len(purgeIDs))
-	args := make([]any, len(purgeIDs))
-	for i, id := range purgeIDs {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-
-	purgeQuery := fmt.Sprintf(`UPDATE rss_articles SET content_html = '', blocks_json = '', is_full_text = 0
-	WHERE id IN (%s) AND read = 1 AND starred = 0`, strings.Join(placeholders, ","))
-	res, err := s.db.Execute(ctx, purgeQuery, args...)
+	purgeQuery := fmt.Sprintf(`UPDATE rss_articles
+	SET content_html = '', blocks_json = '', is_full_text = 0
+	WHERE id IN (
+		SELECT id FROM rss_articles
+		WHERE feed_id = ? AND read = 1 AND starred = 0 AND published_at < ? AND %s
+		ORDER BY published_at ASC, id ASC
+		LIMIT %d
+	) AND read = 1 AND starred = 0`, retentionUnpurged, excess)
+	res, err := s.db.Execute(ctx, purgeQuery, feedID, cutoffDate)
 	if err != nil {
 		return 0, err
 	}

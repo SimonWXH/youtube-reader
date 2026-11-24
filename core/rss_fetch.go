@@ -239,12 +239,13 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 	if feed.SiteURL == "" && parsed.Link != "" {
 		feed.SiteURL = parsed.Link
 	}
+	feedBase := feed.FeedURL
+	if feed.SiteURL != "" {
+		feed.SiteURL = resolveAssetURL(feed.FeedURL, feed.SiteURL)
+		feedBase = feed.SiteURL
+	}
 	if feed.AvatarURL == "" && parsed.Image != nil && parsed.Image.URL != "" {
-		avatarBase := feed.SiteURL
-		if avatarBase == "" {
-			avatarBase = feed.FeedURL
-		}
-		feed.AvatarURL = resolveAssetURL(avatarBase, parsed.Image.URL)
+		feed.AvatarURL = resolveAssetURL(feedBase, parsed.Image.URL)
 	}
 	feed.FailureCount = 0
 	feed.LastError = ""
@@ -258,7 +259,12 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 	// Transform parsed items into RSSArticle models
 	articles := make([]RSSArticle, 0, len(parsed.Items))
 	for _, item := range parsed.Items {
-		dedupKey := ArticleDeduplicationKey(item.GUID, item.Link, item.Title)
+		articleLink := resolveAssetURL(feedBase, item.Link)
+		articleBase := articleLink
+		if articleBase == "" {
+			articleBase = feedBase
+		}
+		dedupKey := ArticleDeduplicationKey(item.GUID, articleLink, item.Title)
 		artID := ArticleID(feed.ID, dedupKey)
 
 		author := ""
@@ -281,11 +287,6 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 		}
 		snippet := CleanSnippet(item.Description, item.Content, 200)
 
-		articleBase := item.Link
-		if articleBase == "" {
-			articleBase = feed.SiteURL
-		}
-
 		heroImage := ""
 		if item.Image != nil && item.Image.URL != "" {
 			heroImage = item.Image.URL
@@ -295,8 +296,8 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 		var blocks []ArticleBlock
 		var isFullText bool
 
-		if f.extractFullText && item.Link != "" {
-			extractedHTML, parsedBlocks, fullTextOK, extractedHero, _ := ExtractFullText(ctx, f.client, item.Link, feedContent, snippet)
+		if f.extractFullText && articleLink != "" {
+			extractedHTML, parsedBlocks, fullTextOK, extractedHero, _ := ExtractFullText(ctx, f.client, articleLink, feedContent, snippet)
 			contentHTML = extractedHTML
 			blocks = parsedBlocks
 			isFullText = fullTextOK
@@ -326,7 +327,7 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 			ID:          artID,
 			FeedID:      feed.ID,
 			Title:       item.Title,
-			Link:        item.Link,
+			Link:        articleLink,
 			GUID:        item.GUID,
 			Author:      author,
 			PublishedAt: publishedAt,

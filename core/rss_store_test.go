@@ -779,3 +779,95 @@ func TestDeleteRSSFeedSoftDeleteArticles(t *testing.T) {
 		}
 	}
 }
+
+func TestRSSStoreRetentionDoesNotRepurgePurgedRows(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+
+	feedID := "feed:test-retention-repurge"
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	body := "<p>body</p>"
+
+	articles := []RSSArticle{
+		{
+			ID:          "art-repurge-1",
+			FeedID:      feedID,
+			Title:       "Oldest Read",
+			ContentHTML: body,
+			PublishedAt: now.Add(-90 * 24 * time.Hour).Format(time.RFC3339),
+			Read:        true,
+		},
+		{
+			ID:          "art-repurge-2",
+			FeedID:      feedID,
+			Title:       "Middle Read",
+			ContentHTML: body,
+			PublishedAt: now.Add(-80 * 24 * time.Hour).Format(time.RFC3339),
+			Read:        true,
+		},
+		{
+			ID:          "art-repurge-3",
+			FeedID:      feedID,
+			Title:       "Newest Read",
+			ContentHTML: body,
+			PublishedAt: now.Add(-70 * 24 * time.Hour).Format(time.RFC3339),
+			Read:        true,
+		},
+	}
+	if err := store.SaveRSSArticles(ctx, articles); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := store.CleanOldRSSArticles(ctx, feedID, 2, 30*24*time.Hour, now)
+	if err != nil {
+		t.Fatalf("CleanOldRSSArticles failed: %v", err)
+	}
+	if first != 1 {
+		t.Fatalf("expected 1 article purged on the first run, got %d", first)
+	}
+
+	second, err := store.CleanOldRSSArticles(ctx, feedID, 2, 30*24*time.Hour, now)
+	if err != nil {
+		t.Fatalf("CleanOldRSSArticles failed: %v", err)
+	}
+	if second != 0 {
+		t.Fatalf("already purged rows must not be purged or counted again, purged %d", second)
+	}
+
+	// A feed that gains another old read article purges exactly one more row.
+	if err := store.SaveRSSArticles(ctx, []RSSArticle{{
+		ID:          "art-repurge-4",
+		FeedID:      feedID,
+		Title:       "Another Read",
+		ContentHTML: body,
+		PublishedAt: now.Add(-60 * 24 * time.Hour).Format(time.RFC3339),
+		Read:        true,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	third, err := store.CleanOldRSSArticles(ctx, feedID, 2, 30*24*time.Hour, now)
+	if err != nil {
+		t.Fatalf("CleanOldRSSArticles failed: %v", err)
+	}
+	if third != 1 {
+		t.Fatalf("expected exactly 1 additional article purged, got %d", third)
+	}
+
+	for id, wantPurged := range map[string]bool{
+		"art-repurge-1": true,
+		"art-repurge-2": true,
+		"art-repurge-3": false,
+		"art-repurge-4": false,
+	} {
+		got, err := store.GetRSSArticle(ctx, id)
+		if err != nil || got == nil {
+			t.Fatalf("GetRSSArticle(%q) failed: %v", id, err)
+		}
+		if (got.ContentHTML == "") != wantPurged {
+			t.Fatalf("article %q purged=%v, want %v", id, got.ContentHTML == "", wantPurged)
+		}
+		if !got.Read {
+			t.Fatalf("article %q lost its read state", id)
+		}
+	}
+}

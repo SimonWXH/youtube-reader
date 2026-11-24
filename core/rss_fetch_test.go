@@ -633,3 +633,78 @@ func TestDiscoverFeedURLRejectsFailedProbes(t *testing.T) {
 		t.Fatalf("a page without a declared feed must return an error, got %q", found)
 	}
 }
+
+const sampleRSSRelativeLinks = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+  <title>Relative Links Blog</title>
+  <link>https://example.com/blog/</link>
+  <description>Blog with relative links</description>
+  <item>
+    <title>Post with relative link</title>
+    <link>/blog/post/1</link>
+    <pubDate>Tue, 11 Feb 2026 12:00:00 GMT</pubDate>
+    <description><![CDATA[<p>Body text.</p><img src="cover.png" alt="cover">]]></description>
+  </item>
+</channel>
+</rss>`
+
+func TestFetchResolvesRelativeArticleLinks(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+
+	feed := RSSFeed{
+		ID:        "feed:relativelinks",
+		FeedURL:   "https://example.com/feed.xml",
+		UpdatedAt: time.Now().UnixMilli(),
+	}
+	if err := store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &http.Client{
+		Transport: &mockTransport{
+			roundTripFunc: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Header:     http.Header{"Content-Type": []string{"application/rss+xml"}},
+					Body:       io.NopCloser(strings.NewReader(sampleRSSRelativeLinks)),
+				}, nil
+			},
+		},
+	}
+
+	fetcher := NewRSSFetcher(store, WithHTTPClient(client))
+	if _, err := fetcher.FetchFeed(ctx, feed); err != nil {
+		t.Fatalf("FetchFeed failed: %v", err)
+	}
+
+	articles, _ := store.ListRSSArticles(ctx, RSSArticleFilter{FeedID: feed.ID})
+	if len(articles) != 1 {
+		t.Fatalf("expected 1 article, got %d", len(articles))
+	}
+	art := articles[0]
+
+	const wantLink = "https://example.com/blog/post/1"
+	if art.Link != wantLink {
+		t.Fatalf("relative article link must resolve against the site URL, got %q; want %q", art.Link, wantLink)
+	}
+	if wantID := ArticleID(feed.ID, wantLink); art.ID != wantID {
+		t.Fatalf("article identity must be derived from the resolved link: got %q; want %q", art.ID, wantID)
+	}
+
+	const wantImage = "https://example.com/blog/post/cover.png"
+	if art.HeroImage != wantImage {
+		t.Fatalf("hero image must resolve against the resolved article link, got %q; want %q", art.HeroImage, wantImage)
+	}
+	var imageBlockURL string
+	for _, b := range art.Blocks {
+		if b.Type == BlockImage {
+			imageBlockURL = b.URL
+		}
+	}
+	if imageBlockURL != wantImage {
+		t.Fatalf("image block URL must resolve against the resolved article link, got %q; want %q", imageBlockURL, wantImage)
+	}
+}
