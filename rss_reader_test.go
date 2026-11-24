@@ -488,16 +488,16 @@ func TestRSSTickInteraction(t *testing.T) {
 // gutter on a narrow reader and a wider gutter that holds a 680 pt column on a
 // wide one.
 func TestRSSReaderContentPadding(t *testing.T) {
-	if got := rssReaderPadding(400); got != mui.Space(6) {
-		t.Fatalf("narrow reader gutter = %v, want %v", got, mui.Space(6))
+	if got := rssReaderPadding(400); got != 24 {
+		t.Fatalf("narrow reader gutter = %v, want the 24 pt gutter", got)
 	}
-	if got := rssReaderPadding(rssReadingColumn + 2*mui.Space(6)); got != mui.Space(6) {
-		t.Fatalf("exact column gutter = %v, want %v", got, mui.Space(6))
+	if got := rssReaderPadding(680 + 2*24); got != 24 {
+		t.Fatalf("exact column gutter = %v, want the 24 pt gutter", got)
 	}
 	available := float32(1000)
 	gutter := rssReaderPadding(available)
-	if got := available - 2*gutter; got != rssReadingColumn {
-		t.Fatalf("wide reader column = %v, want %v", got, rssReadingColumn)
+	if got := available - 2*gutter; got != 680 {
+		t.Fatalf("wide reader column = %v, want the 680 pt cap", got)
 	}
 }
 
@@ -505,13 +505,13 @@ func TestRSSReaderContentPadding(t *testing.T) {
 // picture fit: a picture never upscales past its own pixels and never grows
 // taller than the reader's maximum.
 func TestRSSReaderColumnAndImageSizing(t *testing.T) {
-	if got := rssReadingWidth(618); got != 618-rssTickRailWidth-2*mui.Space(6) {
-		t.Fatalf("narrow column = %v", got)
+	if got := rssReadingWidth(618); got != 546 {
+		t.Fatalf("narrow column = %v, want 546 pt inside two 24 pt gutters", got)
 	}
-	if got := rssReadingWidth(1000); got != rssReadingColumn {
-		t.Fatalf("wide column = %v, want the %v cap", got, rssReadingColumn)
+	if got := rssReadingWidth(1000); got != 680 {
+		t.Fatalf("wide column = %v, want the 680 pt cap", got)
 	}
-	if got := rssReadingWidth(rssTickRailWidth); got != 0 {
+	if got := rssReadingWidth(24); got != 0 {
 		t.Fatalf("column with no room = %v, want 0", got)
 	}
 
@@ -1728,11 +1728,11 @@ func TestRSSReadingColumnStaysNarrowOnAWideWindow(t *testing.T) {
 		t.Fatal("rail has no blocks to measure")
 	}
 	column := w.rssReader.ticks[0].W
-	if column != rssReadingColumn {
-		t.Fatalf("reading column = %v, want the %v cap", column, rssReadingColumn)
+	if column != 680 {
+		t.Fatalf("reading column = %v, want the 680 pt cap", column)
 	}
 	body := w.rssReader.viewport
-	if body.W < column+2*mui.Space(6) {
+	if body.W < column+2*24 {
 		t.Fatalf("body is %v wide for a %v column; the gutters did not grow", body.W, column)
 	}
 	saveRSSReaderScreenshot(t, tt, "06-reader-wide-window.png")

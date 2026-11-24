@@ -45,17 +45,13 @@ const (
 	rssReaderImageMax float32 = 560 // the tallest an inline picture may show
 	// rssHeaderFeedMin is the least room the header's metadata row leaves the
 	// feed name before giving up the inline layout, so the name and its
-	// separator never shrink to a stub. It is the 24 pt gutter, mui.Space(6).
-	rssHeaderFeedMin float32 = 24
-	// The text size control in the reader's header is a three-segment track
-	// as tall as the header's actions, one segment per body size: the segment
-	// fills what the track's border and inset leave.
-	rssTextSizeTrackH   float32 = 28
-	rssTextSizeInset    float32 = 2
-	rssTextSizeSegmentH float32 = rssTextSizeTrackH - 2*mui.Hairline - 2*rssTextSizeInset
-	rssTextSizeGap      float32 = 2
-	rssTextSizePadX     float32 = 7
-	rssTextSizeRadius   float32 = 4
+	// separator never shrink to a stub: enough for the opening of a short
+	// feed title.
+	rssHeaderFeedMin float32 = 56
+	// The text size control in the reader's header reuses the settings panes'
+	// segmented-control metrics, the track and chip filling the header's 28 pt
+	// control height, and keeps its own padding for the single-letter segments.
+	rssTextSizePadX float32 = 7
 )
 
 // rssLayoutState is the RSS workspace's three-column split: the article list
@@ -648,14 +644,14 @@ func (w *Window) rssTextSizeControl(c *ui.Context, t mui.Tokens) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	selected := mui.ArticleStep(w.readingType().Body.Size)
 	parts := ui.SegmentedBase(c.Key("rss-text-size"), &selected, len(mui.ArticleSizes))
-	track := parts.Track.Height(rssTextSizeTrackH).Shrink(0).Padding(rssTextSizeInset).Gap(rssTextSizeGap).
+	track := parts.Track.Height(settingsControlH).Shrink(0).Padding(settingsSegmentInset).Gap(settingsSegmentGap).
 		Radius(mui.RadiusControl).Background(t.SurfaceAlt).Border(mui.Hairline, t.Border).
 		AlignItems(ui.Center).Label(rssTextSizeTitle(zh))
 	track.Children(func() {
 		for i, size := range mui.ArticleSizes {
 			label := rssTextSizeStepLabel(i, size, zh)
-			segment := parts.Segment(i).Height(rssTextSizeSegmentH).Padding(0, rssTextSizePadX).
-				Radius(rssTextSizeRadius).Center().FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
+			segment := parts.Segment(i).Height(settingsSegmentH).Padding(0, rssTextSizePadX).
+				Radius(settingsSegmentRadius).Center().FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
 				Label(label).Tooltip(label)
 			glyph := rssTextSizeGlyph(size)
 			if i == selected {
@@ -719,14 +715,14 @@ func rssHeaderActionWidth(c *ui.Context, label string) float32 {
 // rssTextSizeGlyph is the A one size segment draws, its line box the chip's
 // inner height so the letter sits inside the segment's border.
 func rssTextSizeGlyph(size float32) mui.TextStyle {
-	return mui.TextStyle{Size: size, LineHeight: rssTextSizeSegmentH - 2*mui.Hairline, Weight: mui.Medium}
+	return mui.TextStyle{Size: size, LineHeight: settingsSegmentH - 2*mui.Hairline, Weight: mui.Medium}
 }
 
 // rssTextSizeControlWidth is the size control's width: the track's border,
 // inset, and gaps, and one padded segment per offered size drawing its own A,
 // with the chosen segment's border on top.
 func rssTextSizeControlWidth(c *ui.Context) float32 {
-	width := 2*mui.Hairline + 2*rssTextSizeInset + float32(len(mui.ArticleSizes)-1)*rssTextSizeGap + 2*mui.Hairline
+	width := 2*mui.Hairline + 2*settingsSegmentInset + float32(len(mui.ArticleSizes)-1)*settingsSegmentGap + 2*mui.Hairline
 	for _, size := range mui.ArticleSizes {
 		width += rssTextWidth(c, rssTextSizeGlyph(size), "A") + 2*rssTextSizePadX
 	}

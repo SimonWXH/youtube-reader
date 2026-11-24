@@ -117,8 +117,10 @@ func TestRSSReadingScaleRedrawsTheBody(t *testing.T) {
 	if len(w.rssReader.ticks) < 2 {
 		t.Fatal("the body laid out no blocks")
 	}
-	// The test article opens with a section heading then its first paragraph.
-	column := rssReadingWidth(w.rssLayout.readerWidth)
+	// The shipped default window lays the reader out at 618 pt: 1280 less the
+	// 260 pt sidebar, the 400 pt list, and two 1 pt dividers. Its 24 pt
+	// paragraph rail and 24 pt gutters leave a 546 pt column, under the 680 cap.
+	column := float32(1280 - 260 - 1 - 400 - 1 - 24 - 2*24)
 	paragraph := func() (height, width float32) {
 		return w.rssReader.ticks[1].H, w.rssReader.ticks[1].W
 	}
@@ -157,10 +159,13 @@ func TestRSSReadingColumnNarrowsWithTheWindow(t *testing.T) {
 	tt.Frame()
 	openRSSReaderTickArticle(t, tt)
 
-	available := w.rssLayout.readerWidth - rssTickRailWidth
-	want := available - 2*rssReaderPadding(available)
-	if want <= 0 || want >= rssReadingColumn {
-		t.Fatalf("the minimum window leaves a %v pt column, want under the %v cap", want, rssReadingColumn)
+	if got := w.rssLayout.readerWidth; got != 320 {
+		t.Fatalf("the minimum window lays the reader out at %v pt, want its 320 pt minimum", got)
+	}
+	// The reader's 24 pt paragraph rail and 24 pt gutters leave its column.
+	want := float32(320 - 24 - 2*24)
+	if want >= 680 {
+		t.Fatalf("the narrow window leaves a %v pt column, want under the 680 pt cap", want)
 	}
 	for i, block := range w.rssReader.ticks {
 		if block.W != want {
@@ -290,8 +295,8 @@ func rssHeaderFeedBox(t *testing.T, tt *ui.Tester, header ui.Rect) {
 	if !ok {
 		t.Fatal("the header draws no feed name")
 	}
-	if feed.W < mui.Space(6) {
-		t.Fatalf("the feed name is %v wide, want at least the %v pt gutter", feed.W, mui.Space(6))
+	if feed.W < 56 {
+		t.Fatalf("the feed name is %v wide, want at least its 56 pt readable minimum", feed.W)
 	}
 	sep, ok := rssHeaderNode(t, tt, header, "·")
 	if !ok {
