@@ -196,6 +196,50 @@ func TestRSSKeyboardStepsKeepTheAnchor(t *testing.T) {
 	}
 }
 
+// TestRSSKeyboardStepsClampAtTheHiddenAnchorEdge checks a step past the end of
+// the filtered column clamps to that edge when the hidden open article is the
+// oldest, and to the first row when it is the newest.
+func TestRSSKeyboardStepsClampAtTheHiddenAnchorEdge(t *testing.T) {
+	a, _, tt := rssShortcutFixture(t, 4)
+	a.UnreadOnly = true
+	tt.Frame()
+
+	for i := 0; i < 4; i++ {
+		tt.Key(0, ui.KeyJ)
+		tt.Frame()
+	}
+	if a.SelectedRSSArticleID != "art-03" {
+		t.Fatalf("chosen article = %q, want art-03", a.SelectedRSSArticleID)
+	}
+
+	// The oldest article goes read and leaves the column; a further step down
+	// stays at the bottom row rather than jumping to the top.
+	tt.Key(0, ui.KeyM)
+	tt.Frame()
+	tt.Key(0, ui.KeyJ)
+	tt.Frame()
+	if a.SelectedRSSArticleID != "art-02" {
+		t.Fatalf("J past the hidden oldest article chose %q, want the last row art-02", a.SelectedRSSArticleID)
+	}
+
+	// The newest article goes read and leaves; a step up clamps to the first
+	// remaining row.
+	tt.Key(0, ui.KeyK)
+	tt.Frame()
+	tt.Key(0, ui.KeyK)
+	tt.Frame()
+	if a.SelectedRSSArticleID != "art-00" {
+		t.Fatalf("K reached %q, want art-00", a.SelectedRSSArticleID)
+	}
+	tt.Key(0, ui.KeyM)
+	tt.Frame()
+	tt.Key(0, ui.KeyK)
+	tt.Frame()
+	if a.SelectedRSSArticleID != "art-01" {
+		t.Fatalf("K past the hidden newest article chose %q, want the first row art-01", a.SelectedRSSArticleID)
+	}
+}
+
 // TestRSSKeyboardStarKeepsTheAnchorInStarred checks the Starred destination
 // keeps the same anchor when S unstars the open row.
 func TestRSSKeyboardStarKeepsTheAnchorInStarred(t *testing.T) {

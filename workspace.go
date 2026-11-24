@@ -958,18 +958,21 @@ func (w *Window) moveRSSSelection(articles []core.RSSArticle, delta int) {
 	w.rssRevealSelection = articles[target].ID
 }
 
-// rssNeighbourIndex reports which visible article a step from sel should reach
-// when sel itself is no longer listed: the first one older than it for +1, the
-// last one newer for -1, and -1 when the list holds none that way.
+// rssNeighbourIndex reports which visible article a step from sel should
+// reach when sel itself is no longer listed: the first one older than it for
+// +1, or past the end when it has no older neighbour; the last one newer for
+// -1, or -1 when it has no newer one.
 func rssNeighbourIndex(articles []core.RSSArticle, sel core.RSSArticle, delta int) int {
-	target := -1
-	for i, art := range articles {
-		if delta > 0 {
+	if delta > 0 {
+		for i, art := range articles {
 			if rssArticleNewer(sel, art) {
 				return i
 			}
-			continue
 		}
+		return len(articles)
+	}
+	target := -1
+	for i, art := range articles {
 		if rssArticleNewer(art, sel) {
 			target = i
 		}
