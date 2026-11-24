@@ -109,19 +109,19 @@ func newRSSReaderState(articleID string) rssReaderState {
 	return rssReaderState{articleID: articleID, hover: -1, jump: -1}
 }
 
-// rssTypeState is the reading view's typography: the type scale the reader
+// rssTypeState is the reading view's typography: the body size the reader
 // draws with, read from local settings once so the header's size control, the
 // body, and a relaunch all draw the same page.
 type rssTypeState struct {
 	seeded bool
-	scale  mui.ArticleType
+	size   float32
 }
 
 // readingType is the type scale the reading view draws with: the stored step,
 // or the middle rung while nothing has been read yet, so a reader always has
 // a whole scale.
 func (w *Window) readingType() mui.ArticleType {
-	return mui.ArticleTypeForSize(w.rssType.scale.Size)
+	return mui.ArticleTypeForSize(w.rssType.size)
 }
 
 // seedRSSReadingType restores the reading view's body size from local
@@ -131,17 +131,17 @@ func (w *Window) seedRSSReadingType(pref float32) {
 		return
 	}
 	w.rssType.seeded = true
-	w.rssType.scale = mui.ArticleTypeForSize(pref)
+	w.rssType.size = mui.NormalizeArticleSize(pref)
 }
 
 // setRSSReadingSize switches the reading view to the rung nearest size and
 // saves it at once, because the size control has no drag to settle.
 func (w *Window) setRSSReadingSize(size float32) {
 	size = mui.NormalizeArticleSize(size)
-	if w.rssType.scale.Size == size {
+	if w.rssType.size == size {
 		return
 	}
-	w.rssType.scale = mui.ArticleTypeForSize(size)
+	w.rssType.size = size
 	w.persistRSSReadingSize(size)
 }
 
@@ -253,7 +253,7 @@ func (w *Window) persistRSSListWidth(width float32) {
 }
 
 // rssReaderPadding centres the reading column: the board's 24 pt gutter, or
-// the wider gutter a large reader needs to keep the text column at 700 pt.
+// the wider gutter a large reader needs to keep the text column at 680 pt.
 func rssReaderPadding(available float32) float32 {
 	gutter := mui.Space(6)
 	if available > rssReadingColumn+2*mui.Space(6) {
@@ -263,7 +263,7 @@ func rssReaderPadding(available float32) float32 {
 }
 
 // rssReadingWidth is the text column's width inside a reader: what the
-// gutters leave, capped at 700 pt by the centring.
+// gutters leave, capped at 680 pt by the centring.
 func rssReadingWidth(readerWidth float32) float32 {
 	available := readerWidth - rssTickRailWidth
 	return max(available-2*rssReaderPadding(available), 0)
