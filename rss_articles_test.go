@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"image/png"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -566,4 +569,321 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 	if !tt.HasText("Quantum Computing Advances") {
 		t.Fatal("RSS workspace must restore RSS articles")
 	}
+}
+
+func saveEvidenceScreenshot(t *testing.T, tt *ui.Tester, filename string) {
+	t.Helper()
+	evidenceDir := "/Users/simon/.no-mistakes/evidence/01M8714Q13ANXZJVMJ7APQ2A6B"
+	if fi, err := os.Stat(evidenceDir); err == nil && fi.IsDir() {
+		outPath := filepath.Join(evidenceDir, filename)
+		img := tt.Image()
+		if img != nil {
+			f, err := os.Create(outPath)
+			if err != nil {
+				t.Logf("failed to create evidence file %s: %v", outPath, err)
+				return
+			}
+			defer f.Close()
+			if err := png.Encode(f, img); err != nil {
+				t.Logf("failed to encode png %s: %v", outPath, err)
+			}
+		}
+	}
+}
+
+func TestRSSScenariosEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+	ctx := context.Background()
+
+	nowMs := time.Now().UnixMilli()
+
+	f1 := core.RSSFeed{ID: "feed-1", Title: "Tech Weekly", FeedURL: "https://example.com/tech.xml", SiteURL: "https://example.com", UpdatedAt: nowMs}
+	f2 := core.RSSFeed{ID: "feed-2", Title: "Design Systems", FeedURL: "https://example.com/design.xml", SiteURL: "https://example.com", UpdatedAt: nowMs}
+	f3 := core.RSSFeed{ID: "feed-3", Title: "Science Journal", FeedURL: "https://example.com/science.xml", SiteURL: "https://example.com", UpdatedAt: nowMs}
+
+	for _, f := range []core.RSSFeed{f1, f2, f3} {
+		if err := a.Store.SaveRSSFeed(ctx, f); err != nil {
+			t.Fatalf("save feed %s: %v", f.ID, err)
+		}
+	}
+
+	g1 := core.RSSGroup{
+		ID:        "group-1",
+		Name:      "Engineering",
+		FeedIDs:   []string{"feed-1", "feed-2"},
+		SortOrder: 0,
+		UpdatedAt: nowMs,
+	}
+	if err := a.Store.SaveRSSGroup(ctx, g1); err != nil {
+		t.Fatalf("save group: %v", err)
+	}
+
+	articles := []core.RSSArticle{
+		{
+			ID:          "art-101",
+			FeedID:      "feed-1",
+			Title:       "Next-Gen Quantum Processors Exceed 1000 Qubits with High Fidelity",
+			Link:        "https://example.com/quantum",
+			Author:      "Dr. Alice Vance",
+			PublishedAt: time.Now().Add(-15 * time.Minute).Format(time.RFC3339),
+			Snippet:     "A team of experimental physicists has demonstrated sustained fault-tolerant quantum error correction across a two-dimensional grid of superconducting qubits.",
+			Read:        false,
+			Starred:     false,
+			UpdatedAt:   nowMs,
+		},
+		{
+			ID:          "art-102",
+			FeedID:      "feed-2",
+			Title:       "Crafting Spatial UI: Principles of Depth and Motion in Desktop Apps",
+			Link:        "https://example.com/spatial-ui",
+			Author:      "Bob Miller",
+			PublishedAt: time.Now().Add(-3 * time.Hour).Format(time.RFC3339),
+			Snippet:     "Exploring elevation tokens, dynamic border hairlines, and spring animations to establish tactile spatial hierarchies in native desktop interfaces.",
+			Read:        true,
+			Starred:     true,
+			UpdatedAt:   nowMs,
+		},
+		{
+			ID:          "art-103",
+			FeedID:      "feed-1",
+			Title:       "Go 1.25 Runtime Scheduler and Memory Management Enhancements",
+			Link:        "https://example.com/go125",
+			Author:      "Carol Danvers",
+			PublishedAt: time.Now().Add(-26 * time.Hour).Format(time.RFC3339),
+			Snippet:     "An in-depth analysis of the revised GC pacing heuristics and thread pooling optimizations tailored for high-concurrency microservices.",
+			Read:        false,
+			Starred:     true,
+			UpdatedAt:   nowMs,
+		},
+		{
+			ID:          "art-104",
+			FeedID:      "feed-3",
+			Title:       "Atmospheric Methane Monitoring from Low-Earth Orbit Constellations",
+			Link:        "https://example.com/methane-leo",
+			Author:      "Dave Bowman",
+			PublishedAt: time.Now().Add(-72 * time.Hour).Format(time.RFC3339),
+			Snippet:     "High-resolution hyperspectral satellite imagery unveils localized point-source emissions across major industrial basins with unprecedented fidelity.",
+			Read:        true,
+			Starred:     false,
+			UpdatedAt:   nowMs,
+		},
+		{
+			ID:          "art-105",
+			FeedID:      "feed-3",
+			Title:       "Historical Archives of the Early Web and Open Feed Protocols",
+			Link:        "https://example.com/rss-history",
+			Author:      "Eve Adams",
+			PublishedAt: "2025-08-14T10:00:00Z",
+			Snippet:     "Retrospective examination of RSS 2.0 and Atom syndication standards and their enduring resilience against centralized platform lock-in.",
+			Read:        false,
+			Starred:     false,
+			UpdatedAt:   nowMs,
+		},
+	}
+
+	if err := a.Store.SaveRSSArticles(ctx, articles); err != nil {
+		t.Fatalf("save articles: %v", err)
+	}
+
+	if err := a.ReloadRSS(); err != nil {
+		t.Fatalf("reload rss: %v", err)
+	}
+
+	selectedIndex := -1
+	w := &Window{app: a, selectedIndex: &selectedIndex}
+	w.selectWorkspace(WorkspaceRSS)
+
+	var selectedDispatches []string
+	w.onRSSArticleSelected = func(art core.RSSArticle) {
+		selectedDispatches = append(selectedDispatches, art.ID)
+	}
+
+	tt := ui.NewTester(w.shell, 1280, 808)
+	tt.Frame()
+
+	// Scenario 1: NetNewsWire-style article card layout and styling
+	t.Run("Scenario 1: NetNewsWire-style article card layout and styling", func(t *testing.T) {
+		for _, art := range articles {
+			if !tt.HasText(art.Title) {
+				t.Errorf("expected article title %q to be rendered", art.Title)
+			}
+		}
+
+		if !tt.HasText("Tech Weekly") || !tt.HasText("Design Systems") || !tt.HasText("Science Journal") {
+			t.Errorf("expected feed source names to be visible on line 1")
+		}
+
+		if !tt.HasText("15m ago") || !tt.HasText("3h ago") || !tt.HasText("Aug 14, 2025") {
+			t.Errorf("expected formatted dates on line 1: texts = %v", tt.Texts())
+		}
+
+		if !tt.HasText("fault-tolerant quantum error correction") {
+			t.Errorf("expected snippet text on line 3-4")
+		}
+
+		saveEvidenceScreenshot(t, tt, "scenario1_article_cards_layout.png")
+	})
+
+	// Scenario 2: Column header, count, unread filter, and chronological sorting
+	t.Run("Scenario 2: Column header, count, unread filter, and sorting", func(t *testing.T) {
+		if !tt.HasText("All Articles") {
+			t.Errorf("column header must show 'All Articles'")
+		}
+		if !tt.HasText("3 unread") {
+			t.Errorf("column header must show '3 unread', texts = %v", tt.Texts())
+		}
+		if !tt.HasText("5 articles") {
+			t.Errorf("toolbar strip must show '5 articles', texts = %v", tt.Texts())
+		}
+		if !tt.HasText("Search articles") {
+			t.Errorf("toolbar strip must have search input placeholder")
+		}
+
+		vis := a.VisibleRSSArticles()
+		if len(vis) != 5 {
+			t.Fatalf("expected 5 visible articles, got %d", len(vis))
+		}
+		for i := 1; i < len(vis); i++ {
+			if vis[i-1].PublishedAt < vis[i].PublishedAt {
+				t.Fatalf("articles not sorted newest first: [%d]=%s, [%d]=%s", i-1, vis[i-1].PublishedAt, i, vis[i].PublishedAt)
+			}
+		}
+
+		a.UnreadOnly = true
+		tt.Frame()
+
+		if !tt.HasText("3 unread") {
+			t.Errorf("with unread filter active, expected '3 unread', texts = %v", tt.Texts())
+		}
+		if !tt.HasText("Next-Gen Quantum Processors Exceed 1000 Qubits with High Fidelity") {
+			t.Errorf("unread article should remain visible under unread filter")
+		}
+		if tt.HasText("Crafting Spatial UI: Principles of Depth and Motion in Desktop Apps") {
+			t.Errorf("read article should be hidden under unread filter")
+		}
+
+		saveEvidenceScreenshot(t, tt, "scenario2_header_counts_and_unread_filter.png")
+
+		a.UnreadOnly = false
+		tt.Frame()
+	})
+
+	// Scenario 3: Article selection and stable keyboard arrow navigation
+	t.Run("Scenario 3: Selection and stable keyboard navigation", func(t *testing.T) {
+		rect, ok := tt.Find("Next-Gen Quantum Processors Exceed 1000 Qubits with High Fidelity")
+		if !ok {
+			t.Fatal("could not find article card art-101")
+		}
+		tt.ClickAt(rect.X+rect.W/2, rect.Y+rect.H/2)
+		tt.Frame()
+
+		if a.SelectedRSSArticleID != "art-101" {
+			t.Fatalf("expected SelectedRSSArticleID to be 'art-101', got %q", a.SelectedRSSArticleID)
+		}
+		if len(selectedDispatches) == 0 || selectedDispatches[len(selectedDispatches)-1] != "art-101" {
+			t.Fatalf("expected observer callback dispatched with 'art-101'")
+		}
+
+		tt.Key(0, ui.KeyDown)
+		tt.Frame()
+		if a.SelectedRSSArticleID != "art-102" {
+			t.Fatalf("after KeyDown, expected SelectedRSSArticleID 'art-102', got %q", a.SelectedRSSArticleID)
+		}
+
+		tt.Key(0, ui.KeyDown)
+		tt.Frame()
+		if a.SelectedRSSArticleID != "art-103" {
+			t.Fatalf("after second KeyDown, expected SelectedRSSArticleID 'art-103', got %q", a.SelectedRSSArticleID)
+		}
+
+		tt.Key(0, ui.KeyUp)
+		tt.Frame()
+		if a.SelectedRSSArticleID != "art-102" {
+			t.Fatalf("after KeyUp, expected SelectedRSSArticleID 'art-102', got %q", a.SelectedRSSArticleID)
+		}
+
+		saveEvidenceScreenshot(t, tt, "scenario3_selection_and_keyboard_navigation.png")
+	})
+
+	// Scenario 4: Marking articles read/unread and database persistence
+	t.Run("Scenario 4: Marking articles read/unread and database persistence", func(t *testing.T) {
+		initialUnread := a.RSSUnreadCount("")
+		if initialUnread != 3 {
+			t.Fatalf("initial unread count = %d, want 3", initialUnread)
+		}
+
+		if err := a.MarkRSSArticleRead("art-101", true); err != nil {
+			t.Fatalf("MarkRSSArticleRead failed: %v", err)
+		}
+		tt.Frame()
+
+		if count := a.RSSUnreadCount(""); count != 2 {
+			t.Fatalf("after marking read, in-memory unread count = %d, want 2", count)
+		}
+		if !tt.HasText("2 unread") {
+			t.Errorf("header should show '2 unread', texts = %v", tt.Texts())
+		}
+
+		stored, err := a.Store.GetRSSArticle(ctx, "art-101")
+		if err != nil || stored == nil {
+			t.Fatalf("failed to retrieve art-101 from sqlite store: %v", err)
+		}
+		if !stored.Read || stored.ReadAt == 0 {
+			t.Errorf("store did not persist Read=true and ReadAt > 0: %+v", stored)
+		}
+
+		if err := tt.RightClick("Next-Gen Quantum Processors Exceed 1000 Qubits with High Fidelity"); err == nil {
+			if err := tt.ChooseMenuItem("Mark as Unread"); err == nil {
+				tt.Frame()
+			}
+		}
+
+		_ = a.MarkRSSArticleRead("art-101", false)
+		tt.Frame()
+
+		storedUnread, _ := a.Store.GetRSSArticle(ctx, "art-101")
+		if storedUnread == nil || storedUnread.Read {
+			t.Errorf("store did not persist Read=false: %+v", storedUnread)
+		}
+		if !tt.HasText("3 unread") {
+			t.Errorf("header should restore '3 unread', texts = %v", tt.Texts())
+		}
+
+		saveEvidenceScreenshot(t, tt, "scenario4_mark_read_and_unread_state.png")
+	})
+
+	// Scenario 5: Workspace isolation and empty state handling
+	t.Run("Scenario 5: Workspace isolation and empty state handling", func(t *testing.T) {
+		w.selectWorkspace(WorkspaceVideos)
+		tt.Frame()
+		if w.activeWorkspaceName() != WorkspaceVideos {
+			t.Fatalf("expected active workspace Videos, got %q", w.activeWorkspaceName())
+		}
+		if tt.HasText("Next-Gen Quantum Processors Exceed 1000 Qubits with High Fidelity") {
+			t.Fatal("Videos workspace must NOT contain RSS articles")
+		}
+
+		w.selectWorkspace(WorkspaceRSS)
+		tt.Frame()
+		if w.activeWorkspaceName() != WorkspaceRSS {
+			t.Fatalf("expected active workspace RSS, got %q", w.activeWorkspaceName())
+		}
+		if !tt.HasText("Next-Gen Quantum Processors Exceed 1000 Qubits with High Fidelity") {
+			t.Fatal("RSS workspace must restore RSS articles")
+		}
+
+		a.Search = "NonExistentQuantumX999"
+		tt.Frame()
+
+		if !tt.HasText("No Matching Articles") {
+			t.Fatalf("expected 'No Matching Articles' empty state headline, texts = %v", tt.Texts())
+		}
+		if !tt.HasText("Try clearing search terms or the unread filter.") {
+			t.Fatalf("expected empty state sentence")
+		}
+
+		saveEvidenceScreenshot(t, tt, "scenario5_workspace_isolation_and_empty_state.png")
+	})
 }

@@ -762,7 +762,7 @@ func (w *Window) rssArticlesArea(c *ui.Context, t mui.Tokens) {
 func (w *Window) rssArticleItemRow(c *ui.Context, t mui.Tokens, art core.RSSArticle, index int, isSelected bool) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	dotClicked := false
-	row := ui.ButtonBase(c).Key("rss-article:" + art.ID).
+	row := ui.ButtonBase(c).Key("rss-article:"+art.ID).
 		FillWidth().Padding(mui.Space(2), mui.Space(2.5)).
 		Radius(mui.RadiusControl).Cursor(ui.CursorPointer).
 		FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
@@ -800,7 +800,7 @@ func (w *Window) rssArticleItemRow(c *ui.Context, t mui.Tokens, art core.RSSArti
 			// Left indicator column: fixed 12pt wide, holds 6pt accent dot when unread
 			ui.Column(c).Width(12).AlignItems(ui.Center).Padding(4, 0, 0, 0).Children(func() {
 				if !art.Read {
-					dot := ui.ButtonBase(c).Key("rss-unread-dot:" + art.ID).
+					dot := ui.ButtonBase(c).Key("rss-unread-dot:"+art.ID).
 						Size(6, 6).Radius(mui.RadiusCheck).Background(t.Accent).
 						Label("Unread").Cursor(ui.CursorPointer)
 					if dot.Clicked() {

@@ -179,6 +179,8 @@ type Window struct {
 	// starts. The app leaves it nil and fetches in the background; a test
 	// records the request instead of starting a lookup that outlives it.
 	onAddedChannel func(channel core.Channel)
+	// onRSSArticleSelected, when set, is invoked when an RSS article is selected.
+	// The app leaves it nil; tests or observers record selection dispatches.
 	onRSSArticleSelected func(article core.RSSArticle)
 
 	// RSS inline renaming state:
