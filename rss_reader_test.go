@@ -1755,13 +1755,31 @@ func TestRSSReaderDegradedNoticeClickAndBilingual(t *testing.T) {
 	// 1. English check
 	tt.SetLocale("en")
 	tt.Frame()
-	noticeEn, ok := tt.Find("Showing the feed's summary. Open the original article in your browser for the full text.")
+	const noticeEnText = "Showing the feed's summary. Open the original article in your browser for the full text."
+	noticeEn, ok := tt.Find(noticeEnText)
 	if !ok {
 		t.Fatalf("English summary notice missing, texts = %v", tt.Texts())
 	}
+	for range 100 {
+		if tt.Focused(noticeEnText) {
+			break
+		}
+		tt.Key(0, ui.KeyTab)
+	}
+	if !tt.Focused(noticeEnText) {
+		t.Fatalf("the summary notice never took the keyboard focus, texts = %v", tt.Texts())
+	}
+	tt.Key(0, ui.KeyEnter)
+	if urls := tt.OpenedURLs(); len(urls) != 1 || urls[0] != "https://feeds.example.com/summary-only" {
+		t.Fatalf("opened URLs after Enter on the summary notice = %v, want https://feeds.example.com/summary-only", urls)
+	}
+	noticeEn, ok = tt.Find(noticeEnText)
+	if !ok {
+		t.Fatalf("English summary notice missing after focusing it, texts = %v", tt.Texts())
+	}
 	tt.ClickAt(noticeEn.X+noticeEn.W/2, noticeEn.Y+noticeEn.H/2)
 	tt.Frame()
-	if urls := tt.OpenedURLs(); len(urls) != 1 || urls[0] != "https://feeds.example.com/summary-only" {
+	if urls := tt.OpenedURLs(); len(urls) != 2 || urls[1] != "https://feeds.example.com/summary-only" {
 		t.Fatalf("opened URLs after clicking English notice banner = %v, want https://feeds.example.com/summary-only", urls)
 	}
 
@@ -1774,7 +1792,7 @@ func TestRSSReaderDegradedNoticeClickAndBilingual(t *testing.T) {
 	}
 	tt.ClickAt(noticeZh.X+noticeZh.W/2, noticeZh.Y+noticeZh.H/2)
 	tt.Frame()
-	if urls := tt.OpenedURLs(); len(urls) != 2 || urls[1] != "https://feeds.example.com/summary-only" {
+	if urls := tt.OpenedURLs(); len(urls) != 3 || urls[2] != "https://feeds.example.com/summary-only" {
 		t.Fatalf("opened URLs after clicking Chinese notice banner = %v, want https://feeds.example.com/summary-only", urls)
 	}
 }
@@ -1845,6 +1863,21 @@ func TestRSSReaderImageAntiHotlinkAndErrorDegradation(t *testing.T) {
 		t.Fatalf("image alt text missing from placeholder, texts = %v", tt.Texts())
 	}
 
+	// The placeholder is a link: Tab reaches it and Enter opens the image.
+	for range 100 {
+		if tt.Focused("Architecture Blueprint") {
+			break
+		}
+		tt.Key(0, ui.KeyTab)
+	}
+	if !tt.Focused("Architecture Blueprint") {
+		t.Fatalf("the failed image placeholder never took the keyboard focus, texts = %v", tt.Texts())
+	}
+	tt.Key(0, ui.KeyEnter)
+	if urls := tt.OpenedURLs(); len(urls) != 1 || urls[0] != "https://anti-hotlink.example.com/secret.png" {
+		t.Fatalf("opened URLs after Enter on the placeholder = %v, want image URL https://anti-hotlink.example.com/secret.png", urls)
+	}
+
 	// Clicking the placeholder opens the image URL in the browser
 	clickTarget, ok := tt.Find("Open original image in browser")
 	if !ok {
@@ -1853,7 +1886,7 @@ func TestRSSReaderImageAntiHotlinkAndErrorDegradation(t *testing.T) {
 	tt.ClickAt(clickTarget.X+clickTarget.W/2, clickTarget.Y+clickTarget.H/2)
 	tt.Frame()
 
-	if urls := tt.OpenedURLs(); len(urls) != 1 || urls[0] != "https://anti-hotlink.example.com/secret.png" {
+	if urls := tt.OpenedURLs(); len(urls) != 2 || urls[1] != "https://anti-hotlink.example.com/secret.png" {
 		t.Fatalf("opened URLs = %v, want image URL https://anti-hotlink.example.com/secret.png", urls)
 	}
 

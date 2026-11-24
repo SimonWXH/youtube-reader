@@ -766,9 +766,10 @@ func (w *Window) rssDegradedNotice(c *ui.Context, t mui.Tokens, art core.RSSArti
 		Background(t.SurfaceAlt).Border(1, t.BorderSoft).AlignItems(ui.Center).
 		Role(ui.RoleLink).Label(sentence)
 	if strings.TrimSpace(art.Link) != "" {
-		notice.Cursor(ui.CursorPointer).Tooltip(art.Link).OnClick(func() {
-			c.OpenURL(art.Link)
-		})
+		open := func() { c.OpenURL(art.Link) }
+		notice.Cursor(ui.CursorPointer).Tooltip(art.Link).
+			Focusable().FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
+			OnClick(open).OnShortcut(0, ui.KeyEnter, open)
 	}
 	notice.Children(func() {
 		sfsymbols.Symbol(c, "doc.plaintext").Size(mui.Space(4)).Color(t.Warning).Element.Role(ui.RoleNone)
@@ -1096,9 +1097,9 @@ func (w *Window) rssImageBlock(c *ui.Context, t mui.Tokens, key string, block co
 		frame.MinHeight(mui.Space(24)).Padding(mui.Space(4), mui.Space(4)).
 			Background(t.SurfaceAlt).Border(1, t.BorderSoft).
 			Cursor(ui.CursorPointer).Tooltip(url).
-			OnClick(func() {
-				c.OpenURL(url)
-			})
+			Focusable().FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
+			OnClick(func() { c.OpenURL(url) }).
+			OnShortcut(0, ui.KeyEnter, func() { c.OpenURL(url) })
 
 		frame.Children(func() {
 			ui.Column(c).FillWidth().Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {

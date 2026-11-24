@@ -314,9 +314,6 @@ func ExtractFullText(ctx context.Context, client *http.Client, pageURL string, f
 								if len(parsed) > 0 {
 									contentHTML = art.Content
 									heroImage = art.Image
-									if heroImage == "" {
-										heroImage = ExtractHeroImage(contentHTML)
-									}
 									blocks = parsed
 									isFullText = true
 									return contentHTML, blocks, true, heroImage, nil
@@ -337,14 +334,6 @@ func ExtractFullText(ctx context.Context, client *http.Client, pageURL string, f
 		contentHTML = "<p>" + html.EscapeString(fallbackSnippet) + "</p>"
 	}
 	blocks = ParseHTMLBlocks(contentHTML)
-	if len(blocks) == 0 && strings.TrimSpace(fallbackSnippet) != "" {
-		blocks = []ArticleBlock{{
-			Type: BlockParagraph,
-			Text: fallbackSnippet,
-			HTML: "<p>" + html.EscapeString(fallbackSnippet) + "</p>",
-			Hash: ParagraphHash(BlockParagraph, fallbackSnippet, ""),
-		}}
-	}
 	if heroImage == "" {
 		heroImage = ExtractHeroImage(contentHTML)
 	}
