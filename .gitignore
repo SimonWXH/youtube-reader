@@ -11,3 +11,11 @@ resources/darwin/ytreader-helper
 
 # Throwaway E2E run home directories
 .e2e-*/
+
+# Local runtime settings, databases and sync artifacts
+settings.json
+*.sqlite*
+youtube-reader-sync.json
+favorites-backup.json
+.env*
+*.sync-conflict-*

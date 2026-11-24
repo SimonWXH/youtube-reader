@@ -4,9 +4,9 @@ The rules below are settled decisions for this repository, not suggestions. Foll
 
 ## Overview and architecture
 
-- YouTube Reader is a private, two-platform YouTube subscription reader for daily personal use (native macOS client in Go/MyGo + native Android client).
+- YouTube Reader is an open-source, two-platform YouTube subscription reader for daily personal use (native macOS client in Go/MyGo + native Android client).
 - Core model: Local-first, YouTube Data API v3 integration, channel avatars, standard long-form videos (filter out Shorts), with optional RSS aggregation on Android.
-- All work stays inside the private repository `SimonWXH/youtube-reader`.
+- All work stays inside the public repository `SimonWXH/youtube-reader`.
 
 ## Quality bar and design principles
 
