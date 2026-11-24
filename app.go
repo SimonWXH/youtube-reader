@@ -99,6 +99,9 @@ func cloneSettings(s core.Settings) core.Settings {
 	if s.GroupOrder != nil {
 		cloned.GroupOrder = append([]string(nil), s.GroupOrder...)
 	}
+	if s.WorkspaceOrder != nil {
+		cloned.WorkspaceOrder = append([]string(nil), s.WorkspaceOrder...)
+	}
 	return cloned
 }
 
@@ -216,6 +219,8 @@ func defaultSettings() core.Settings {
 		DetailsWidth:    defaultDetailsWidth,
 		MaxGridColumns:  defaultMaxGridColumns,
 		ExpandedGroups:  map[string]bool{},
+		WorkspaceOrder:  append([]string(nil), DefaultWorkspaceOrder...),
+		ActiveWorkspace: WorkspaceVideos,
 	}
 }
 
@@ -410,6 +415,35 @@ func groupIDs(groups []core.ChannelGroup) []string {
 func (a *App) SetGroupOrder(ids []string) error {
 	_, err := a.updateSettings(func(s *core.Settings) bool {
 		s.GroupOrder = append([]string(nil), ids...)
+		return true
+	})
+	return err
+}
+
+// WorkspaceOrder returns the current workspace order, falling back to the default.
+func (a *App) WorkspaceOrder() []string {
+	a.settingsMu.RLock()
+	defer a.settingsMu.RUnlock()
+	return sanitizeWorkspaceOrder(a.Settings.WorkspaceOrder)
+}
+
+// SetWorkspaceOrder stores the workspace order in local settings.
+func (a *App) SetWorkspaceOrder(order []string) error {
+	sanitized := sanitizeWorkspaceOrder(order)
+	_, err := a.updateSettings(func(s *core.Settings) bool {
+		s.WorkspaceOrder = append([]string(nil), sanitized...)
+		return true
+	})
+	return err
+}
+
+// SetActiveWorkspace stores the active workspace in local settings.
+func (a *App) SetActiveWorkspace(id string) error {
+	_, err := a.updateSettings(func(s *core.Settings) bool {
+		if s.ActiveWorkspace == id {
+			return false
+		}
+		s.ActiveWorkspace = id
 		return true
 	})
 	return err

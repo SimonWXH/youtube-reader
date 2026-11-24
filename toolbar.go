@@ -406,6 +406,14 @@ func fitFilterStrip(inner, checkbox, checkboxIcon, count float32) (channel, sear
 }
 
 func (w *Window) title() string {
+	switch w.activeWorkspaceName() {
+	case WorkspaceRSS:
+		return "RSS"
+	case WorkspaceReadLater:
+		return "Read Later"
+	case WorkspaceWeChatNotes:
+		return "WeChat Notes"
+	}
 	switch {
 	case w.app.Selected == "all":
 		return "All videos"

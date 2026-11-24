@@ -101,6 +101,10 @@ type Settings struct {
 	// LastFavoritesExport is when favorites were last written to the backup
 	// file, for the Backups pane's "Last export" line.
 	LastFavoritesExport string `json:"lastFavoritesExport,omitempty"`
+	// WorkspaceOrder is the top-level dock workspaces order in the sidebar.
+	WorkspaceOrder []string `json:"workspaceOrder,omitempty"`
+	// ActiveWorkspace is the active workspace: "videos", "rss", "read_later", or "wechat_notes".
+	ActiveWorkspace string `json:"activeWorkspace,omitempty"`
 	// NotificationPermissionDenied remembers that macOS refused a
 	// notification, so the Notifications pane can offer System Settings.
 	NotificationPermissionDenied bool `json:"notificationPermissionDenied,omitempty"`

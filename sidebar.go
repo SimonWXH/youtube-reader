@@ -73,110 +73,128 @@ func mustMenuIcon(svg *ui.SVG) ui.MenuIcon {
 }
 
 func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
+	w.ensureWorkspaceInit()
+	sidebar := ui.Column(c).Fill().Shrink(0).Background(t.Sidebar)
+	sidebar.Children(func() {
+		w.sidebarWorkspaceDock(c, t)
+		ui.Box(c).FillWidth().Height(mui.Hairline).Background(t.BorderSoft)
+
+		switch w.activeWorkspaceName() {
+		case WorkspaceRSS:
+			w.rssSidebar(c, t)
+		case WorkspaceReadLater:
+			w.readLaterSidebar(c, t)
+		case WorkspaceWeChatNotes:
+			w.wechatNotesSidebar(c, t)
+		default:
+			w.videosSidebar(c, t, sidebar)
+		}
+	})
+}
+
+func (w *Window) videosSidebar(c *ui.Context, t mui.Tokens, sidebar ui.Element) {
 	nav := &sidebarNav{w: w, focus: w.sidebarFocus, actions: map[string]func(){}}
 	w.sidebarFocus = ""
 	counts := w.sidebarCounts()
 	var drag groupDragFrame
 	var chDrag channelDragFrame
 
-	sidebar := ui.Column(c).Fill().Shrink(0).Background(t.Sidebar)
-	sidebar.Children(func() {
-		// The list clips at its own edge, so a row scrolled past the last
-		// visible one stops at the footer instead of painting under it.
-		ui.Scroll(c).Grow(1).MinHeight(0).Clip().Padding(0, mui.Space(2), mui.Space(2)+mui.ScrollBottomInset).Children(func() {
-			sectionHeader(c, t, "Library")
-			nav.row(c, t, mui.SidebarRow{
-				Key: "all", Label: "All videos", Symbol: "play.rectangle", Count: fmt.Sprintf("%d", counts.total),
-				Selected: w.app.Selected == "all",
-				OnClick: func() {
-					if w.renamingGroupID != "" {
-						w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
-					}
-					w.app.SelectDestination("all")
-				},
-			})
-			nav.row(c, t, mui.SidebarRow{
-				Key: "favorites", Label: "Favorites", Symbol: "star", Count: fmt.Sprintf("%d", counts.favorites),
-				Selected: w.app.Selected == "favorites",
-				OnClick: func() {
-					if w.renamingGroupID != "" {
-						w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
-					}
-					w.app.SelectDestination("favorites")
-				},
-			})
-			for i, g := range w.app.Groups {
-				w.groupSection(c, t, g, i, nav, counts, &drag, &chDrag)
-			}
-			grouped := groupedChannelIDs(w.app.Groups)
-			ungrouped := make([]core.Channel, 0, len(w.app.Channels))
-			for _, ch := range w.app.Channels {
-				if !grouped[ch.ID] {
-					ungrouped = append(ungrouped, ch)
+	// The list clips at its own edge, so a row scrolled past the last
+	// visible one stops at the footer instead of painting under it.
+	ui.Scroll(c).Grow(1).MinHeight(0).Clip().Padding(0, mui.Space(2), mui.Space(2)+mui.ScrollBottomInset).Children(func() {
+		sectionHeader(c, t, "Library")
+		nav.row(c, t, mui.SidebarRow{
+			Key: "all", Label: "All videos", Symbol: "play.rectangle", Count: fmt.Sprintf("%d", counts.total),
+			Selected: w.app.Selected == "all",
+			OnClick: func() {
+				if w.renamingGroupID != "" {
+					w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
 				}
-			}
-
-			channelDragActive := chDrag.alive || w.channelDraggingID != ""
-
-			if len(w.app.Channels) == 0 {
-				mui.SidebarEmpty(c, t, func() { w.importOPML(c) })
-			} else if len(ungrouped) > 0 {
-				ungroupedBlock := ui.Column(c.Key("ungrouped-block")).FillWidth()
-				draggedChan, chanOver := ui.DragOver[channelDrag](ungroupedBlock)
-				droppedChan, chanDropped := ui.Drop[channelDrag](ungroupedBlock)
-				if chanDropped && !w.channelIsUngrouped(droppedChan.ID) {
-					w.moveChannelToGroup(c, droppedChan.ID, "")
-				}
-				dropHover := chanOver && !w.channelIsUngrouped(draggedChan.ID)
-
-				ungroupedBlock.Children(func() {
-					if dropHover {
-						w.renderUngroupedDropRow(c, t, true)
-					} else {
-						sectionHeader(c, t, ungroupedHeader(c.Locale()))
-					}
-					for _, ch := range ungrouped {
-						ch := ch
-						row := nav.row(c, t, mui.SidebarRow{
-							Key: "all-channels:" + ch.ID, Label: ch.Title, Channel: true, Avatar: ch.AvatarURL,
-							Count:    fmt.Sprintf("%d", counts.perChannel[ch.ID]),
-							Selected: w.app.Selected == "channel:"+ch.ID,
-							OnClick: func() {
-								if w.renamingGroupID != "" {
-									w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
-								}
-								w.app.SelectDestination("channel:" + ch.ID)
-							},
-							OnContextMenu: func(m *ui.Menu) {
-								if m.Item(unsubscribeMenuLabel(c.Locale())).Chosen() {
-									w.confirmUnsubscribeChannel(c, ch)
-								}
-							},
-						})
-						row.Drag(channelDrag{ID: ch.ID})
-						if row.Dragging() {
-							chDrag.alive = true
-							chDrag.channelID = ch.ID
-							row.Opacity(0.4)
-						}
-					}
-				})
-			} else if channelDragActive {
-				ungroupedStrip := ui.Column(c.Key("ungrouped-drop-strip")).FillWidth()
-				draggedChan, chanOver := ui.DragOver[channelDrag](ungroupedStrip)
-				droppedChan, chanDropped := ui.Drop[channelDrag](ungroupedStrip)
-				if chanDropped && !w.channelIsUngrouped(droppedChan.ID) {
-					w.moveChannelToGroup(c, droppedChan.ID, "")
-				}
-				dropHover := chanOver && !w.channelIsUngrouped(draggedChan.ID)
-
-				ungroupedStrip.Children(func() {
-					w.renderUngroupedDropRow(c, t, dropHover)
-				})
-			}
+				w.app.SelectDestination("all")
+			},
 		})
-		w.sidebarFooter(c, t)
+		nav.row(c, t, mui.SidebarRow{
+			Key: "favorites", Label: "Favorites", Symbol: "star", Count: fmt.Sprintf("%d", counts.favorites),
+			Selected: w.app.Selected == "favorites",
+			OnClick: func() {
+				if w.renamingGroupID != "" {
+					w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
+				}
+				w.app.SelectDestination("favorites")
+			},
+		})
+		for i, g := range w.app.Groups {
+			w.groupSection(c, t, g, i, nav, counts, &drag, &chDrag)
+		}
+		grouped := groupedChannelIDs(w.app.Groups)
+		ungrouped := make([]core.Channel, 0, len(w.app.Channels))
+		for _, ch := range w.app.Channels {
+			if !grouped[ch.ID] {
+				ungrouped = append(ungrouped, ch)
+			}
+		}
+
+		channelDragActive := chDrag.alive || w.channelDraggingID != ""
+
+		if len(w.app.Channels) == 0 {
+			mui.SidebarEmpty(c, t, func() { w.importOPML(c) })
+		} else if len(ungrouped) > 0 {
+			ungroupedBlock := ui.Column(c.Key("ungrouped-block")).FillWidth()
+			draggedChan, chanOver := ui.DragOver[channelDrag](ungroupedBlock)
+			droppedChan, chanDropped := ui.Drop[channelDrag](ungroupedBlock)
+			if chanDropped && !w.channelIsUngrouped(droppedChan.ID) {
+				w.moveChannelToGroup(c, droppedChan.ID, "")
+			}
+			dropHover := chanOver && !w.channelIsUngrouped(draggedChan.ID)
+
+			ungroupedBlock.Children(func() {
+				if dropHover {
+					w.renderUngroupedDropRow(c, t, true)
+				} else {
+					sectionHeader(c, t, ungroupedHeader(c.Locale()))
+				}
+				for _, ch := range ungrouped {
+					ch := ch
+					row := nav.row(c, t, mui.SidebarRow{
+						Key: "all-channels:" + ch.ID, Label: ch.Title, Channel: true, Avatar: ch.AvatarURL,
+						Count:    fmt.Sprintf("%d", counts.perChannel[ch.ID]),
+						Selected: w.app.Selected == "channel:"+ch.ID,
+						OnClick: func() {
+							if w.renamingGroupID != "" {
+								w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
+							}
+							w.app.SelectDestination("channel:" + ch.ID)
+						},
+						OnContextMenu: func(m *ui.Menu) {
+							if m.Item(unsubscribeMenuLabel(c.Locale())).Chosen() {
+								w.confirmUnsubscribeChannel(c, ch)
+							}
+						},
+					})
+					row.Drag(channelDrag{ID: ch.ID})
+					if row.Dragging() {
+						chDrag.alive = true
+						chDrag.channelID = ch.ID
+						row.Opacity(0.4)
+					}
+				}
+			})
+		} else if channelDragActive {
+			ungroupedStrip := ui.Column(c.Key("ungrouped-drop-strip")).FillWidth()
+			draggedChan, chanOver := ui.DragOver[channelDrag](ungroupedStrip)
+			droppedChan, chanDropped := ui.Drop[channelDrag](ungroupedStrip)
+			if chanDropped && !w.channelIsUngrouped(droppedChan.ID) {
+				w.moveChannelToGroup(c, droppedChan.ID, "")
+			}
+			dropHover := chanOver && !w.channelIsUngrouped(draggedChan.ID)
+
+			ungroupedStrip.Children(func() {
+				w.renderUngroupedDropRow(c, t, dropHover)
+			})
+		}
 	})
+	w.sidebarFooter(c, t)
+
 	w.settleGroupDrag(c, &drag)
 	if chDrag.alive {
 		w.channelDraggingID = chDrag.channelID

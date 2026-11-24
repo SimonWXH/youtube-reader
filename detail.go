@@ -113,6 +113,12 @@ func detailWidthForRoom(width, rowWidth float32) float32 {
 }
 
 func (w *Window) view(c *ui.Context) {
+	w.ensureWorkspaceInit()
+	c.OnWindowShortcut(ui.Cmd, ui.Key1, func() { w.selectWorkspaceByIndex(0) })
+	c.OnWindowShortcut(ui.Cmd, ui.Key2, func() { w.selectWorkspaceByIndex(1) })
+	c.OnWindowShortcut(ui.Cmd, ui.Key3, func() { w.selectWorkspaceByIndex(2) })
+	c.OnWindowShortcut(ui.Cmd, ui.Key4, func() { w.selectWorkspaceByIndex(3) })
+
 	t := c.Theme()
 	tokens := mui.NewTokens(t, t.Dark)
 	settings := w.app.settingsSnapshot()
@@ -125,6 +131,9 @@ func (w *Window) view(c *ui.Context) {
 	}
 
 	selectedID := w.app.SelectedVideoID
+	if w.activeWorkspaceName() != WorkspaceVideos {
+		selectedID = ""
+	}
 	if selectedID != "" {
 		if v, ok := w.app.VideoByID(selectedID); ok {
 			if d.videoID != selectedID {
@@ -192,6 +201,19 @@ func (w *Window) mainArea(c *ui.Context, t mui.Tokens, shown, sidebar float32) {
 	if !w.sidebarHidden {
 		rowWidth -= splitDividerWidth()
 	}
+
+	switch w.activeWorkspaceName() {
+	case WorkspaceRSS:
+		w.rssMainArea(c, t, rowWidth)
+		return
+	case WorkspaceReadLater:
+		w.readLaterMainArea(c, t, rowWidth)
+		return
+	case WorkspaceWeChatNotes:
+		w.wechatNotesMainArea(c, t, rowWidth)
+		return
+	}
+
 	if shown <= 0 {
 		w.contentWidth = max(rowWidth, 0)
 		w.gridAvailableWidth = w.contentWidth

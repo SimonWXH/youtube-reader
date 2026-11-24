@@ -128,6 +128,10 @@ type Window struct {
 	// sidebarHidden folds the sidebar pane away from the toolbar's leading
 	// control or the View menu; the split layout reads it in detail.go.
 	sidebarHidden bool
+	// activeWorkspace is the currently displayed workspace.
+	activeWorkspace string
+	// workspaceStates holds the isolated state for each workspace.
+	workspaceStates map[string]*WorkspaceState
 	// menuRefresh and menuSidebar are the system menu's mirror of the toolbar.
 	menuRefresh *mygo.MenuItem
 	menuSidebar *mygo.MenuItem
