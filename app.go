@@ -219,18 +219,19 @@ func localLockDir() string {
 func defaultSettings() core.Settings {
 	dir := appDir()
 	return core.Settings{
-		RefreshMinutes:  defaultRefreshMinutes,
-		SyncPath:        filepath.Join(dir, "youtube-reader-sync.json"),
-		BackupPath:      filepath.Join(dir, "favorites-backup.json"),
-		NotificationIDs: []string{},
-		RecentFailures:  []core.RefreshFailure{},
-		SidebarWidth:    defaultSidebarWidth,
-		DetailsWidth:    defaultDetailsWidth,
-		RSSListWidth:    defaultRSSListWidth,
-		MaxGridColumns:  defaultMaxGridColumns,
-		ExpandedGroups:  map[string]bool{},
-		WorkspaceOrder:  append([]string(nil), DefaultWorkspaceOrder...),
-		ActiveWorkspace: WorkspaceVideos,
+		RefreshMinutes:     defaultRefreshMinutes,
+		SyncPath:           filepath.Join(dir, "youtube-reader-sync.json"),
+		BackupPath:         filepath.Join(dir, "favorites-backup.json"),
+		NotificationIDs:    []string{},
+		RecentFailures:     []core.RefreshFailure{},
+		SidebarWidth:       defaultSidebarWidth,
+		DetailsWidth:       defaultDetailsWidth,
+		RSSListWidth:       defaultRSSListWidth,
+		RSSReadingFontSize: defaultRSSReadingFontSize,
+		MaxGridColumns:     defaultMaxGridColumns,
+		ExpandedGroups:     map[string]bool{},
+		WorkspaceOrder:     append([]string(nil), DefaultWorkspaceOrder...),
+		ActiveWorkspace:    WorkspaceVideos,
 	}
 }
 

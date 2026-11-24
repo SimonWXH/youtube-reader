@@ -33,6 +33,9 @@ const (
 	minRSSListWidth     float32 = 260
 	maxRSSListWidth     float32 = 480
 	rssReaderMinWidth   float32 = 320
+	// defaultRSSReadingFontSize is the middle of the reader's three body
+	// sizes, where a first launch and a settings file without one start.
+	defaultRSSReadingFontSize = mui.DefaultArticleSize
 
 	defaultMaxGridColumns = 5
 	minMaxGridColumns     = 2
@@ -175,6 +178,9 @@ type Window struct {
 	// reading view's scroll and paragraph-tick state.
 	rssLayout rssLayoutState
 	rssReader rssReaderState
+	// rssType is the reading view's type scale, the body size control's
+	// choice restored from local settings.
+	rssType rssTypeState
 	// rssRefetchingID is the article whose full-text re-fetch is in flight,
 	// empty when none is: the reader's Refetch action shows progress and
 	// refuses a second request while it is set.

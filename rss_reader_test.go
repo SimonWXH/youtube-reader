@@ -485,7 +485,7 @@ func TestRSSTickInteraction(t *testing.T) {
 }
 
 // TestRSSReaderContentPadding pins the reading column's centring: the board's
-// gutter on a narrow reader and a wider gutter that holds a 700 pt column on a
+// gutter on a narrow reader and a wider gutter that holds a 680 pt column on a
 // wide one.
 func TestRSSReaderContentPadding(t *testing.T) {
 	if got := rssReaderPadding(400); got != mui.Space(6) {
@@ -1724,7 +1724,7 @@ func TestRSSThreeColumnLayoutAtMinimumWidth(t *testing.T) {
 }
 
 // TestRSSReadingColumnStaysNarrowOnAWideWindow checks the reading column's
-// 700 pt cap and centring: a wide window grows the gutters, not the line
+// 680 pt cap and centring: a wide window grows the gutters, not the line
 // length.
 func TestRSSReadingColumnStaysNarrowOnAWideWindow(t *testing.T) {
 	_, w := rssReaderTestApp(t)

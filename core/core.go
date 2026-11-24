@@ -117,6 +117,12 @@ type Settings struct {
 	// three-column split. It is a local UI preference like SidebarWidth and is
 	// never synced.
 	RSSListWidth float32 `json:"rssListWidth,omitempty"`
+	// RSSReadingFontSize is the RSS reading view's body size in points: 13,
+	// 15 or 17, written by the reader's size control. A zero or any size
+	// between them reads as the nearest rung, so the reader always draws a
+	// whole type scale. It is a local UI preference like RSSListWidth and is
+	// never synced.
+	RSSReadingFontSize float32 `json:"rssReadingFontSize,omitempty"`
 	// NotificationPermissionDenied remembers that macOS refused a
 	// notification, so the Notifications pane can offer System Settings.
 	NotificationPermissionDenied bool `json:"notificationPermissionDenied,omitempty"`
