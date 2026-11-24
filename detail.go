@@ -130,6 +130,7 @@ func (w *Window) view(c *ui.Context) {
 		d.width = initialDetailsWidth(settings.DetailsWidth)
 	}
 	w.seedRSSLayout(settings.RSSListWidth)
+	w.seedRSSReadingType(settings.RSSReadingFontSize)
 
 	selectedID := w.app.SelectedVideoID
 	if w.activeWorkspaceName() != WorkspaceVideos {

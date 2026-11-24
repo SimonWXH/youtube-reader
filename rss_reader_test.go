@@ -485,19 +485,19 @@ func TestRSSTickInteraction(t *testing.T) {
 }
 
 // TestRSSReaderContentPadding pins the reading column's centring: the board's
-// gutter on a narrow reader and a wider gutter that holds a 700 pt column on a
+// gutter on a narrow reader and a wider gutter that holds a 680 pt column on a
 // wide one.
 func TestRSSReaderContentPadding(t *testing.T) {
-	if got := rssReaderPadding(400); got != mui.Space(6) {
-		t.Fatalf("narrow reader gutter = %v, want %v", got, mui.Space(6))
+	if got := rssReaderPadding(400); got != 24 {
+		t.Fatalf("narrow reader gutter = %v, want the 24 pt gutter", got)
 	}
-	if got := rssReaderPadding(rssReadingColumn + 2*mui.Space(6)); got != mui.Space(6) {
-		t.Fatalf("exact column gutter = %v, want %v", got, mui.Space(6))
+	if got := rssReaderPadding(680 + 2*24); got != 24 {
+		t.Fatalf("exact column gutter = %v, want the 24 pt gutter", got)
 	}
 	available := float32(1000)
 	gutter := rssReaderPadding(available)
-	if got := available - 2*gutter; got != rssReadingColumn {
-		t.Fatalf("wide reader column = %v, want %v", got, rssReadingColumn)
+	if got := available - 2*gutter; got != 680 {
+		t.Fatalf("wide reader column = %v, want the 680 pt cap", got)
 	}
 }
 
@@ -505,13 +505,13 @@ func TestRSSReaderContentPadding(t *testing.T) {
 // picture fit: a picture never upscales past its own pixels and never grows
 // taller than the reader's maximum.
 func TestRSSReaderColumnAndImageSizing(t *testing.T) {
-	if got := rssReadingWidth(618); got != 618-rssTickRailWidth-2*mui.Space(6) {
-		t.Fatalf("narrow column = %v", got)
+	if got := rssReadingWidth(618); got != 546 {
+		t.Fatalf("narrow column = %v, want 546 pt inside two 24 pt gutters", got)
 	}
-	if got := rssReadingWidth(1000); got != rssReadingColumn {
-		t.Fatalf("wide column = %v, want the %v cap", got, rssReadingColumn)
+	if got := rssReadingWidth(1000); got != 680 {
+		t.Fatalf("wide column = %v, want the 680 pt cap", got)
 	}
-	if got := rssReadingWidth(rssTickRailWidth); got != 0 {
+	if got := rssReadingWidth(24); got != 0 {
 		t.Fatalf("column with no room = %v, want 0", got)
 	}
 
@@ -530,20 +530,6 @@ func TestRSSReaderColumnAndImageSizing(t *testing.T) {
 		gotW, gotH := rssImageSize(tc.column, tc.w, tc.h)
 		if gotW != tc.wantW || gotH != tc.wantH {
 			t.Errorf("%s: rssImageSize = %vx%v, want %vx%v", tc.name, gotW, gotH, tc.wantW, tc.wantH)
-		}
-	}
-
-	for _, tc := range []struct {
-		width  float32
-		inline bool
-	}{
-		{width: 320, inline: false},
-		{width: rssHeaderInlineActionsMin - 1, inline: false},
-		{width: rssHeaderInlineActionsMin, inline: true},
-		{width: 900, inline: true},
-	} {
-		if got := rssHeaderInlineActions(tc.width); got != tc.inline {
-			t.Errorf("rssHeaderInlineActions(%v) = %v, want %v", tc.width, got, tc.inline)
 		}
 	}
 }
@@ -696,10 +682,14 @@ func rssReaderTestApp(t *testing.T) (*App, *Window) {
 		t.Fatalf("reload rss: %v", err)
 	}
 
-	w := &Window{app: a, selectedIndex: new(int)}
+	w := &Window{app: a, selectedIndex: new(int), now: func() time.Time { return rssReaderTestNow }}
 	w.selectWorkspace(WorkspaceRSS)
 	return a, w
 }
+
+// rssReaderTestNow is the clock the reader tests run at, so the header's Today
+// and its year rule do not change with the day the suite runs.
+var rssReaderTestNow = time.Date(2026, time.December, 1, 9, 0, 0, 0, time.UTC)
 
 // stubNetImages keeps picture blocks offline and deterministic: the frame
 // holds its place and never depends on a network fetch.
@@ -709,6 +699,26 @@ func stubNetImages(t *testing.T) {
 		return nil, errors.New("offline in tests")
 	})})
 	t.Cleanup(func() { netimage.SetClient(http.DefaultClient) })
+}
+
+// TestRSSReaderDate pins the reading header's compact stamp: a same-day
+// article reads Today, one from this year names its day without the clock,
+// and an older one keeps its year.
+func TestRSSReaderDate(t *testing.T) {
+	now := time.Date(2026, time.November, 25, 15, 0, 0, 0, time.Local)
+	for _, tc := range []struct {
+		name, raw, want string
+	}{
+		{name: "today", raw: now.Format(time.RFC3339), want: "Today"},
+		{name: "this year", raw: time.Date(2026, time.November, 23, 8, 0, 0, 0, time.Local).Format(time.RFC3339), want: "Nov 23"},
+		{name: "another year", raw: time.Date(2025, time.December, 31, 8, 0, 0, 0, time.Local).Format(time.RFC3339), want: "Dec 31, 2025"},
+		{name: "empty", raw: "", want: ""},
+		{name: "unreadable", raw: "not a date", want: "not a date"},
+	} {
+		if got := rssReaderDate(tc.raw, now); got != tc.want {
+			t.Errorf("%s: rssReaderDate(%q) = %q, want %q", tc.name, tc.raw, got, tc.want)
+		}
+	}
 }
 
 // TestRSSReaderViewRendersArticle covers the reading view end to end: an
@@ -740,10 +750,10 @@ func TestRSSReaderViewRendersArticle(t *testing.T) {
 		t.Fatalf("SelectedRSSArticleID = %q, want art-reader", a.SelectedRSSArticleID)
 	}
 	for _, want := range []string{
-		"The Long Read",                       // feed source
-		"Ada Lovelace",                        // author
-		rssReaderDate("2026-11-23T08:00:00Z"), // published date, local and stamped
-		"The Quiet Return of the Open Feed",   // title
+		"The Long Read", // feed source
+		"Ada Lovelace",  // author
+		rssReaderDate("2026-11-23T08:00:00Z", rssReaderTestNow), // the article's day
+		"The Quiet Return of the Open Feed",                     // title
 		"Open in Browser",
 		"Refetch",
 		"The quiet return of the open feed",           // heading block
@@ -1724,7 +1734,7 @@ func TestRSSThreeColumnLayoutAtMinimumWidth(t *testing.T) {
 }
 
 // TestRSSReadingColumnStaysNarrowOnAWideWindow checks the reading column's
-// 700 pt cap and centring: a wide window grows the gutters, not the line
+// 680 pt cap and centring: a wide window grows the gutters, not the line
 // length.
 func TestRSSReadingColumnStaysNarrowOnAWideWindow(t *testing.T) {
 	_, w := rssReaderTestApp(t)
@@ -1742,11 +1752,11 @@ func TestRSSReadingColumnStaysNarrowOnAWideWindow(t *testing.T) {
 		t.Fatal("rail has no blocks to measure")
 	}
 	column := w.rssReader.ticks[0].W
-	if column != rssReadingColumn {
-		t.Fatalf("reading column = %v, want the %v cap", column, rssReadingColumn)
+	if column != 680 {
+		t.Fatalf("reading column = %v, want the 680 pt cap", column)
 	}
 	body := w.rssReader.viewport
-	if body.W < column+2*mui.Space(6) {
+	if body.W < column+2*24 {
 		t.Fatalf("body is %v wide for a %v column; the gutters did not grow", body.W, column)
 	}
 	saveRSSReaderScreenshot(t, tt, "06-reader-wide-window.png")

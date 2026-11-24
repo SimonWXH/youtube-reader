@@ -36,16 +36,22 @@ const (
 	// The hover preview is a light bubble left of the bars: its width, the gap
 	// it keeps from the widest bar, the room it keeps from the rail's ends, and
 	// how many characters of the paragraph it shows.
-	rssPreviewWidth  float32 = 236
-	rssPreviewGap    float32 = 8
-	rssPreviewMargin float32 = 6
-	rssPreviewRunes  int     = 56
-	rssPreviewLines  int     = 2
-	// rssHeaderInlineActionsMin is the reader width from which the header's
-	// star and its two labelled actions share the metadata's row.
-	rssHeaderInlineActionsMin float32 = 560
-	rssReadingColumn          float32 = 700 // the reading text column's widest
-	rssReaderImageMax         float32 = 560 // the tallest an inline picture may show
+	rssPreviewWidth   float32 = 236
+	rssPreviewGap     float32 = 8
+	rssPreviewMargin  float32 = 6
+	rssPreviewRunes   int     = 56
+	rssPreviewLines   int     = 2
+	rssReadingColumn  float32 = 680 // the reading text column's widest
+	rssReaderImageMax float32 = 560 // the tallest an inline picture may show
+	// rssHeaderFeedMin is the least room the header's metadata row leaves the
+	// feed name before giving up the inline layout, so the name and its
+	// separator never shrink to a stub: enough for the opening of a short
+	// feed title.
+	rssHeaderFeedMin float32 = 56
+	// The text size control in the reader's header reuses the settings panes'
+	// segmented-control metrics, the track and chip filling the header's 28 pt
+	// control height, and keeps its own padding for the single-letter segments.
+	rssTextSizePadX float32 = 7
 )
 
 // rssLayoutState is the RSS workspace's three-column split: the article list
@@ -98,6 +104,54 @@ type rssReaderState struct {
 // the pointer and no jump under way.
 func newRSSReaderState(articleID string) rssReaderState {
 	return rssReaderState{articleID: articleID, hover: -1, jump: -1}
+}
+
+// rssTypeState is the reading view's typography: the body size the reader
+// draws with, read from local settings once so the header's size control, the
+// body, and a relaunch all draw the same page.
+type rssTypeState struct {
+	seeded bool
+	size   float32
+}
+
+// readingType is the type scale the reading view draws with: the stored step,
+// or the middle rung while nothing has been read yet, so a reader always has
+// a whole scale.
+func (w *Window) readingType() mui.ArticleType {
+	return mui.ArticleTypeForSize(w.rssType.size)
+}
+
+// seedRSSReadingType restores the reading view's body size from local
+// settings once, so the size control and a relaunch read the same value.
+func (w *Window) seedRSSReadingType(pref float32) {
+	if w.rssType.seeded {
+		return
+	}
+	w.rssType.seeded = true
+	w.rssType.size = mui.NormalizeArticleSize(pref)
+}
+
+// setRSSReadingSize switches the reading view to the rung nearest size and
+// saves it at once, because the size control has no drag to settle.
+func (w *Window) setRSSReadingSize(size float32) {
+	size = mui.NormalizeArticleSize(size)
+	if w.rssType.size == size {
+		return
+	}
+	w.rssType.size = size
+	w.persistRSSReadingSize(size)
+}
+
+// persistRSSReadingSize writes the reader's body size to local settings.
+func (w *Window) persistRSSReadingSize(size float32) {
+	size = mui.NormalizeArticleSize(size)
+	_, _ = w.app.updateSettings(func(s *core.Settings) bool {
+		if s.RSSReadingFontSize == size {
+			return false
+		}
+		s.RSSReadingFontSize = size
+		return true
+	})
 }
 
 // clampRSSListWidth keeps the article list inside its 260-480 range, with zero
@@ -196,7 +250,7 @@ func (w *Window) persistRSSListWidth(width float32) {
 }
 
 // rssReaderPadding centres the reading column: the board's 24 pt gutter, or
-// the wider gutter a large reader needs to keep the text column at 700 pt.
+// the wider gutter a large reader needs to keep the text column at 680 pt.
 func rssReaderPadding(available float32) float32 {
 	gutter := mui.Space(6)
 	if available > rssReadingColumn+2*mui.Space(6) {
@@ -206,7 +260,7 @@ func rssReaderPadding(available float32) float32 {
 }
 
 // rssReadingWidth is the text column's width inside a reader: what the
-// gutters leave, capped at 700 pt by the centring.
+// gutters leave, capped at 680 pt by the centring.
 func rssReadingWidth(readerWidth float32) float32 {
 	available := readerWidth - rssTickRailWidth
 	return max(available-2*rssReaderPadding(available), 0)
@@ -470,8 +524,8 @@ func (w *Window) rssReaderEmpty(c *ui.Context, t mui.Tokens) {
 }
 
 // rssReaderHeader is the fixed article header: its source and date, its title,
-// its author, the star that toggles the article's star, and the two actions
-// that leave the app's rendering.
+// its author, the star that toggles the article's star, the text size control,
+// and the two actions that leave the app's rendering.
 func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticle) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	openLabel := "Open in Browser"
@@ -490,7 +544,13 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 	}
 
 	gutter := rssReaderPadding(w.rssLayout.readerWidth - rssTickRailWidth)
-	inline := rssHeaderInlineActions(w.rssLayout.readerWidth)
+	content := w.rssLayout.readerWidth - rssTickRailWidth - 2*gutter
+	now := time.Now()
+	if w.now != nil {
+		now = w.now()
+	}
+	date := rssReaderDate(art.PublishedAt, now)
+	inline := rssHeaderRowWidth(c, feedName, date, openLabel, refetchLabel, refetchingLabel) <= content
 	busy := w.rssRefetchingID == art.ID
 	refetchText := refetchLabel
 	if busy {
@@ -521,7 +581,7 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 			if feedName != "" {
 				mui.Metadata.Apply(ui.Text(c, feedName)).TextColor(t.Accent).SingleLine().Shrink(1)
 			}
-			if date := rssReaderDate(art.PublishedAt); date != "" {
+			if date != "" {
 				if feedName != "" {
 					mui.Metadata.Apply(ui.Text(c, "·")).TextColor(t.Faint).Shrink(0)
 				}
@@ -529,27 +589,149 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 			}
 			if inline {
 				ui.Spacer(c)
+				w.rssTextSizeControl(c, t)
 				actions()
 			}
 		})
-		mui.ArticleTitle.Apply(ui.Text(c, art.Title)).TextColor(t.Text).MaxLines(3).Wrap()
+		w.readingType().Title.Apply(ui.Text(c, art.Title)).TextColor(t.Text).MaxLines(3).Wrap()
 		if author := strings.TrimSpace(art.Author); author != "" {
 			mui.Secondary.Apply(ui.Text(c, author)).TextColor(t.Muted).SingleLine()
 		}
 		if !inline {
-			// A narrow reader stacks the actions under the metadata, so the
-			// buttons never leave the pane.
+			// A narrow reader gives the size control and the actions their
+			// own rows under the metadata, so neither leaves the pane and the
+			// feed name keeps its room.
+			ui.Row(c).FillWidth().Justify(ui.End).Children(func() {
+				w.rssTextSizeControl(c, t)
+			})
 			ui.Row(c).FillWidth().Justify(ui.End).Children(actions)
 		}
 	})
 }
 
-// rssHeaderInlineActions reports whether the reader is wide enough for the
-// header's actions to share the metadata's row. Below it they take their own
-// row, because the star, two labelled buttons and the date cannot fit side by
-// side.
-func rssHeaderInlineActions(readerWidth float32) bool {
-	return readerWidth >= rssHeaderInlineActionsMin
+// rssTextSizeTitle labels the size control as a whole, for the pointer and the
+// accessibility tree.
+func rssTextSizeTitle(zh bool) string {
+	if zh {
+		return "字号"
+	}
+	return "Text Size"
+}
+
+// rssTextSizeNames name the three body sizes, smallest first, as the size
+// control offers them to the pointer.
+var rssTextSizeNames = [...]struct{ en, zh string }{
+	{"Small Text", "小号文字"},
+	{"Default Text", "默认字号"},
+	{"Large Text", "大号文字"},
+}
+
+// rssTextSizeStepLabel names one step of the size control: its place on the
+// ladder and the size it sets.
+func rssTextSizeStepLabel(index int, size float32, zh bool) string {
+	name := rssTextSizeNames[0].en
+	if index >= 0 && index < len(rssTextSizeNames) {
+		name = rssTextSizeNames[index].en
+		if zh {
+			name = rssTextSizeNames[index].zh
+		}
+	}
+	return name + " · " + strconv.Itoa(int(size)) + " pt"
+}
+
+// rssTextSizeControl is the reader's body size control: one segment per
+// offered size, each carrying its own A so the ladder reads as a growing
+// letter, and the chosen step raised on the track's surface as the settings
+// panes' control is. Changing the step re-draws the whole page at the new
+// scale in the same frame and saves the choice.
+func (w *Window) rssTextSizeControl(c *ui.Context, t mui.Tokens) {
+	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
+	selected := mui.ArticleStep(w.readingType().Body.Size)
+	parts := ui.SegmentedBase(c.Key("rss-text-size"), &selected, len(mui.ArticleSizes))
+	track := parts.Track.Height(settingsControlH).Shrink(0).Padding(settingsSegmentInset).Gap(settingsSegmentGap).
+		Radius(mui.RadiusControl).Background(t.SurfaceAlt).Border(mui.Hairline, t.Border).
+		AlignItems(ui.Center).Label(rssTextSizeTitle(zh))
+	track.Children(func() {
+		for i, size := range mui.ArticleSizes {
+			label := rssTextSizeStepLabel(i, size, zh)
+			segment := parts.Segment(i).Height(settingsSegmentH).Padding(0, rssTextSizePadX).
+				Radius(settingsSegmentRadius).Center().FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
+				Label(label).Tooltip(label)
+			glyph := rssTextSizeGlyph(size)
+			if i == selected {
+				segment.Background(t.Surface).Border(mui.Hairline, t.BorderSoft)
+				segment.Children(func() {
+					glyph.Apply(ui.Text(c, "A")).TextColor(t.Text).SingleLine()
+				})
+				continue
+			}
+			segment.Background(t.SurfaceAlt)
+			segment.Children(func() {
+				glyph.Apply(ui.Text(c, "A")).TextColor(t.Muted).SingleLine()
+			})
+		}
+	})
+	if track.Changed() {
+		w.setRSSReadingSize(mui.ArticleSizes[selected])
+	}
+}
+
+// rssHeaderRowWidth is the width the header's metadata row needs to stay
+// inline: the date, the text size control, the star toggle, and both actions,
+// as their roles draw them, the row's own gaps, and the least room the feed
+// name and its separator keep. Below it the row stacks rather than shrinking
+// the feed name to a stub. The re-fetch action is measured at its wider label
+// so a re-fetch never flips the row to the stacked layout.
+func rssHeaderRowWidth(c *ui.Context, feedName, date, openLabel, refetchLabel, refetchingLabel string) float32 {
+	refetch := max(rssHeaderActionWidth(c, refetchLabel), rssHeaderActionWidth(c, refetchingLabel))
+	actions := mui.Space(7) + rssHeaderActionWidth(c, openLabel) + refetch + 2*mui.Space(2)
+	width := rssTextSizeControlWidth(c) + actions
+	children := 4 // the feed name, the spacer, the size control, and the actions
+	if feedName != "" {
+		width += rssHeaderFeedMin
+	}
+	if date != "" {
+		width += rssTextWidth(c, mui.Metadata, date)
+		children++
+		if feedName != "" {
+			width += rssTextWidth(c, mui.Metadata, "·")
+			children++
+		}
+	}
+	return width + float32(children-1)*mui.Space(2)
+}
+
+// rssTextWidth measures one run in the given role, the width it draws at.
+func rssTextWidth(c *ui.Context, style mui.TextStyle, text string) float32 {
+	span := ui.Span{Text: text, Font: style.Family, Size: style.Size, Weight: int(style.Weight), LetterSpacing: style.Tracking}
+	if style.Tabular {
+		span.Features = "tnum"
+	}
+	width, _ := c.MeasureText(0, span)
+	return width
+}
+
+// rssHeaderActionWidth is one header action's width: its label plus the
+// button's padding and hairline border.
+func rssHeaderActionWidth(c *ui.Context, label string) float32 {
+	return rssTextWidth(c, mui.Control, label) + 2*mui.Space(3) + 2*mui.Hairline
+}
+
+// rssTextSizeGlyph is the A one size segment draws, its line box the chip's
+// inner height so the letter sits inside the segment's border.
+func rssTextSizeGlyph(size float32) mui.TextStyle {
+	return mui.TextStyle{Size: size, LineHeight: settingsSegmentH - 2*mui.Hairline, Weight: mui.Medium}
+}
+
+// rssTextSizeControlWidth is the size control's width: the track's border,
+// inset, and gaps, and one padded segment per offered size drawing its own A,
+// with the chosen segment's border on top.
+func rssTextSizeControlWidth(c *ui.Context) float32 {
+	width := 2*mui.Hairline + 2*settingsSegmentInset + float32(len(mui.ArticleSizes)-1)*settingsSegmentGap + 2*mui.Hairline
+	for _, size := range mui.ArticleSizes {
+		width += rssTextWidth(c, rssTextSizeGlyph(size), "A") + 2*rssTextSizePadX
+	}
+	return width
 }
 
 // rssReaderAction is a 28 pt quiet action in the reader header, sized to its
@@ -669,6 +851,7 @@ func (w *Window) refetchRSSArticle(c *ui.Context, art core.RSSArticle) {
 // frame, which the paragraph rail maps.
 func (w *Window) rssReaderBody(c *ui.Context, t mui.Tokens, art core.RSSArticle, blocks []core.ArticleBlock) {
 	st := &w.rssReader
+	scale := w.readingType()
 	degraded := !art.IsFullText || len(blocks) == 0
 	gutter := rssReaderPadding(w.rssLayout.readerWidth - rssTickRailWidth)
 
@@ -679,7 +862,7 @@ func (w *Window) rssReaderBody(c *ui.Context, t mui.Tokens, art core.RSSArticle,
 
 	bounds := make([]ui.Rect, len(blocks))
 	body.Children(func() {
-		ui.Column(c.Key("rss-reader-content:" + art.ID)).FillWidth().Gap(mui.Space(4)).Children(func() {
+		ui.Column(c.Key("rss-reader-content:" + art.ID)).FillWidth().Gap(scale.BlockGap).Children(func() {
 			if degraded {
 				w.rssDegradedNotice(c, t, art)
 			}
@@ -687,7 +870,7 @@ func (w *Window) rssReaderBody(c *ui.Context, t mui.Tokens, art core.RSSArticle,
 				w.rssImageBlock(c, t, art.ID+":hero", core.ArticleBlock{Type: core.BlockImage, URL: art.HeroImage}, w.rssLayout.readerWidth, true)
 			}
 			for i, block := range blocks {
-				el := w.rssBlock(c, t, art, block, i)
+				el := w.rssBlock(c, t, art, block, i, scale)
 				bounds[i] = el.LayoutBounds()
 			}
 			if strings.TrimSpace(art.Link) != "" {
@@ -738,10 +921,10 @@ func rssBlocksHoldImage(blocks []core.ArticleBlock, url string) bool {
 	return false
 }
 
-// rssReaderDate formats an article's timestamp for the reading header: the
-// full stamped date rather than the list's relative one, because the header
-// answers "when was this written" once the article is open.
-func rssReaderDate(raw string) string {
+// rssReaderDate formats an article's timestamp for the reading header: Today
+// for a same-day article and the day it fell on for any other, without the
+// clock the list and the body already carry.
+func rssReaderDate(raw string, now time.Time) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""
@@ -750,7 +933,11 @@ func rssReaderDate(raw string) string {
 	if err != nil {
 		return raw
 	}
-	return strings.ToUpper(t.Local().Format("Jan 2, 2006 at 15:04"))
+	published, today := t.Local(), now.Local()
+	if published.Year() == today.Year() && published.YearDay() == today.YearDay() {
+		return "Today"
+	}
+	return formatArticleDay(published, today)
 }
 
 // rssDegradedNotice tells the reader the body is the feed's own text and the
@@ -999,10 +1186,10 @@ func rssPreviewLabel(kind string, zh bool) string {
 	return kind + " preview"
 }
 
-// rssBlock renders one structured article block. Every block takes the reading
-// column's width, and the element is returned so the caller can record the
-// bounds the paragraph rail reads.
-func (w *Window) rssBlock(c *ui.Context, t mui.Tokens, art core.RSSArticle, block core.ArticleBlock, index int) ui.Element {
+// rssBlock renders one structured article block at scale. Every block takes the
+// reading column's width, and the element is returned so the caller can record
+// the bounds the paragraph rail reads.
+func (w *Window) rssBlock(c *ui.Context, t mui.Tokens, art core.RSSArticle, block core.ArticleBlock, index int, scale mui.ArticleType) ui.Element {
 	key := "rss-block:" + art.ID + ":" + strconv.Itoa(index)
 	switch block.Type {
 	case core.BlockHeading:
@@ -1010,12 +1197,12 @@ func (w *Window) rssBlock(c *ui.Context, t mui.Tokens, art core.RSSArticle, bloc
 		if level < 1 || level > 6 {
 			level = 2
 		}
-		style := mui.ArticleHeading
+		style := scale.Heading
 		if level <= 1 {
-			style = mui.ArticleTitle
+			style = scale.Title
 		}
 		return style.Apply(ui.Text(c, block.Text)).TextColor(t.Text).
-			Key(key).FillWidth().Margin(mui.Space(2), 0, 0, 0).Wrap()
+			Key(key).FillWidth().Margin(scale.HeadingGap, 0, 0, 0).Wrap()
 
 	case core.BlockBlockquote:
 		quote := ui.Row(c.Key(key)).FillWidth().Gap(mui.Space(3)).
@@ -1024,7 +1211,7 @@ func (w *Window) rssBlock(c *ui.Context, t mui.Tokens, art core.RSSArticle, bloc
 			p.Fill(ui.Rect{X: r.X, Y: r.Y, W: 3, H: r.H}, t.Accent, 1.5)
 		})
 		quote.Children(func() {
-			mui.ArticleQuote.Apply(ui.Text(c, block.Text)).TextColor(t.Muted).Wrap().Grow(1)
+			scale.Quote.Apply(ui.Text(c, block.Text)).TextColor(t.Muted).Wrap().Grow(1)
 		})
 		return quote
 
@@ -1035,7 +1222,7 @@ func (w *Window) rssBlock(c *ui.Context, t mui.Tokens, art core.RSSArticle, bloc
 			if lang := strings.TrimSpace(block.Language); lang != "" {
 				mui.Metadata.Apply(ui.Text(c, strings.ToUpper(lang))).TextColor(t.Faint).SingleLine()
 			}
-			mui.ArticleCode.Apply(ui.Text(c, strings.TrimSuffix(block.Text, "\n"))).TextColor(t.Text).Wrap()
+			scale.Code.Apply(ui.Text(c, strings.TrimSuffix(block.Text, "\n"))).TextColor(t.Text).Wrap()
 		})
 		return code
 
@@ -1043,7 +1230,7 @@ func (w *Window) rssBlock(c *ui.Context, t mui.Tokens, art core.RSSArticle, bloc
 		return w.rssImageBlock(c, t, key, block, w.rssLayout.readerWidth, false)
 
 	case core.BlockList:
-		return mui.ArticleBody.Apply(ui.Text(c, block.Text)).TextColor(t.Text).
+		return scale.Body.Apply(ui.Text(c, block.Text)).TextColor(t.Text).
 			Key(key).FillWidth().Wrap()
 
 	default:
@@ -1051,7 +1238,7 @@ func (w *Window) rssBlock(c *ui.Context, t mui.Tokens, art core.RSSArticle, bloc
 		if strings.TrimSpace(text) == "" {
 			text = core.CleanSnippet("", block.HTML, 0)
 		}
-		return mui.ArticleBody.Apply(ui.Text(c, text)).TextColor(t.Text).
+		return scale.Body.Apply(ui.Text(c, text)).TextColor(t.Text).
 			Key(key).FillWidth().Wrap()
 	}
 }

@@ -88,17 +88,132 @@ var (
 	EmptyTitle = TextStyle{Size: 15, LineHeight: 20, Weight: Semibold}
 	// EmptyBody is an empty state's explanation.
 	EmptyBody = TextStyle{Size: 13, LineHeight: 18, Weight: Regular}
-	// ArticleTitle is the reading view's article headline.
-	ArticleTitle = TextStyle{Size: 20, LineHeight: 27, Weight: Semibold, Tracking: -0.2}
-	// ArticleHeading is a section heading inside a reading view's body.
-	ArticleHeading = TextStyle{Size: 16, LineHeight: 23, Weight: Semibold, Tracking: -0.1}
+	// ArticleTitle is the reading view's article headline, at the middle
+	// body step; ArticleTypeForSize gives the headline of either other step.
+	ArticleTitle = TextStyle{Size: 24, LineHeight: 30, Weight: Semibold, Tracking: -0.2}
+	// ArticleHeading is a section heading inside a reading view's body, at
+	// the middle body step.
+	ArticleHeading = TextStyle{Size: 18, LineHeight: 25, Weight: Semibold, Tracking: -0.1}
 	// ArticleBody is long-form reading copy, a step larger and looser than
 	// Body so the reading column stays comfortable over a long article.
-	ArticleBody = TextStyle{Size: 14, LineHeight: 23, Weight: Regular}
+	ArticleBody = TextStyle{Size: 15, LineHeight: 24, Weight: Regular}
 	// ArticleQuote is a pull quote in a reading view's body.
-	ArticleQuote = TextStyle{Size: 14, LineHeight: 23, Weight: Regular}
+	ArticleQuote = TextStyle{Size: 15, LineHeight: 24, Weight: Regular}
 	// ArticleCode is a code block in a reading view's body.
-	ArticleCode = TextStyle{Family: MonoFont, Size: 12, LineHeight: 19, Weight: Regular}
+	ArticleCode = TextStyle{Family: MonoFont, Size: 13, LineHeight: 20, Weight: Regular}
 	// MonospacePath is a file path in the settings window.
 	MonospacePath = TextStyle{Family: MonoFont, Size: 11.5, LineHeight: 16, Weight: Regular}
 )
+
+// ArticleType is the reading view's whole type scale for one body size: the
+// headline, section heading, body, quote, and code roles sized from that
+// body, and the vertical rhythm the step sets. The body's size is the step,
+// and one value carries the whole page, so a size change never leaves a role
+// or a gap at the old step.
+type ArticleType struct {
+	Title TextStyle
+	// Heading is a section heading inside the body; a first-level heading
+	// takes Title, the article's own size.
+	Heading TextStyle
+	Body    TextStyle
+	Quote   TextStyle
+	Code    TextStyle
+	// BlockGap is the space between the body's blocks, and HeadingGap the
+	// extra lead-in a section heading keeps above it.
+	BlockGap   float32
+	HeadingGap float32
+}
+
+// articleTypes is the type ladder, one rung per offered body size. The body
+// grows 2 pt a step with 1.6 times its size for a line (21, 24, 27), the
+// headline sits at 1.6 times the body, a section heading at 1.2, and code a
+// step under the body so code never shouts beside prose. The middle rung is
+// the published Article tokens.
+var articleTypes = [...]ArticleType{
+	{
+		Title:      TextStyle{Size: 21, LineHeight: 27, Weight: Semibold, Tracking: -0.2},
+		Heading:    TextStyle{Size: 16, LineHeight: 22, Weight: Semibold, Tracking: -0.1},
+		Body:       TextStyle{Size: 13, LineHeight: 21, Weight: Regular},
+		Quote:      TextStyle{Size: 13, LineHeight: 21, Weight: Regular},
+		Code:       TextStyle{Family: MonoFont, Size: 11.5, LineHeight: 17, Weight: Regular},
+		BlockGap:   Space(3),
+		HeadingGap: Space(1.5),
+	},
+	{
+		Title:      ArticleTitle,
+		Heading:    ArticleHeading,
+		Body:       ArticleBody,
+		Quote:      ArticleQuote,
+		Code:       ArticleCode,
+		BlockGap:   Space(4),
+		HeadingGap: Space(2),
+	},
+	{
+		Title:      TextStyle{Size: 27, LineHeight: 34, Weight: Semibold, Tracking: -0.2},
+		Heading:    TextStyle{Size: 20, LineHeight: 28, Weight: Semibold, Tracking: -0.1},
+		Body:       TextStyle{Size: 17, LineHeight: 27, Weight: Regular},
+		Quote:      TextStyle{Size: 17, LineHeight: 27, Weight: Regular},
+		Code:       TextStyle{Family: MonoFont, Size: 15, LineHeight: 23, Weight: Regular},
+		BlockGap:   Space(5),
+		HeadingGap: Space(2.5),
+	},
+}
+
+// ArticleSizes are the body sizes the reading view offers, smallest first,
+// read from the ladder so a step is defined once, and DefaultArticleSize is
+// the middle one, where a reader starts.
+var (
+	ArticleSizes       = articleSizes()
+	DefaultArticleSize = ArticleSizes[len(ArticleSizes)/2]
+)
+
+// articleSizes lists the ladder's body sizes, smallest first.
+func articleSizes() []float32 {
+	sizes := make([]float32, len(articleTypes))
+	for i, scale := range articleTypes {
+		sizes[i] = scale.Body.Size
+	}
+	return sizes
+}
+
+// ArticleTypeForSize returns the scale of the offered body size nearest size.
+// A size that names no rung, as a first launch's zero does, takes the middle
+// one, so the reading view always has a whole scale to draw with.
+func ArticleTypeForSize(size float32) ArticleType {
+	return articleTypes[articleStep(size)]
+}
+
+// NormalizeArticleSize turns a stored body size into the offered rung nearest
+// it, for the settings file and the size control to agree on what is saved.
+func NormalizeArticleSize(size float32) float32 {
+	return articleTypes[articleStep(size)].Body.Size
+}
+
+// ArticleStep returns the place, from the smallest, of the offered size nearest
+// size, so a control can tell which step its scale is on.
+func ArticleStep(size float32) int {
+	return articleStep(size)
+}
+
+// articleStep is the rung nearest size. A tie goes to the larger rung, and a
+// size that names nothing, zero or below, takes the middle rung.
+func articleStep(size float32) int {
+	if size <= 0 {
+		return len(articleTypes) / 2
+	}
+	step, best := 0, absFloat32(articleTypes[0].Body.Size-size)
+	for i := 1; i < len(articleTypes); i++ {
+		if diff := absFloat32(articleTypes[i].Body.Size - size); diff <= best {
+			step, best = i, diff
+		}
+	}
+	return step
+}
+
+// absFloat32 is size's distance from zero, for measuring which rung is nearest.
+func absFloat32(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
