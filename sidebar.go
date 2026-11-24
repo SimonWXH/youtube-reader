@@ -147,6 +147,11 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 								}
 								w.app.SelectDestination("channel:" + ch.ID)
 							},
+							OnContextMenu: func(m *ui.Menu) {
+								if m.Item(unsubscribeMenuLabel(c.Locale())).Chosen() {
+									w.confirmUnsubscribeChannel(c, ch)
+								}
+							},
 						})
 						row.Drag(channelDrag{ID: ch.ID})
 						if row.Dragging() {
@@ -301,6 +306,69 @@ func renameMenuLabel(locale string) string {
 		return "重命名"
 	}
 	return "Rename"
+}
+
+// unsubscribeMenuLabel returns the context menu item label for unsubscribing channels.
+func unsubscribeMenuLabel(locale string) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return "取消订阅"
+	}
+	return "Unsubscribe"
+}
+
+type unsubscribeDialogCopy struct {
+	title      string
+	detail     string
+	cancelBtn  string
+	confirmBtn string
+}
+
+func unsubscribeCopy(locale, channelTitle string) unsubscribeDialogCopy {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return unsubscribeDialogCopy{
+			title:      fmt.Sprintf("取消订阅 %s？", channelTitle),
+			detail:     "该频道及其未收藏的视频将从本地列表中移除。",
+			cancelBtn:  "取消",
+			confirmBtn: "取消订阅",
+		}
+	}
+	return unsubscribeDialogCopy{
+		title:      fmt.Sprintf("Unsubscribe from %s?", channelTitle),
+		detail:     "This channel and its un-favorited videos will be removed from your library.",
+		cancelBtn:  "Cancel",
+		confirmBtn: "Unsubscribe",
+	}
+}
+
+var dialogMessage = func(opts mygo.MessageOptions) (mygo.MessageResult, error) {
+	return mygo.Dialog.Message(opts)
+}
+
+// confirmUnsubscribeChannel displays a confirmation dialog and unsubscribes the
+// channel if confirmed, preserving favorited videos.
+func (w *Window) confirmUnsubscribeChannel(c *ui.Context, ch core.Channel) {
+	words := unsubscribeCopy(c.Locale(), ch.Title)
+	result, err := dialogMessage(mygo.MessageOptions{
+		Parent:             w.dialogParent(),
+		Type:               mygo.MessageWarning,
+		Title:              words.title,
+		Message:            words.title,
+		Detail:             words.detail,
+		Buttons:            []string{words.cancelBtn, words.confirmBtn},
+		DefaultButton:      0,
+		CancelButton:       0,
+		DestructiveButtons: []int{1},
+	})
+	if err != nil || result.Button != 1 {
+		return
+	}
+	if err := w.app.UnsubscribeChannel(ch.ID); err != nil {
+		w.toast(c, "Unsubscribe failed: "+err.Error(), true)
+		return
+	}
+	c.Invalidate()
+	w.invalidateMainWindow()
+	w.refreshSettingsWindow()
 }
 
 // sidebarNav keeps the sidebar's keyboard order for one frame. Rows register
@@ -475,6 +543,11 @@ func (w *Window) groupSection(c *ui.Context, t mui.Tokens, g core.ChannelGroup, 
 							w.commitRenameGroup(w.renamingGroupID, w.renamingGroupName)
 						}
 						w.app.SelectDestination("channel:" + id)
+					},
+					OnContextMenu: func(m *ui.Menu) {
+						if m.Item(unsubscribeMenuLabel(c.Locale())).Chosen() {
+							w.confirmUnsubscribeChannel(c, ch)
+						}
 					},
 				})
 				focused = focused || row.Focused()
@@ -695,6 +768,9 @@ func (w *Window) channelByID(id string) core.Channel {
 		if ch.ID == id {
 			return ch
 		}
+	}
+	if ch, ok := w.app.Sync.Channels[id]; ok {
+		return ch
 	}
 	return core.Channel{ID: id, Title: id}
 }
