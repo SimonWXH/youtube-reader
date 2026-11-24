@@ -310,8 +310,9 @@ func TestParseRSSOPMLFaultTolerance(t *testing.T) {
 }
 
 // TestParseRSSOPMLURLlessOutlinesMakeNoFolder verifies that a feed stub that lost
-// its xmlUrl, and an outline carrying only an htmlUrl, import as nothing rather
-// than as an empty folder, while a genuinely empty folder still imports.
+// its xmlUrl, and a leaf carrying only an htmlUrl, import as nothing rather than
+// as an empty folder, while a named outline with children stays a folder even
+// when it carries an htmlUrl, and a genuinely empty folder still imports.
 func TestParseRSSOPMLURLlessOutlinesMakeNoFolder(t *testing.T) {
 	opmlData := []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
@@ -322,6 +323,9 @@ func TestParseRSSOPMLURLlessOutlinesMakeNoFolder(t *testing.T) {
       <outline text="Feed Schema" xmlUrl="https://example.com/feed.xml"/>
     </outline>
     <outline text="Later" title="Later"></outline>
+    <outline text="Tech" title="Tech" htmlUrl="https://example.com/tech">
+      <outline type="rss" text="Nested Feed" xmlUrl="https://example.com/nested.xml"/>
+    </outline>
   </body>
 </opml>`)
 
@@ -334,20 +338,28 @@ func TestParseRSSOPMLURLlessOutlinesMakeNoFolder(t *testing.T) {
 	for _, g := range parsed.Groups {
 		names = append(names, g.Name)
 	}
-	if len(names) != 2 || names[0] != "Dev" || names[1] != "Later" {
-		t.Errorf("groups = %v; want [Dev Later]", names)
+	if len(names) != 3 || names[0] != "Dev" || names[1] != "Later" || names[2] != "Tech" {
+		t.Fatalf("groups = %v; want [Dev Later Tech]", names)
 	}
-	if len(parsed.Feeds) != 1 {
-		t.Fatalf("feeds = %d; want 1", len(parsed.Feeds))
+	if len(parsed.Feeds) != 2 {
+		t.Fatalf("feeds = %d; want 2", len(parsed.Feeds))
 	}
-	if parsed.Feeds[0].FeedURL != "https://example.com/feed.xml" {
-		t.Errorf("feed URL = %q; want https://example.com/feed.xml", parsed.Feeds[0].FeedURL)
+
+	groupIDsByFeed := make(map[string][]string, len(parsed.Feeds))
+	for _, f := range parsed.Feeds {
+		groupIDsByFeed[f.FeedURL] = f.GroupIDs
 	}
-	if len(parsed.Feeds[0].GroupIDs) != 1 || parsed.Feeds[0].GroupIDs[0] != parsed.Groups[0].ID {
-		t.Errorf("feed GroupIDs = %v; want the Dev group only", parsed.Feeds[0].GroupIDs)
+	if got := groupIDsByFeed["https://example.com/feed.xml"]; len(got) != 1 || got[0] != parsed.Groups[0].ID {
+		t.Errorf("feed GroupIDs = %v; want the Dev group only", got)
+	}
+	if got := groupIDsByFeed["https://example.com/nested.xml"]; len(got) != 1 || got[0] != parsed.Groups[2].ID {
+		t.Errorf("nested feed GroupIDs = %v; want the Tech group only", got)
 	}
 	if len(parsed.Groups[1].FeedIDs) != 0 {
 		t.Errorf("empty folder FeedIDs = %v; want none", parsed.Groups[1].FeedIDs)
+	}
+	if len(parsed.Groups[2].FeedIDs) != 1 {
+		t.Errorf("folder with htmlUrl FeedIDs = %v; want its child feed", parsed.Groups[2].FeedIDs)
 	}
 }
 

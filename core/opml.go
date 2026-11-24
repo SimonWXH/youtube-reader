@@ -214,7 +214,7 @@ func ParseRSSOPML(data []byte) (*ParsedRSSOPML, error) {
 			}
 
 			isGroup := !hasFeedURL && !strings.EqualFold(strings.TrimSpace(o.Type), "rss") &&
-				strings.TrimSpace(o.HTMLURL) == "" && (len(o.Children) > 0 || groupName != "")
+				(len(o.Children) > 0 || strings.TrimSpace(o.HTMLURL) == "")
 			var currentGroupID string
 
 			if isGroup && groupName != "" {

@@ -1011,6 +1011,9 @@ func TestLiveScenario5_AdversarialOPML(t *testing.T) {
       <outline type="rss" text="Feed Slash Scheme" xmlUrl="feed://example.org/atom.xml"/>
       <outline type="rss" text="Missing XML URL"/>
     </outline>
+    <outline text="Tech" title="Tech" htmlUrl="https://example.com/tech">
+      <outline type="rss" text="Feed" xmlUrl="https://example.com/feed.xml"/>
+    </outline>
   </body>
 </opml>`
 	edgeFile := writeTestOPML(t, dir, "edge.opml", edgeOPML)
@@ -1019,13 +1022,23 @@ func TestLiveScenario5_AdversarialOPML(t *testing.T) {
 		t.Fatalf("import edgeOPML failed: %v", err)
 	}
 
-	if res.FeedsImported != 2 {
-		t.Errorf("FeedsImported = %d; want 2 (valid feeds only)", res.FeedsImported)
+	if res.FeedsImported != 3 {
+		t.Errorf("FeedsImported = %d; want 3 (valid feeds only)", res.FeedsImported)
 	}
-	if res.GroupsImported != 1 {
-		t.Errorf("GroupsImported = %d; want 1 (the Dev & Tech folder, no phantom for the URL-less rss outline)", res.GroupsImported)
+	if res.GroupsImported != 2 {
+		t.Errorf("GroupsImported = %d; want 2 (Dev & Tech plus the Tech folder with an htmlUrl, no phantom for the URL-less rss outline)", res.GroupsImported)
 	}
-	advReport.WriteString(fmt.Sprintf("2. Scheme Normalization & Missing URLs: Imported %d valid feeds and %d group, skipped missing xmlUrl\n", res.FeedsImported, res.GroupsImported))
+	techFeedID := core.FeedID(core.CanonicalURL("https://example.com/feed.xml"))
+	techHoldsFeed := false
+	for _, g := range a.RSSGroups {
+		if g.Name == "Tech" && slices.Contains(g.FeedIDs, techFeedID) {
+			techHoldsFeed = true
+		}
+	}
+	if !techHoldsFeed {
+		t.Errorf("groups = %+v; want a Tech folder holding %q", a.RSSGroups, techFeedID)
+	}
+	advReport.WriteString(fmt.Sprintf("2. Scheme Normalization & Missing URLs: Imported %d valid feeds and %d groups, skipped missing xmlUrl\n", res.FeedsImported, res.GroupsImported))
 
 	// Verify feeds were normalized
 	for _, f := range a.RSSFeeds {
