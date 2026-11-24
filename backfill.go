@@ -127,22 +127,35 @@ func (w *Window) startBackfill(channelID string) {
 	go func() {
 		result, err := w.app.LoadEarlierVideos(context.Background(), channel, cursor)
 		mygo.RunOnMain(func() {
-			w.app.BackfillBusy = ""
-			switch {
-			case err != nil:
-				w.app.BackfillErr = backfillFailureText(err, locale)
-			default:
-				w.app.BackfillErr = ""
-				_ = w.app.reload()
-				if len(result.Videos) == 0 && !result.Complete() {
-					// The page was read and kept, but it held no long video:
-					// say so, so the unchanged page is not a silent click.
-					w.toast(nil, mui.ChannelHistoryCopy(locale).EmptyPage, false)
-				}
-			}
-			w.invalidateMainWindow()
+			w.applyBackfillResult(channelID, result, err, locale)
 		})
 	}()
+}
+
+func (w *Window) applyBackfillResult(channelID string, result core.BackfillResult, err error, locale string) {
+	if w.app == nil {
+		return
+	}
+	if locale == "" {
+		locale = w.locale()
+	}
+	w.app.BackfillBusy = ""
+	onChannel := destinationID(w.app.Selected, "channel:") == channelID
+	switch {
+	case err != nil:
+		if onChannel {
+			w.app.BackfillErr = backfillFailureText(err, locale)
+		}
+	default:
+		if onChannel {
+			w.app.BackfillErr = ""
+		}
+		_ = w.app.reload()
+		if onChannel && len(result.Videos) == 0 && !result.Complete() {
+			w.toast(nil, mui.ChannelHistoryCopy(locale).EmptyPage, false)
+		}
+	}
+	w.invalidateMainWindow()
 }
 
 // backfillFailureText is what a failed history page reports: the failure the app

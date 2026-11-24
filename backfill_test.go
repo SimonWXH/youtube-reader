@@ -408,3 +408,63 @@ func TestStartBackfillDropsASecondClick(t *testing.T) {
 		t.Fatalf("a second click issued %d requests while a page was in flight", requests)
 	}
 }
+
+func TestApplyBackfillResultIsIsolatedToTargetChannel(t *testing.T) {
+	a := historyApp(t)
+	defer a.Close()
+	channel2 := core.Channel{ID: "ch-2", Title: "Second channel", UploadedAt: "uploads-2"}
+	a.Channels = append(a.Channels, channel2)
+	a.Sync.Channels[channel2.ID] = channel2
+
+	w := &Window{app: a, selectedIndex: new(int)}
+
+	a.Selected = "channel:ch-2"
+	a.BackfillBusy = "ch-1"
+	a.BackfillErr = ""
+	w.applyBackfillResult("ch-1", core.BackfillResult{}, errors.New("network failure"), "en")
+	if a.BackfillErr != "" {
+		t.Fatalf("channel switch leaked error to current channel: %q", a.BackfillErr)
+	}
+	if a.BackfillBusy != "" {
+		t.Fatalf("busy flag was not cleared: %q", a.BackfillBusy)
+	}
+
+	a.Selected = "channel:ch-1"
+	a.BackfillBusy = "ch-1"
+	w.applyBackfillResult("ch-1", core.BackfillResult{}, errors.New("network failure"), "en")
+	if a.BackfillErr == "" || !strings.Contains(a.BackfillErr, "network failure") {
+		t.Fatalf("expected error on target channel, got: %q", a.BackfillErr)
+	}
+
+	w.pendingToasts = nil
+	a.Selected = "channel:ch-2"
+	w.applyBackfillResult("ch-1", core.BackfillResult{NextPageToken: "next"}, nil, "en")
+	if len(w.pendingToasts) != 0 {
+		t.Fatalf("channel switch leaked empty page toast: %+v", w.pendingToasts)
+	}
+
+	w.pendingToasts = nil
+	a.Selected = "channel:ch-1"
+	w.applyBackfillResult("ch-1", core.BackfillResult{NextPageToken: "next"}, nil, "en")
+	if len(w.pendingToasts) != 1 {
+		t.Fatalf("expected empty page toast on target channel, got: %+v", w.pendingToasts)
+	}
+
+	ctx := context.Background()
+	newVideo := core.Video{ID: "v-new", ChannelID: "ch-1", Title: "Older video"}
+	if err := a.Store.CommitRefresh(ctx, core.RefreshCommit{Videos: []core.Video{newVideo}}); err != nil {
+		t.Fatal(err)
+	}
+	a.Selected = "channel:ch-2"
+	w.applyBackfillResult("ch-1", core.BackfillResult{Videos: []core.Video{newVideo}}, nil, "en")
+	found := false
+	for _, v := range a.Videos {
+		if v.ID == "v-new" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected SQLite reload to update in-memory videos even when viewing another channel")
+	}
+}
