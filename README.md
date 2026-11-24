@@ -1,10 +1,10 @@
 # Build / MyGo
 
-YouTube Reader is a private macOS app. It is built with Go 1.27+ and MyGo v0.10.0 native UI (`github.com/egoist/mygo/ui`). There is no frontend, webview, HTML or JavaScript in the app.
+YouTube Reader is a macOS app. It is built with Go 1.27+ and MyGo v0.10.0 native UI (`github.com/egoist/mygo/ui`). There is no frontend, webview, HTML or JavaScript in the app.
 
 ## Requirements
 
-- Go 1.27+ (the task toolchain is at `/Volumes/ZHITAI_1TB/Projects/firstmate/data/youtube-reader-mygo-spike-1/toolchain/go/bin/go`)
+- Go 1.27+
 - macOS arm64 for the signed `.app` and DMG build
 - A YouTube Data API v3 key entered in Settings (local only, never bundled or synced)
 
@@ -19,12 +19,6 @@ make dmg-path
 ```
 
 `make build` runs `Scripts/build-helper.sh` to build the standalone helper into `resources/darwin`, compiles the app, and signs `dist/darwin-arm64/YouTube Reader.app` ad hoc with `codesign --force --sign -`. `make dmg` packages that signed bundle and an `/Applications` symlink into a compressed UDZO disk image with `hdiutil`, and `make dmg-path` prints the image path. The build is ad hoc signed and not notarized; there is no Developer ID, Team ID, or stapler step.
-
-If `go` is not on `PATH`, point `GO` at the toolchain when running Make:
-
-```sh
-make GO=/Volumes/ZHITAI_1TB/Projects/firstmate/data/youtube-reader-mygo-spike-1/toolchain/go/bin/go build
-```
 
 ## Installation
 

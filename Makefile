@@ -14,9 +14,7 @@ OUT_DIR      := dist/darwin-$(ARCH)
 BUNDLE       := $(OUT_DIR)/$(APP_NAME).app
 DMG          := $(OUT_DIR)/$(SLUG)-$(VERSION)-$(ARCH).dmg
 
-# Prefer Go from PATH. The fallback is the task toolchain documented in the
-# README, which keeps this Makefile usable from a bare agent environment.
-GO           ?= $(shell command -v go 2>/dev/null || printf '%s' '/Volumes/ZHITAI_1TB/Projects/firstmate/data/youtube-reader-mygo-spike-1/toolchain/go/bin/go')
+GO           ?= go
 CODESIGN     ?= codesign
 
 .PHONY: all build test dmg dmg-path run clean
