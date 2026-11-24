@@ -768,6 +768,111 @@ func (a *App) AddSubscription(channel core.Channel, groupID string) error {
 	return a.reload()
 }
 
+// UnsubscribeChannel removes a channel from the library: its sync record,
+// its presence in every group, its ordinary videos in the local store, and its
+// notification consent. Favorited videos are permanently kept. If the channel
+// was selected in the sidebar, navigation falls back to All videos.
+func (a *App) UnsubscribeChannel(channelID string) error {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return errors.New("channel id is empty")
+	}
+
+	// 1. Snapshot sync state for safe rollback on failure.
+	oldSync := cloneSyncState(a.Sync)
+
+	// 2. Identify favorite videos that must be preserved.
+	keepIDs := make(map[string]bool)
+	for id, fav := range a.Sync.Favorites {
+		if fav.Video != nil && fav.Video.ChannelID == channelID {
+			keepIDs[id] = true
+		}
+	}
+	for _, v := range a.Videos {
+		if v.ChannelID == channelID {
+			if v.FavoritedAt != 0 || a.Sync.IsFavorite(v.ID) {
+				keepIDs[v.ID] = true
+			}
+		}
+	}
+	keepList := make([]string, 0, len(keepIDs))
+	for id := range keepIDs {
+		keepList = append(keepList, id)
+	}
+
+	// 3. Mutate sync state: delete from Sync.Channels and filter from every group.
+	now := time.Now().UnixMilli()
+	delete(a.Sync.Channels, channelID)
+	for gid, group := range a.Sync.Groups {
+		if slices.Contains(group.ChannelIDs, channelID) {
+			kept := make([]string, 0, len(group.ChannelIDs)-1)
+			for _, id := range group.ChannelIDs {
+				if id != channelID {
+					kept = append(kept, id)
+				}
+			}
+			group.ChannelIDs = kept
+			group.UpdatedAt = now
+			a.Sync.Groups[gid] = group
+		}
+	}
+	if a.Sync.UpdatedAt < now {
+		a.Sync.UpdatedAt = now
+	}
+
+	// 4. Persist sync state.
+	if err := a.SaveSync(); err != nil {
+		a.Sync = oldSync
+		return err
+	}
+
+	// 5. Clean local SQLite store: remove channel and un-favorited videos.
+	if a.Store != nil {
+		ctx := context.Background()
+		if err := a.Store.DeleteChannel(ctx, channelID, keepList); err != nil {
+			a.Sync = oldSync
+			_ = a.SaveSync()
+			return err
+		}
+	}
+
+	// 6. Remove channel from notification preferences.
+	_, _ = a.updateSettings(func(s *core.Settings) bool {
+		if !slices.Contains(s.NotificationIDs, channelID) {
+			return false
+		}
+		kept := make([]string, 0, len(s.NotificationIDs)-1)
+		for _, id := range s.NotificationIDs {
+			if id != channelID {
+				kept = append(kept, id)
+			}
+		}
+		s.NotificationIDs = kept
+		return true
+	})
+
+	// 7. Reset selection if current selection or filter is this channel.
+	if a.Selected == "channel:"+channelID {
+		a.SelectDestination("all")
+	}
+	if a.ChannelFilter == channelID {
+		a.ChannelFilter = ""
+	}
+	if a.SelectedVideoID != "" {
+		if _, ok := keepIDs[a.SelectedVideoID]; !ok {
+			for _, v := range a.Videos {
+				if v.ID == a.SelectedVideoID && v.ChannelID == channelID {
+					a.SelectedVideoID = ""
+					break
+				}
+			}
+		}
+	}
+
+	// 8. Reload local memory state from store and sync.
+	return a.reload()
+}
+
 // commitChannelRows writes the channel rows the library now holds into the
 // local store, so a channel added or moved shows with the title and avatar the
 // lookup found before any video refreshes it. The refresh revision is left as

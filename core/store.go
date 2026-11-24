@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/plugins/sqlite"
@@ -220,6 +221,34 @@ func (s *Store) SetChannelGroupIDs(ctx context.Context, channelID string, groupI
 		raw = string(data)
 	}
 	_, err := s.db.Execute(ctx, `INSERT INTO channels(id, group_ids, updated_at) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET group_ids=excluded.group_ids, updated_at=excluded.updated_at`, channelID, raw, updatedAt)
+	return err
+}
+
+// DeleteChannel removes a channel from the local store along with its videos,
+// preserving any video whose ID appears in keepVideoIDs (e.g. favorited videos).
+func (s *Store) DeleteChannel(ctx context.Context, channelID string, keepVideoIDs []string) error {
+	stmts := []sqlite.Statement{
+		{SQL: `DELETE FROM channels WHERE id = ?`, Args: []any{channelID}},
+	}
+	if len(keepVideoIDs) == 0 {
+		stmts = append(stmts, sqlite.Statement{
+			SQL:  `DELETE FROM videos WHERE channel_id = ?`,
+			Args: []any{channelID},
+		})
+	} else {
+		placeholders := make([]string, len(keepVideoIDs))
+		args := make([]any, 1+len(keepVideoIDs))
+		args[0] = channelID
+		for i, id := range keepVideoIDs {
+			placeholders[i] = "?"
+			args[1+i] = id
+		}
+		stmts = append(stmts, sqlite.Statement{
+			SQL:  fmt.Sprintf(`DELETE FROM videos WHERE channel_id = ? AND id NOT IN (%s)`, strings.Join(placeholders, ",")),
+			Args: args,
+		})
+	}
+	_, err := s.db.Transaction(ctx, stmts)
 	return err
 }
 
