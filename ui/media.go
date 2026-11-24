@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"math"
+
 	"github.com/egoist/mygo/plugins/sfsymbols"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/netimage"
@@ -39,29 +41,25 @@ func ChannelAvatar(c *ui.Context, tokens Tokens, url, title string, size float32
 // cannot load. Neither a missing URL nor a failed load leaves a gap. The
 // caller clips the frame to the card's corners, so the frame carries no
 // radius of its own.
-func Thumbnail(c *ui.Context, tokens Tokens, url string, w, h float32) {
+//
+// frameWidth is the frame's width in points, which sets the bitmap's sampling:
+// the picture is kept at what the frame shows at two pixels per point, so a
+// card as wide as a narrow column holds a narrow bitmap. A frame width of zero
+// asks for the default cap, the widest card at that density.
+func Thumbnail(c *ui.Context, tokens Tokens, url string, frameWidth float32) {
+	maxSide := netimage.Options{MaxSide: thumbMaxSide(frameWidth)}
 	if url != "" {
-		src, err := netimage.Load(c, url, netimage.Options{MaxSide: thumbMaxSide(w)})
+		src, err := netimage.Load(c, url, maxSide)
 		if src != nil {
-			thumbnailFrame(netimage.Image(c, url, netimage.Options{MaxSide: thumbMaxSide(w)}), w, h)
+			netimage.Image(c, url, maxSide).Fill()
 			return
 		}
 		if err != nil {
-			thumbnailFrame(thumbnailPlaceholder(c, tokens, "Thumbnail unavailable", true), w, h)
+			thumbnailPlaceholder(c, tokens, "Thumbnail unavailable", true).Fill()
 			return
 		}
 	}
-	thumbnailFrame(thumbnailPlaceholder(c, tokens, "Thumbnail loading", false), w, h)
-}
-
-// thumbnailFrame sizes a picture to the frame its caller gives it, or fills
-// the frame when the caller passes no size.
-func thumbnailFrame(el ui.Element, w, h float32) {
-	if w <= 0 || h <= 0 {
-		el.Fill()
-		return
-	}
-	el.Size(w, h)
+	thumbnailPlaceholder(c, tokens, "Thumbnail loading", false).Fill()
 }
 
 // thumbnailPlaceholder is the frame a thumbnail shows before it loads, and
@@ -77,11 +75,30 @@ func thumbnailPlaceholder(c *ui.Context, tokens Tokens, label string, failed boo
 	})
 }
 
-// thumbMaxSide bounds the bitmap kept for a frame w wide, at about three
-// pixels per point.
+// thumbnailPixelsPerPoint is the sampling density a thumbnail is decoded at:
+// two pixels per point, which is what every Mac retina screen draws. Three - an
+// iPhone's density - keeps 2.25 times the pixels the screen shows for no
+// sharper a picture.
+const thumbnailPixelsPerPoint = 2
+
+// thumbnailSampleStep is the step a frame's sampling width is rounded up to.
+// netimage keeps one decoded bitmap per size asked for, so an unrounded width
+// would ask for a new one at every pixel of a window drag and hold them all;
+// rounding up to a step asks for a handful across the whole drag, and never
+// samples below what the frame shows.
+const thumbnailSampleStep = 64
+
+// defaultThumbMaxSide bounds the bitmap for a frame whose width its caller
+// leaves to the layout: a 320 pt card at two pixels per point need not be
+// exceeded by a caller that cannot say how wide its frame is.
+const defaultThumbMaxSide = 640
+
+// thumbMaxSide bounds the bitmap kept for a frame w wide, at two pixels per
+// point, the density every Mac retina screen draws.
 func thumbMaxSide(w float32) int {
 	if w <= 0 {
-		return 640
+		return defaultThumbMaxSide
 	}
-	return int(w * 3)
+	side := int(math.Ceil(float64(w) * thumbnailPixelsPerPoint))
+	return (side + thumbnailSampleStep - 1) / thumbnailSampleStep * thumbnailSampleStep
 }

@@ -180,7 +180,9 @@ func (w *Window) videoCard(c *ui.Context, t mui.Tokens, index, focusIndex int, v
 	}
 	card.Children(func() {
 		ui.Row(c).Height(m.Height - gridCardTextBlock).FillWidth().Children(func() {
-			mui.Thumbnail(c, t, v.ThumbnailURL, 0, 0)
+			// The card's width, in points, is what the bitmap is sampled for: at
+			// two pixels per point a card this wide cannot show more.
+			mui.Thumbnail(c, t, v.ThumbnailURL, m.Width)
 		})
 		ui.Column(c).Grow(1).Padding(mui.Space(2)).Gap(mui.Space(1)).Children(func() {
 			mui.CardTitle.Apply(ui.Text(c, v.Title)).TextColor(cardTitleColor(t, selected)).

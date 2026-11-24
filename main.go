@@ -80,6 +80,10 @@ func runNotifyOnly(app *App) {
 }
 
 func realMain() {
+	// The heap cap is in place before the first load: the launch merges the
+	// sync state and the store, which is the largest allocation the process
+	// makes before the reader sees a frame.
+	capMemory()
 	// A picture whose server accepts the connection and then stalls has to end
 	// in the reader's failed-image placeholder, not hold the frame forever, so
 	// bound every image download netimage makes rather than wait on it.
@@ -108,6 +112,9 @@ func realMain() {
 	if err := app.DrainQueuedSyncWrites(); err != nil {
 		log.Printf("sync queue: %v", err)
 	}
+	// The launch load - the sync state, the store and the hand-off merge - has
+	// returned what it needed; the pages it freed are the system's again.
+	releaseIdleMemory()
 	mygo.App.WhenReady(func() {
 		// The saved frame comes from local settings, and the displays it is
 		// checked against exist only once the app is ready.
@@ -342,7 +349,8 @@ func (w *Window) runRefresh(force bool) {
 		finish := func() {
 			w.cancelRefresh = nil
 			// A cancelled attempt has no result to apply: the reader ended it,
-			// and there is no failure or new content to report.
+			// and there is no failure or new content to report. Its end is still
+			// a peak the reader has finished with.
 			if cancelled {
 				w.app.Busy = false
 				w.syncRefreshMenu()
@@ -351,6 +359,7 @@ func (w *Window) runRefresh(force bool) {
 					w.status.refresh()
 					w.status.invalidate()
 				}
+				releaseIdleMemory()
 				return
 			}
 			w.refreshFinished(outcome, snapshot)
@@ -382,6 +391,10 @@ func (w *Window) refreshFinished(outcome RefreshOutcome, snapshot refreshSnapsho
 		_ = w.app.reload()
 		w.refreshSettingsWindow()
 	}
+	// A refresh merges what it fetched into the store, so its end is a peak
+	// the reader has finished with: the pages it freed go back to the system
+	// here, once, rather than on a frame where the collection would stutter.
+	releaseIdleMemory()
 }
 
 // cancelRefreshRun ends the refresh in flight from the pane that has nothing
@@ -470,6 +483,9 @@ func (w *Window) reloadHelperRefresh() {
 		log.Printf("helper refresh: %v", err)
 		return
 	}
+	// The helper's refresh committed to the shared store; the reload that read
+	// it is the end of that peak.
+	releaseIdleMemory()
 	w.refreshSettingsWindow()
 }
 

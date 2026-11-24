@@ -1010,7 +1010,11 @@ func (a *App) ApplyChannelFetch(channel core.Channel, videos []core.Video) bool 
 			Revision: a.Revision + 1,
 		})
 	}
-	return a.reload() == nil
+	// The fetch merged a channel's whole library and the reload read it all
+	// back: that peak is over, so its freed pages go back to the system.
+	err := a.reload()
+	releaseIdleMemory()
+	return err == nil
 }
 
 func (a *App) Close() {
@@ -1152,7 +1156,11 @@ func (a *App) ImportOPMLPaths(paths []string) error {
 		s.GroupOrder = order
 		return true
 	})
-	return a.reload()
+	// A merge adds the file's groups and channels and the reload reads the
+	// library back: the peak ends here.
+	err := a.reload()
+	releaseIdleMemory()
+	return err
 }
 
 func (a *App) ImportOPML(path string) error {
@@ -1175,7 +1183,11 @@ func (a *App) ImportOPML(path string) error {
 		s.GroupOrder = groupIDs(groups)
 		return true
 	})
-	return a.reload()
+	// A replace merges a whole file's groups and channels and the reload reads
+	// the library back: the peak ends here.
+	err = a.reload()
+	releaseIdleMemory()
+	return err
 }
 
 func (a *App) MarkRead(video core.Video) {
@@ -1351,6 +1363,8 @@ func (a *App) ImportFavorites(path string) (int, error) {
 	if err := a.SaveSync(); err != nil {
 		return 0, err
 	}
+	// The backup's records are merged in one pass: the peak ends here.
+	releaseIdleMemory()
 	return changed, nil
 }
 
