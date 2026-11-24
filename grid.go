@@ -126,6 +126,12 @@ func (w *Window) gridArea(c *ui.Context, t mui.Tokens) {
 				w.app.SelectedVideoID = videos[*w.grid.Selected].ID
 			}
 		}
+		// A channel's own page carries the control that reads one more page of
+		// its history, under the grid's last row. Every other destination mixes
+		// channels, and a history page belongs to one.
+		if channelID := destinationID(w.app.Selected, "channel:"); channelID != "" {
+			w.channelHistoryFooter(c, t, channelID, metrics.gridWidth(gap))
+		}
 	})
 }
 

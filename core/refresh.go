@@ -219,6 +219,9 @@ func hydrateDurations(ctx context.Context, client YouTube, videos []Video) ([]Vi
 			hv.ChannelID = v.ChannelID
 			hv.ChannelTitle = v.ChannelTitle
 			hv.AvatarURL = v.AvatarURL
+			// The mark belongs to how the video arrived, not to the metadata the
+			// hydration brings, so it survives being replaced by it.
+			hv.IsBackfilled = hv.IsBackfilled || v.IsBackfilled
 			if hv.ThumbnailURL == "" {
 				hv.ThumbnailURL = v.ThumbnailURL
 			}

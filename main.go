@@ -568,11 +568,34 @@ func (w *Window) emptyPane(c *ui.Context, t mui.Tokens, in mui.PaneInput) {
 		}
 	case mui.EmptyFavorites:
 		spec.OnAction = func() { w.app.SelectDestination("all") }
+	case mui.EmptyChannel:
+		w.emptyChannelPane(c, in, &spec)
 	default:
 		spec.OnAction = func() { w.runRefresh(true) }
 		spec.ActionDisabled, spec.ActionTooltip = w.refreshDisabledReason()
 	}
 	mui.EmptyPane(c, t, spec)
+}
+
+// emptyChannelPane turns the empty channel pane into the one step that fills it.
+// A refresh reads the last 30 days of uploads only, so a channel that has not
+// posted in that window is empty however often it is refreshed: the pane offers
+// the channel's history instead, and names the end of it once that is loaded.
+func (w *Window) emptyChannelPane(c *ui.Context, in mui.PaneInput, spec *mui.EmptySpec) {
+	channelID := destinationID(in.Selected, "channel:")
+	cursor := w.app.BackfillCursors[channelID]
+	spec.Copy = mui.ChannelEmptyCopy(c.Locale(), cursor.Complete())
+	spec.Reason = w.app.BackfillErr
+	if cursor.Complete() {
+		return
+	}
+	if w.app.BackfillBusy == channelID {
+		// The reader's click is in flight: the pane's one action says so and
+		// cannot be pressed again.
+		spec.Copy.Action = mui.ChannelHistoryCopy(c.Locale()).Loading
+	}
+	spec.OnAction = func() { w.startBackfill(channelID) }
+	spec.ActionDisabled, spec.ActionTooltip = w.historyDisabledReason(c.Locale())
 }
 
 // loadingPane draws the first load. The cards keep the real grid's geometry.

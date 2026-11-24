@@ -42,6 +42,19 @@ type App struct {
 	LastNotified       []core.NotificationPlan
 	LastSyncWrite      time.Time
 	SaveSyncCalls      int
+
+	// BackfillCursors is where each channel's history paging stands, by channel
+	// ID: a channel the map does not name has never loaded its history, and an
+	// entry whose token is empty has reached the channel's earliest video. It
+	// stays in this device's SQLite store and is never synced, because it names
+	// a page this device has read rather than something another device should
+	// skip.
+	BackfillCursors map[string]core.BackfillCursor
+	// BackfillBusy is the channel whose history page is in flight, empty when
+	// none is, and BackfillErr is the failure that page reported. The next
+	// attempt clears the failure, and so does leaving the channel.
+	BackfillBusy string
+	BackfillErr  string
 }
 
 // GroupCollapsed reports whether a subscription group's channel list is
@@ -298,6 +311,10 @@ func (a *App) restoredDestination(stored string) string {
 // what the reader left selected. It stays in local settings and is never
 // synced.
 func (a *App) SelectDestination(destination string) {
+	if a.Selected != destination {
+		// A history page's failure belongs to the channel page it happened on.
+		a.BackfillErr = ""
+	}
 	a.Selected = destination
 	_, _ = a.updateSettings(func(s *core.Settings) bool {
 		if s.LastSelectedDestination == destination {
@@ -339,6 +356,10 @@ func (a *App) reload() error {
 	// version did is put in that order here, so an existing library shows
 	// sorted on its first launch instead of waiting on a migration.
 	a.Sync.SortAllGroupChannels()
+	a.BackfillCursors, err = a.Store.BackfillCursors(ctx)
+	if err != nil {
+		return err
+	}
 	a.Groups = orderGroups(a.Sync.Groups, a.settingsSnapshot().GroupOrder)
 	if rev := a.Store.Meta(ctx, "revision"); rev != "" {
 		fmt.Sscan(rev, &a.Revision)
