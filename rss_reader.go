@@ -490,7 +490,10 @@ func (w *Window) rssReaderPane(c *ui.Context, t mui.Tokens) {
 	blocks := rssArticleBlocks(*art)
 
 	ui.Row(c.Key("rss-reader-pane")).Fill().Background(t.App).AlignItems(ui.Stretch).Children(func() {
-		ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Clip().Children(func() {
+		// The reading page is one selectable scope: its headline, metadata and
+		// body words can be dragged and copied like ordinary text, while the
+		// controls inside it keep their own text and clicks.
+		ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Clip().Selectable().Children(func() {
 			w.rssReaderHeader(c, t, *art)
 			ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
 				ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
