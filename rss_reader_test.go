@@ -871,6 +871,79 @@ func TestRSSReaderSummarizesWhenExtractionFails(t *testing.T) {
 	}
 }
 
+// rssDragCopyText drags from inside one rendered text to inside another, as
+// a reader selecting words with the pointer, then copies with Cmd+C.
+func rssDragCopyText(t *testing.T, tt *ui.Tester, from, to string) string {
+	t.Helper()
+	start, ok := tt.Find(from)
+	if !ok {
+		t.Fatalf("text %q not found: %v", from, tt.Texts())
+	}
+	end, ok := tt.Find(to)
+	if !ok {
+		t.Fatalf("text %q not found: %v", to, tt.Texts())
+	}
+	tt.SetClipboard("")
+	tx, ty := start.X+2, start.Y+start.H/2
+	ex, ey := end.X+end.W-2, end.Y+end.H/2
+	tt.Press(tx, ty)
+	tt.Move(ex, ey)
+	tt.Release(ex, ey)
+	tt.Key(ui.Cmd, ui.KeyC)
+	return tt.Clipboard()
+}
+
+// TestRSSReaderTextSelectsAndCopies follows the real reading path: open a
+// full-text article, drag across its prose, and copy. The reading page offers
+// a text cursor over its words, and the copied run holds the dragged words,
+// including a drag that crosses from one paragraph into the next.
+func TestRSSReaderTextSelectsAndCopies(t *testing.T) {
+	_, _, tt := rssReaderTestWindow(t)
+	openRSSReaderTickArticle(t, tt)
+
+	const first = "For a decade the open web's newsreading protocol was treated as plumbing: invisible, unglamorous, and assumed to be behind us. The feeds kept working anyway."
+	const second = "Local-first software changed the calculation. When the subscription list and the read state live on the device, the feed reader becomes a library rather than a window into someone else's server."
+	paragraph, ok := tt.Find(first)
+	if !ok {
+		t.Fatalf("body paragraph not found: %v", tt.Texts())
+	}
+	tt.Move(paragraph.X+paragraph.W/2, paragraph.Y+paragraph.H/2)
+	tt.Frame()
+	if got, want := tt.Cursor(), ui.CursorText; got != want {
+		t.Fatalf("cursor over the article body = %v, want the text cursor %v", got, want)
+	}
+	// The selectable page does not absorb its actions: a button keeps its
+	// own pointer cursor instead of turning the header into a text field.
+	action, ok := tt.Find("Open in Browser")
+	if !ok {
+		t.Fatal("the reader's Open in Browser action is missing")
+	}
+	tt.Move(action.X+action.W/2, action.Y+action.H/2)
+	tt.Frame()
+	if got, want := tt.Cursor(), ui.CursorPointer; got != want {
+		t.Fatalf("cursor over the reader action = %v, want the pointer %v", got, want)
+	}
+
+	copied := rssDragCopyText(t, tt, first, first)
+	if !strings.Contains(copied, "unglamorous") || !strings.Contains(copied, "feeds kept working") {
+		t.Fatalf("a drag across one paragraph copied %q", copied)
+	}
+
+	copied = rssDragCopyText(t, tt, first, second)
+	if !strings.Contains(copied, "unglamorous") || !strings.Contains(copied, "Local-first software") {
+		t.Fatalf("a drag across two paragraphs copied %q", copied)
+	}
+
+	// The Chinese interface keeps the same selection behaviour: copying is a
+	// property of the reading page, not of one locale's labels.
+	tt.SetLocale("zh-Hans")
+	tt.Frame()
+	copied = rssDragCopyText(t, tt, first, second)
+	if !strings.Contains(copied, "Local-first software") {
+		t.Fatalf("in the Chinese interface a body drag copied %q", copied)
+	}
+}
+
 // TestRSSReaderTicksFollowScroll checks the rail's live highlight in a real
 // frame: scrolling the body advances the active block and with it the bar.
 func TestRSSReaderTicksFollowScroll(t *testing.T) {

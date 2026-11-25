@@ -2,6 +2,7 @@ package main
 
 import (
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -145,6 +146,25 @@ func TestRSSReadingScaleRedrawsTheBody(t *testing.T) {
 	// The setting is the step on screen, not a stale default.
 	if got := w.readingType().Body.Size; got != 17 {
 		t.Fatalf("reader ends at %v pt, want 17", got)
+	}
+}
+
+// TestRSSTextSizeKeepsBodySelectable checks the reading page's selectable
+// scope survives the body's rebuild at a new type step: words still drag and
+// copy at the largest size, not just at the default the page opened with.
+func TestRSSTextSizeKeepsBodySelectable(t *testing.T) {
+	_, _, tt := rssReaderTestWindow(t)
+	openRSSReaderTickArticle(t, tt)
+	if err := tt.Click(rssTextSizeStepLabel(mui.ArticleStep(17), 17, false)); err != nil {
+		t.Fatalf("choose the largest text step: %v", err)
+	}
+	tt.Frame()
+
+	copied := rssDragCopyText(t, tt,
+		"For a decade the open web's newsreading protocol was treated as plumbing: invisible, unglamorous, and assumed to be behind us. The feeds kept working anyway.",
+		"Local-first software changed the calculation. When the subscription list and the read state live on the device, the feed reader becomes a library rather than a window into someone else's server.")
+	if !strings.Contains(copied, "unglamorous") || !strings.Contains(copied, "Local-first software") {
+		t.Fatalf("after changing the text size a body drag copied %q", copied)
 	}
 }
 
