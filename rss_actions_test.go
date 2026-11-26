@@ -174,6 +174,73 @@ func TestRSSReaderOriginalResolvesTheFeedsRelativePictures(t *testing.T) {
 	}
 }
 
+// TestRSSReaderOriginalHidesTheExtractedHero pins the original view to the
+// feed's own article: the stored hero is the extracted page's lead picture, so
+// it belongs to the full-text view only, while a picture the feed body carries
+// still appears exactly once in the original.
+func TestRSSReaderOriginalHidesTheExtractedHero(t *testing.T) {
+	countPictures := func(tt *ui.Tester, url string) int {
+		n := 0
+		for _, a := range tt.AccessAll() {
+			if a.Description == url && a.Bounds.H > 0 {
+				n++
+			}
+		}
+		return n
+	}
+
+	t.Run("feed body without a picture", func(t *testing.T) {
+		a, _, tt := rssReaderTestWindow(t)
+		art := rssReaderTestArticle()
+		art.ContentHTML = "<p>the extracted full text</p>"
+		art.FeedContentHTML = "<p>the feed's own version</p>"
+		art.HeroImage = "https://feeds.example.com/lead.jpg"
+		if err := a.Store.SaveRSSArticles(context.Background(), []core.RSSArticle{art}); err != nil {
+			t.Fatalf("save the article's two bodies: %v", err)
+		}
+		if err := a.ReloadRSS(); err != nil {
+			t.Fatalf("reload rss: %v", err)
+		}
+		openRSSReaderFullTextArticle(t, tt)
+		if got := countPictures(tt, art.HeroImage); got != 1 {
+			t.Fatalf("the full-text view shows %d heroes, want 1: %v", got, tt.Texts())
+		}
+
+		clickRSSHeaderAction(t, tt, "Show Original")
+		tt.Frame()
+		if got := countPictures(tt, art.HeroImage); got != 0 {
+			t.Fatalf("the original view drew the extracted page's hero %d times: %v", got, tt.Texts())
+		}
+		if !tt.HasText("the feed's own version") || tt.HasText("the extracted full text") {
+			t.Fatalf("the original view does not show the feed's body: %v", tt.Texts())
+		}
+	})
+
+	t.Run("feed body with its own picture", func(t *testing.T) {
+		a, _, tt := rssReaderTestWindow(t)
+		art := rssReaderTestArticle()
+		art.ContentHTML = `<p>the extracted full text</p><p><img src="https://feeds.example.com/lead.jpg" alt="The extracted lead"></p>`
+		art.FeedContentHTML = `<p>the feed's own version</p><p><img src="https://feeds.example.com/feed-photo.png" alt="A reading room"></p>`
+		art.HeroImage = "https://feeds.example.com/lead.jpg"
+		if err := a.Store.SaveRSSArticles(context.Background(), []core.RSSArticle{art}); err != nil {
+			t.Fatalf("save the article's two bodies: %v", err)
+		}
+		if err := a.ReloadRSS(); err != nil {
+			t.Fatalf("reload rss: %v", err)
+		}
+		openRSSReaderFullTextArticle(t, tt)
+
+		clickRSSHeaderAction(t, tt, "Show Original")
+		tt.Frame()
+		if got := countPictures(tt, art.HeroImage); got != 0 {
+			t.Fatalf("the original view drew the extracted page's hero %d times: %v", got, tt.Texts())
+		}
+		if got := countPictures(tt, "https://feeds.example.com/feed-photo.png"); got != 1 {
+			t.Fatalf("the original view shows the feed's picture %d times, want 1: %v", got, tt.Texts())
+		}
+	})
+}
+
 // TestRSSReaderLinklessArticleActions covers an article a feed delivered
 // without a link: the controls that need the page are dimmed with the reason,
 // the read and star controls still act locally, and the summary notice stops

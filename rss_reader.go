@@ -1185,7 +1185,7 @@ func (w *Window) rssReaderBody(c *ui.Context, t mui.Tokens, art core.RSSArticle,
 					w.rssDegradedNotice(c, t, art)
 				}
 			}
-			if art.HeroImage != "" && !rssBlocksHoldImage(blocks, art.HeroImage) {
+			if art.HeroImage != "" && !feedView && !rssBlocksHoldImage(blocks, art.HeroImage) {
 				w.rssImageBlock(c, t, art.ID+":hero", core.ArticleBlock{Type: core.BlockImage, URL: art.HeroImage}, w.rssLayout.readerWidth, true)
 			}
 			for i, block := range blocks {
