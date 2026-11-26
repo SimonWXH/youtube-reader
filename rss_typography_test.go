@@ -472,10 +472,12 @@ func rssBlockInk(img *image.RGBA, box ui.Rect) ui.Rect {
 // second-, third-, fourth-, and fifth-level heading and a paragraph through all
 // three text steps. The five heading blocks carry the same words, so the levels
 // are only distinguishable if the reader builds them at different type sizes:
-// each section level paints narrower than the one above it at every step, a
-// fifth-level heading draws exactly as the fourth, each section level's line
+// each of the first four levels paints narrower than the one above it at every
+// step, a fifth-level heading draws exactly as the fourth, each level's line
 // height grows with the step, an in-body first-level heading draws with the
-// article title's role, and the body stays at the step's 13, 15, or 17 pt.
+// body's own first-level role 2 pt above the second level - the header headline
+// is not what that block measures - and the body stays at the step's 13, 15, or
+// 17 pt.
 func TestRSSHeadingLevelsRenderDistinctly(t *testing.T) {
 	blocks := []core.ArticleBlock{
 		{Type: core.BlockHeading, Level: 1, Text: "Readable words"},
@@ -490,8 +492,8 @@ func TestRSSHeadingLevelsRenderDistinctly(t *testing.T) {
 		size     float32
 		lineHigh [6]float32 // level 1, 2, 3, 4, 5, and the paragraph
 	}{
-		{"small", 13, [6]float32{27, 25, 22, 21, 21, 21}},
-		{"default", 15, [6]float32{27, 28, 25, 22, 22, 24}},
+		{"small", 13, [6]float32{28, 25, 22, 21, 21, 21}},
+		{"default", 15, [6]float32{31, 28, 25, 22, 22, 24}},
 		{"large", 17, [6]float32{34, 31, 28, 25, 25, 27}},
 	}
 	var h2Widths []float32
@@ -523,8 +525,8 @@ func TestRSSHeadingLevelsRenderDistinctly(t *testing.T) {
 				}
 				widths[i] = ink.W
 			}
-			// The three section levels step down in width, and a fifth-level
-			// heading draws exactly as the fourth does.
+			// The first four levels step down in width, and a fifth-level heading
+			// draws exactly as the fourth does.
 			for _, i := range []int{1, 2} {
 				if !(widths[i] > widths[i+1]) {
 					t.Fatalf("level %d paints %v wide, level %d %v: the levels are not distinguishable",
