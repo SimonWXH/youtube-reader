@@ -596,7 +596,7 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 	source := func() {
 		if feedName != "" {
 			mui.Metadata.Apply(ui.Text(c, feedName)).TextColor(t.Accent).SingleLine().
-				Shrink(1).MinWidth(rssHeaderFeedMin)
+				Shrink(1).MinWidth(min(rssHeaderFeedMin, rssTextWidth(c, mui.Metadata, feedName)))
 		}
 		if date != "" {
 			if feedName != "" {

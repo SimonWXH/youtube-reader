@@ -170,14 +170,26 @@ func TestRSSSidebarSmartFeedsAreThreeRows(t *testing.T) {
 // keep their own lists.
 func TestRSSTodayDestinationSelectsTheWindow(t *testing.T) {
 	for _, tc := range []struct {
-		locale      string
-		row         string
-		headerTitle string
-		unread      string
-		emptyTitle  string
+		locale        string
+		row           string
+		headerTitle   string
+		unread        string
+		emptyTitle    string
+		emptySentence string
+		noMatchTitle  string
 	}{
-		{locale: "en", row: "Today", headerTitle: "Today", unread: "3 unread", emptyTitle: "No Articles"},
-		{locale: "zh", row: "今天", headerTitle: "今天", unread: "3 篇未读", emptyTitle: "暂无文章"},
+		{
+			locale: "en", row: "Today", headerTitle: "Today", unread: "3 unread",
+			emptyTitle:    "No Articles in the Last 24 Hours",
+			emptySentence: "New articles will appear here as your feeds publish them.",
+			noMatchTitle:  "No Matching Articles",
+		},
+		{
+			locale: "zh", row: "今天", headerTitle: "今天", unread: "3 篇未读",
+			emptyTitle:    "最近 24 小时没有文章",
+			emptySentence: "订阅源更新后，新文章会出现在这里。",
+			noMatchTitle:  "无匹配文章",
+		},
 	} {
 		t.Run(tc.locale, func(t *testing.T) {
 			a, _, tt := rssTodayTestApp(t)
@@ -205,8 +217,8 @@ func TestRSSTodayDestinationSelectsTheWindow(t *testing.T) {
 				t.Fatalf("an article published before the window is listed: %v", tt.Texts())
 			}
 
-			// A window with nothing in it reads as the other destinations'
-			// empty state does, in the same words.
+			// A window with nothing in it describes the window rather than an
+			// empty library, and an active search still wins.
 			later := rssTodayClock.Add(72 * time.Hour)
 			a.now = func() time.Time { return later }
 			if err := a.ReloadRSS(); err != nil {
@@ -219,8 +231,20 @@ func TestRSSTodayDestinationSelectsTheWindow(t *testing.T) {
 			if got := a.RSSTodayUnreadCount(); got != 0 {
 				t.Fatalf("the empty window's count = %d, want none", got)
 			}
-			if !tt.HasText(tc.emptyTitle) {
-				t.Fatalf("the empty Today column shows no empty state: %v", tt.Texts())
+			if !tt.HasText(tc.emptyTitle) || !tt.HasText(tc.emptySentence) {
+				t.Fatalf("the empty Today column does not describe the window: %v", tt.Texts())
+			}
+			if tt.HasText("Articles from subscribed feeds will appear here.") || tt.HasText("订阅源的文章将显示在此处。") {
+				t.Fatalf("the empty Today column reads as an empty library: %v", tt.Texts())
+			}
+
+			a.Search = "anything"
+			tt.Frame()
+			if !tt.HasText(tc.noMatchTitle) {
+				t.Fatalf("Today's search with no matches does not say so: %v", tt.Texts())
+			}
+			if tt.HasText(tc.emptyTitle) {
+				t.Fatalf("the Today window copy outranked the search's no-match state")
 			}
 		})
 	}
@@ -497,6 +521,50 @@ func TestRSSAllUnreadEmptyStateSaysUpToDate(t *testing.T) {
 			tt.Frame()
 			if !tt.HasText(tc.feedSearchSentence) {
 				t.Fatalf("the feed's no-match copy stopped naming its Unread filter: %v", tt.Texts())
+			}
+		})
+	}
+}
+
+// TestRSSTodayEmptyStateNeedsAFeed covers Today's empty copy on a library that
+// has nothing to read yet: without any subscription it keeps the generic copy
+// instead of describing a window that has nothing in it.
+func TestRSSTodayEmptyStateNeedsAFeed(t *testing.T) {
+	for _, tc := range []struct {
+		locale, genericTitle, genericSentence, todayTitle string
+	}{
+		{
+			locale: "en", genericTitle: "No Articles",
+			genericSentence: "Articles from subscribed feeds will appear here.",
+			todayTitle:      "No Articles in the Last 24 Hours",
+		},
+		{
+			locale: "zh", genericTitle: "暂无文章",
+			genericSentence: "订阅源的文章将显示在此处。",
+			todayTitle:      "最近 24 小时没有文章",
+		},
+	} {
+		t.Run(tc.locale, func(t *testing.T) {
+			a := newTestApp(t, t.TempDir())
+			t.Cleanup(func() { a.Close() })
+			w := &Window{app: a, selectedIndex: new(int)}
+			w.selectWorkspace(WorkspaceRSS)
+			tt := ui.NewTester(w.view, 1280, 808)
+			tt.SetLocale(tc.locale)
+			tt.Frame()
+
+			if err := tt.Click(map[bool]string{true: "今天", false: "Today"}[tc.locale == "zh"]); err != nil {
+				t.Fatalf("click Today: %v", err)
+			}
+			tt.Frame()
+			if a.Selected != todayDestination {
+				t.Fatalf("the empty library's destination = %q, want today", a.Selected)
+			}
+			if !tt.HasText(tc.genericTitle) || !tt.HasText(tc.genericSentence) {
+				t.Fatalf("the empty library does not show its generic copy: %v", tt.Texts())
+			}
+			if tt.HasText(tc.todayTitle) {
+				t.Fatalf("a library with no feeds describes a Today window: %v", tt.Texts())
 			}
 		})
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"testing"
@@ -343,6 +344,42 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 			t.Fatalf("%d of %d rows were inline, want both layouts across the band", inlineRows, widths)
 		}
 	})
+}
+
+// TestRSSHeaderShortFeedTitleDrawsSnug covers a short feed name: its box stays
+// its own text width rather than the readable floor reserved for long names, so
+// the separator follows immediately instead of after a padded gap.
+func TestRSSHeaderShortFeedTitleDrawsSnug(t *testing.T) {
+	a, _, tt := rssReaderTestWindow(t)
+	feed := a.RSSFeeds[0]
+	feed.Title = "36氪"
+	if err := a.Store.SaveRSSFeed(context.Background(), feed); err != nil {
+		t.Fatalf("rename the feed: %v", err)
+	}
+	if err := a.ReloadRSS(); err != nil {
+		t.Fatalf("reload rss: %v", err)
+	}
+	tt.Frame()
+	openRSSReaderTickArticle(t, tt)
+
+	header, ok := tt.AccessByRole(ui.RoleGroup, "Article header")
+	if !ok {
+		t.Fatal("the reader header has no accessible group")
+	}
+	title, ok := rssHeaderNode(t, tt, header.Bounds, "36氪")
+	if !ok {
+		t.Fatalf("the header draws no short feed name: %v", tt.Texts())
+	}
+	if title.W >= 56 {
+		t.Fatalf("the short feed name is %v pt wide, want its own text width rather than the 56 pt readable floor", title.W)
+	}
+	sep, ok := rssHeaderNode(t, tt, header.Bounds, "·")
+	if !ok {
+		t.Fatal("the header draws no separator after the short feed name")
+	}
+	if gap := sep.X - (title.X + title.W); gap < mui.Space(2)-0.5 || gap > mui.Space(2)+0.5 {
+		t.Fatalf("the separator sits %v pt after the short feed name, want the row's %v pt gap", gap, mui.Space(2))
+	}
 }
 
 // rssHeaderFeedBox checks the row drew its feed name at least at the minimum
