@@ -502,6 +502,41 @@ func TestRSSAllUnreadEmptyStateSaysUpToDate(t *testing.T) {
 	}
 }
 
+// TestRSSAllUnreadEmptyStateNeedsAFeed covers the caught-up column's other
+// condition: an RSS library with no subscription at all keeps the generic empty
+// copy instead of claiming there is nothing left to read.
+func TestRSSAllUnreadEmptyStateNeedsAFeed(t *testing.T) {
+	for _, tc := range []struct {
+		locale, genericTitle, genericSentence, upToDate string
+	}{
+		{locale: "en", genericTitle: "No Articles", genericSentence: "Articles from subscribed feeds will appear here.", upToDate: "You are up to date"},
+		{locale: "zh", genericTitle: "暂无文章", genericSentence: "订阅源的文章将显示在此处。", upToDate: "已无未读"},
+	} {
+		t.Run(tc.locale, func(t *testing.T) {
+			a := newTestApp(t, t.TempDir())
+			t.Cleanup(func() { a.Close() })
+			w := &Window{app: a, selectedIndex: new(int)}
+			w.selectWorkspace(WorkspaceRSS)
+			tt := ui.NewTester(w.view, 1280, 808)
+			tt.SetLocale(tc.locale)
+			tt.Frame()
+
+			if len(a.RSSFeeds) != 0 {
+				t.Fatalf("the fixture holds %d feeds, want a library with none", len(a.RSSFeeds))
+			}
+			if a.Selected != "all" {
+				t.Fatalf("the empty library's destination = %q, want all", a.Selected)
+			}
+			if !tt.HasText(tc.genericTitle) || !tt.HasText(tc.genericSentence) {
+				t.Fatalf("the empty library does not show its generic copy: %v", tt.Texts())
+			}
+			if tt.HasText(tc.upToDate) {
+				t.Fatalf("an empty library claims to be caught up: %v", tt.Texts())
+			}
+		})
+	}
+}
+
 // TestRSSStarredChineseSurfaceNamesOneDestination covers the Starred smart
 // feed's Chinese name: the sidebar row and the column header above its list
 // read the same word.

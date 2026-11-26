@@ -174,6 +174,92 @@ func TestRSSReaderOriginalResolvesTheFeedsRelativePictures(t *testing.T) {
 	}
 }
 
+// TestRSSReaderLinklessArticleActions covers an article a feed delivered
+// without a link: the controls that need the page are dimmed with the reason,
+// the read and star controls still act locally, and the summary notice stops
+// offering a page that does not exist.
+func TestRSSReaderLinklessArticleActions(t *testing.T) {
+	for _, tc := range []struct {
+		locale, noLink, notice, browserHint          string
+		read, star, bodyToggle, refresh, open, share string
+	}{
+		{
+			locale: "en", noLink: "This article has no link",
+			notice: "Showing the feed's summary.", browserHint: "Open the original article in your browser",
+			read: "Mark as Read (M)", star: "Star article (S)", bodyToggle: "Fetch Full Text",
+			refresh: "Refetch", open: "Open in Browser", share: "Share",
+		},
+		{
+			locale: "zh", noLink: "这篇文章没有链接",
+			notice: "当前展示摘要。", browserHint: "可点击在浏览器中查看原网页",
+			read: "标记为已读 (M)", star: "标星 (S)", bodyToggle: "抓取全文",
+			refresh: "重新抓取", open: "在浏览器中打开", share: "分享",
+		},
+	} {
+		t.Run(tc.locale, func(t *testing.T) {
+			a, _, tt := rssReaderTestWindow(t)
+			art := rssReaderTestArticle()
+			art.ID, art.Link = "art-linkless", ""
+			art.ContentHTML = ""
+			art.Blocks = nil
+			art.IsFullText = false
+			art.Snippet = "The feed delivered only this sentence."
+			if err := a.Store.SaveRSSArticles(context.Background(), []core.RSSArticle{art}); err != nil {
+				t.Fatalf("save the linkless article: %v", err)
+			}
+			if err := a.ReloadRSS(); err != nil {
+				t.Fatalf("reload rss: %v", err)
+			}
+			a.SelectedRSSArticleID = art.ID
+			tt.SetLocale(tc.locale)
+			tt.Frame()
+
+			for _, name := range []string{tc.bodyToggle, tc.refresh, tc.open, tc.share} {
+				info := rssHeaderAction(t, tt, name)
+				if !info.Disabled {
+					t.Fatalf("%s is enabled on an article without a link", name)
+				}
+				if info.Description != tc.noLink {
+					t.Fatalf("%s's description = %q, want %q", name, info.Description, tc.noLink)
+				}
+			}
+			for _, name := range []string{tc.read, tc.star} {
+				if info := rssHeaderAction(t, tt, name); info.Disabled {
+					t.Fatalf("%s is disabled on a control that only changes local state", name)
+				}
+			}
+			if !tt.HasText(tc.notice) {
+				t.Fatalf("the linkless summary notice is missing: %v", tt.Texts())
+			}
+			if tt.HasText(tc.browserHint) {
+				t.Fatalf("the linkless summary notice still offers a page: %v", tt.Texts())
+			}
+		})
+	}
+
+	t.Run("linked summary keeps every action and the browser way out", func(t *testing.T) {
+		a, _, tt := rssReaderTestWindow(t)
+		if err := a.SetRSSFeedAutoFullText("feed-reader", false); err != nil {
+			t.Fatalf("turn the feed's full-text fetch off: %v", err)
+		}
+		row, ok := tt.Find("A Summary Only Post")
+		if !ok {
+			t.Fatal("summary article row not found")
+		}
+		tt.ClickAt(row.X+row.W/2, row.Y+row.H/2)
+		tt.Frame()
+
+		for _, name := range []string{"Mark as Read (M)", "Star article (S)", "Fetch Full Text", "Share", "Open in Browser", "Refetch"} {
+			if info := rssHeaderAction(t, tt, name); info.Disabled {
+				t.Fatalf("%s is disabled on an article with a link", name)
+			}
+		}
+		if !tt.HasText("Showing the feed's summary. Open the original article in your browser for the full text.") {
+			t.Fatalf("the linked summary notice does not offer the browser: %v", tt.Texts())
+		}
+	})
+}
+
 // TestRSSReaderReadToggleFlipsAndPersists covers the manual read toggle: it
 // flips the open article's flag, the row's unread mark follows, the sidebar
 // count follows, and the state the store keeps is the one the next launch

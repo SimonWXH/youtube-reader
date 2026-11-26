@@ -932,10 +932,15 @@ func (w *Window) rssBodyToggleAction(c *ui.Context, t mui.Tokens, art core.RSSAr
 			label = "显示原文"
 		}
 	}
-	return w.rssHeaderAction(c, t, rssHeaderActionSpec{
+	spec := rssHeaderActionSpec{
 		key: "rss-reader-body-toggle", label: label, glyph: glyph, color: color,
 		onClick: func() { w.toggleRSSBodyView(c, art) },
-	})
+	}
+	if strings.TrimSpace(art.Link) == "" {
+		spec.disabled = true
+		spec.tooltip = rssNoLinkReason(c.Locale())
+	}
+	return w.rssHeaderAction(c, t, spec)
 }
 
 // rssOpenAction opens the article's original page in the default browser.
@@ -945,14 +950,14 @@ func (w *Window) rssOpenAction(c *ui.Context, t mui.Tokens, art core.RSSArticle)
 	if zh {
 		label = "在浏览器中打开"
 	}
-	return w.rssHeaderAction(c, t, rssHeaderActionSpec{
-		key: "rss-reader-open", label: label, glyph: "safari",
-		onClick: func() {
-			if art.Link != "" {
-				c.OpenURL(art.Link)
-			}
-		},
-	})
+	link := strings.TrimSpace(art.Link)
+	spec := rssHeaderActionSpec{key: "rss-reader-open", label: label, glyph: "safari", disabled: link == ""}
+	if link == "" {
+		spec.tooltip = rssNoLinkReason(c.Locale())
+	} else {
+		spec.onClick = func() { c.OpenURL(link) }
+	}
+	return w.rssHeaderAction(c, t, spec)
 }
 
 // rssRefreshAction is the header's re-fetch: idle as Refetch, a spinner while
@@ -985,7 +990,13 @@ func (w *Window) rssRefreshAction(c *ui.Context, t mui.Tokens, art core.RSSArtic
 	if tooltip != "" {
 		spec.tooltip = tooltip
 	}
-	spec.onClick = func() { w.refetchRSSArticle(c, art) }
+	if strings.TrimSpace(art.Link) == "" {
+		spec.busy = false
+		spec.disabled = true
+		spec.tooltip = rssNoLinkReason(c.Locale())
+	} else {
+		spec.onClick = func() { w.refetchRSSArticle(c, art) }
+	}
 	return w.rssHeaderAction(c, t, spec)
 }
 
@@ -993,15 +1004,23 @@ func (w *Window) rssRefreshAction(c *ui.Context, t mui.Tokens, art core.RSSArtic
 // commands and the pointer's room beside them.
 const rssShareMenuWidth float32 = 196
 
-// rssShareCopyWords are the share menu's two commands, the sentences that
-// confirm them, and the one the control says when the article has no link.
+// rssShareCopyWords are the share menu's two commands and the sentences that
+// confirm them.
 type rssShareCopyWords struct {
 	action     string
 	copyLink   string
 	copyBoth   string
 	copiedLink string
 	copiedBoth string
-	noLink     string
+}
+
+// rssNoLinkReason is the reason every control that needs the article's page
+// gives when the feed delivered no link for it.
+func rssNoLinkReason(locale string) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return "这篇文章没有链接"
+	}
+	return "This article has no link"
 }
 
 // rssShareWords returns the share menu's words in the reader's language.
@@ -1013,7 +1032,6 @@ func rssShareWords(locale string) rssShareCopyWords {
 			copyBoth:   "复制标题与链接",
 			copiedLink: "已复制链接",
 			copiedBoth: "已复制标题与链接",
-			noLink:     "这篇文章没有链接",
 		}
 	}
 	return rssShareCopyWords{
@@ -1022,7 +1040,6 @@ func rssShareWords(locale string) rssShareCopyWords {
 		copyBoth:   "Copy Title and Link",
 		copiedLink: "Link copied",
 		copiedBoth: "Title and link copied",
-		noLink:     "This article has no link",
 	}
 }
 
@@ -1038,7 +1055,7 @@ func (w *Window) rssShareAction(c *ui.Context, t mui.Tokens, art core.RSSArticle
 	}
 	if link == "" {
 		// Nothing to share, and the control says why.
-		spec.tooltip = words.noLink
+		spec.tooltip = rssNoLinkReason(c.Locale())
 		return w.rssHeaderAction(c, t, spec)
 	}
 	el := w.rssHeaderAction(c, t, spec)
@@ -1313,24 +1330,33 @@ func (w *Window) rssFetchFailedNotice(c *ui.Context, t mui.Tokens) {
 // full article is one click away in the browser.
 func (w *Window) rssDegradedNotice(c *ui.Context, t mui.Tokens, art core.RSSArticle) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
+	link := strings.TrimSpace(art.Link)
 	sentence := "Showing the feed's summary. Open the original article in your browser for the full text."
+	role := ui.RoleLink
 	if zh {
 		sentence = "当前展示摘要，可点击在浏览器中查看原网页"
+	}
+	if link == "" {
+		sentence = "Showing the feed's summary."
+		role = ui.RoleGroup
+		if zh {
+			sentence = "当前展示摘要。"
+		}
 	}
 	notice := ui.Row(c.Key("rss-reader-summary-notice")).FillWidth().Gap(mui.Space(2)).
 		Padding(mui.Space(2.5), mui.Space(3)).Radius(mui.RadiusNotice).
 		Background(t.SurfaceAlt).Border(1, t.BorderSoft).AlignItems(ui.Center).
-		Role(ui.RoleLink).Label(sentence)
-	if strings.TrimSpace(art.Link) != "" {
-		open := func() { c.OpenURL(art.Link) }
-		notice.Cursor(ui.CursorPointer).Tooltip(art.Link).
+		Role(role).Label(sentence)
+	if link != "" {
+		open := func() { c.OpenURL(link) }
+		notice.Cursor(ui.CursorPointer).Tooltip(link).
 			Focusable().FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
 			OnClick(open).OnShortcut(0, ui.KeyEnter, open)
 	}
 	notice.Children(func() {
 		sfsymbols.Symbol(c, "doc.plaintext").Size(mui.Space(4)).Color(t.Warning).Element.Role(ui.RoleNone)
 		mui.Secondary.Apply(ui.Text(c, sentence)).TextColor(t.Muted).Wrap().Grow(1)
-		if strings.TrimSpace(art.Link) != "" {
+		if link != "" {
 			sfsymbols.Symbol(c, "link").Size(mui.Space(3.5)).Color(t.Accent).Element.Role(ui.RoleNone)
 		}
 	})

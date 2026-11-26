@@ -1004,14 +1004,14 @@ func (w *Window) rssEmptyState(c *ui.Context, t mui.Tokens) {
 	switch {
 	case w.app != nil && w.app.Search != "":
 		title, sentence = rssNoMatchCopy(zh, unreadForced)
-	case unreadForced:
+	case unreadForced && len(w.app.RSSFeeds) > 0:
 		title = "You are up to date"
 		sentence = "New articles will appear here when your feeds publish them."
 		if zh {
 			title = "已无未读"
 			sentence = "订阅源更新后，新文章会出现在这里。"
 		}
-	case w.app != nil && w.app.UnreadOnly:
+	case w.app != nil && w.app.UnreadOnly && !unreadForced:
 		title, sentence = rssNoMatchCopy(zh, unreadForced)
 	}
 
