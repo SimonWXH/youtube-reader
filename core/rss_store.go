@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -319,8 +320,7 @@ type RSSArticleFilter struct {
 	Offset      int
 }
 
-// ListRSSArticles returns articles matching the specified filter, ordered by published_at DESC.
-func (s *Store) ListRSSArticles(ctx context.Context, filter RSSArticleFilter) ([]RSSArticle, error) {
+func buildRSSArticleQuery(columns string, filter RSSArticleFilter) (string, []any) {
 	var where []string
 	var args []any
 
@@ -342,11 +342,7 @@ func (s *Store) ListRSSArticles(ctx context.Context, filter RSSArticleFilter) ([
 		args = append(args, pattern, pattern)
 	}
 
-	query := `SELECT
-		id, feed_id, title, link, guid, author, published_at, snippet,
-		content_html, is_full_text, hero_image, blocks_json,
-		read, read_at, starred, starred_at, updated_at
-	FROM rss_articles`
+	query := "SELECT " + columns + " FROM rss_articles"
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -358,6 +354,15 @@ func (s *Store) ListRSSArticles(ctx context.Context, filter RSSArticleFilter) ([
 			query += fmt.Sprintf(" OFFSET %d", filter.Offset)
 		}
 	}
+	return query, args
+}
+
+// ListRSSArticles returns articles matching the specified filter, ordered by published_at DESC.
+func (s *Store) ListRSSArticles(ctx context.Context, filter RSSArticleFilter) ([]RSSArticle, error) {
+	query, args := buildRSSArticleQuery(`
+		id, feed_id, title, link, guid, author, published_at, snippet,
+		content_html, is_full_text, hero_image, blocks_json,
+		read, read_at, starred, starred_at, updated_at`, filter)
 
 	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
@@ -368,6 +373,94 @@ func (s *Store) ListRSSArticles(ctx context.Context, filter RSSArticleFilter) ([
 		out = append(out, rowToArticle(r))
 	}
 	return out, nil
+}
+
+// ListRSSArticleSummaries returns article metadata and snippets matching filter
+// without loading content_html or blocks_json into memory. Full article bodies
+// are loaded on demand via GetRSSArticle.
+func (s *Store) ListRSSArticleSummaries(ctx context.Context, filter RSSArticleFilter) ([]RSSArticle, error) {
+	query, args := buildRSSArticleQuery(`
+		id, feed_id, title, link, guid, author, published_at, snippet,
+		CASE WHEN TRIM(COALESCE(snippet, '')) = '' THEN SUBSTR(COALESCE(content_html, ''), 1, 2048) ELSE '' END,
+		is_full_text, hero_image, read, read_at, starred, starred_at, updated_at`, filter)
+
+	rows, err := s.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RSSArticle, 0, len(rows.Values))
+	for _, r := range rows.Values {
+		out = append(out, rowToArticleSummary(r))
+	}
+	return out, nil
+}
+
+// RSSArticleFingerprint holds lightweight change-detection fields for one stored article.
+type RSSArticleFingerprint struct {
+	Title       string
+	Link        string
+	PublishedAt string
+	IsFullText  bool
+	HasBody     bool
+	ContentHash [32]byte
+}
+
+// ListRSSArticleFingerprints returns change-detection fingerprints for one feed's stored articles.
+func (s *Store) ListRSSArticleFingerprints(ctx context.Context, feedID string) (map[string]RSSArticleFingerprint, error) {
+	rows, err := s.db.Query(ctx, `SELECT id, title, link, published_at, is_full_text, content_html
+	FROM rss_articles WHERE feed_id = ?`, feedID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]RSSArticleFingerprint, len(rows.Values))
+	for _, r := range rows.Values {
+		id, _ := r[0].(string)
+		if id == "" {
+			continue
+		}
+		title, _ := r[1].(string)
+		link, _ := r[2].(string)
+		pub, _ := r[3].(string)
+		isFull := intFromAnyBool(r[4])
+		htmlBody, _ := r[5].(string)
+		fp := RSSArticleFingerprint{
+			Title:       title,
+			Link:        link,
+			PublishedAt: pub,
+			IsFullText:  isFull,
+			HasBody:     htmlBody != "",
+		}
+		if htmlBody != "" {
+			fp.ContentHash = sha256.Sum256([]byte(htmlBody))
+		}
+		out[id] = fp
+	}
+	return out, nil
+}
+
+func rowToArticleSummary(r []any) RSSArticle {
+	var a RSSArticle
+	a.ID, _ = r[0].(string)
+	a.FeedID, _ = r[1].(string)
+	a.Title, _ = r[2].(string)
+	a.Link, _ = r[3].(string)
+	a.GUID, _ = r[4].(string)
+	a.Author, _ = r[5].(string)
+	a.PublishedAt, _ = r[6].(string)
+	a.Snippet, _ = r[7].(string)
+	if strings.TrimSpace(a.Snippet) == "" {
+		if fallback, _ := r[8].(string); fallback != "" {
+			a.Snippet = CleanSnippet(fallback, "", 200)
+		}
+	}
+	a.IsFullText = intFromAnyBool(r[9])
+	a.HeroImage, _ = r[10].(string)
+	a.Read = intFromAnyBool(r[11])
+	a.ReadAt, _ = int64FromAny(r[12])
+	a.Starred = intFromAnyBool(r[13])
+	a.StarredAt, _ = int64FromAny(r[14])
+	a.UpdatedAt, _ = int64FromAny(r[15])
+	return a
 }
 
 // MarkRSSArticleRead updates the read state of an article.

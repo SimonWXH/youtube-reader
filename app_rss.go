@@ -89,7 +89,7 @@ func (a *App) ReloadRSS() error {
 	if err != nil {
 		return err
 	}
-	articles, err := a.Store.ListRSSArticles(ctx, core.RSSArticleFilter{})
+	articles, err := a.Store.ListRSSArticleSummaries(ctx, core.RSSArticleFilter{})
 	if err != nil {
 		return err
 	}
@@ -97,6 +97,7 @@ func (a *App) ReloadRSS() error {
 	a.RSSFeeds = feeds
 	a.RSSGroups = orderRSSGroups(groups, a.settingsSnapshot().RSSGroupOrder)
 	a.RSSArticles = articles
+	a.selectedRSSCache = nil
 	a.reloadRSSCounts()
 	return nil
 }
@@ -586,6 +587,8 @@ func (a *App) FetchAllRSSFeeds(ctx context.Context, force bool) ([]core.FetchFee
 	return fetcher.FetchAllFeeds(ctx, force)
 }
 
+var sharedRSSHTTPClient = &http.Client{Timeout: core.DefaultRSSTimeout}
+
 // RefetchRSSArticleContent re-extracts one article's full text from its
 // original page, keeping the feed's own content as the fallback when the
 // extraction fails, and saves it back without touching read or starred state.
@@ -604,8 +607,7 @@ func (a *App) RefetchRSSArticleContent(ctx context.Context, articleID string) (c
 		return *art, errors.New("article has no link to fetch")
 	}
 
-	client := &http.Client{Timeout: core.DefaultRSSTimeout}
-	contentHTML, blocks, isFullText, hero, _ := core.ExtractFullText(ctx, client, art.Link, art.ContentHTML, art.Snippet)
+	contentHTML, blocks, isFullText, hero, _ := core.ExtractFullText(ctx, sharedRSSHTTPClient, art.Link, art.ContentHTML, art.Snippet)
 	if strings.TrimSpace(contentHTML) == "" {
 		return *art, errors.New("the article page returned no content")
 	}

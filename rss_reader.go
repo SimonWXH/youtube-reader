@@ -98,6 +98,11 @@ type rssReaderState struct {
 	// over, so the highlight does not sweep back as the body glides.
 	jump    int
 	jumping bool
+	// parsedBlocks caches fallback blocks parsed from ContentHTML/Snippet so
+	// frames do not re-parse HTML on hover/scroll when art.Blocks is empty.
+	parsedBlocksArticleID string
+	parsedBlocksUpdatedAt int64
+	parsedBlocks          []core.ArticleBlock
 }
 
 // newRSSReaderState starts an article's reader at its top, with no bar under
@@ -487,7 +492,7 @@ func (w *Window) rssReaderPane(c *ui.Context, t mui.Tokens) {
 	if w.rssReader.articleID != art.ID {
 		w.rssReader = newRSSReaderState(art.ID)
 	}
-	blocks := rssArticleBlocks(*art)
+	blocks := w.rssReaderBlocks(*art)
 
 	ui.Row(c.Key("rss-reader-pane")).Fill().Background(t.App).AlignItems(ui.Stretch).Children(func() {
 		// The reading page is one selectable scope: its headline, metadata and
@@ -896,6 +901,21 @@ func (w *Window) rssReaderBody(c *ui.Context, t mui.Tokens, art core.RSSArticle,
 	}
 }
 
+func (w *Window) rssReaderBlocks(art core.RSSArticle) []core.ArticleBlock {
+	if len(art.Blocks) > 0 {
+		return art.Blocks
+	}
+	st := &w.rssReader
+	if st.parsedBlocksArticleID == art.ID && st.parsedBlocksUpdatedAt == art.UpdatedAt && st.parsedBlocks != nil {
+		return st.parsedBlocks
+	}
+	blocks := rssArticleBlocks(art)
+	st.parsedBlocksArticleID = art.ID
+	st.parsedBlocksUpdatedAt = art.UpdatedAt
+	st.parsedBlocks = blocks
+	return blocks
+}
+
 // rssArticleBlocks is the structured body the reader renders: the article's
 // parsed blocks, or the content HTML parsed again, or finally its snippet so a
 // failed extraction still reads as prose instead of a blank page.
@@ -1260,7 +1280,7 @@ func (w *Window) rssImageBlock(c *ui.Context, t mui.Tokens, key string, block co
 	frame := ui.Row(c.Key(key)).FillWidth().
 		Radius(mui.RadiusCard).Clip().Background(t.SurfaceAlt).Center().
 		Role(ui.RoleImage).Label(label)
-	opts := netimage.Options{MaxSide: int(max(readerWidth, rssReadingColumn) * 2)}
+	opts := netimage.Options{MaxSide: int(rssReadingColumn * 2)}
 	src, err := netimage.Load(c, url, opts)
 	switch {
 	case src != nil:

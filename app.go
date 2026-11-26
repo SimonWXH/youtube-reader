@@ -37,8 +37,10 @@ type App struct {
 	RSSTotalUnread  int
 	RSSStarredTotal int
 
+	// RSSArticles holds article summaries in memory; full article bodies are paged on demand via SelectedRSSArticle.
 	RSSArticles          []core.RSSArticle
 	SelectedRSSArticleID string
+	selectedRSSCache     *core.RSSArticle
 
 	Selected        string
 	Search          string
@@ -1761,9 +1763,20 @@ func (a *App) feedTitlesByID() map[string]string {
 }
 
 // SelectedRSSArticle returns a pointer to the currently selected article, or nil.
+// Full article content (ContentHTML and Blocks) is loaded on demand from SQLite
+// for only the active article so RSSArticles stays summary-only in memory.
 func (a *App) SelectedRSSArticle() *core.RSSArticle {
 	if a.SelectedRSSArticleID == "" {
 		return nil
+	}
+	if a.selectedRSSCache != nil && a.selectedRSSCache.ID == a.SelectedRSSArticleID {
+		return a.selectedRSSCache
+	}
+	if a.Store != nil {
+		if art, err := a.Store.GetRSSArticle(context.Background(), a.SelectedRSSArticleID); err == nil && art != nil {
+			a.selectedRSSCache = art
+			return a.selectedRSSCache
+		}
 	}
 	for i := range a.RSSArticles {
 		if a.RSSArticles[i].ID == a.SelectedRSSArticleID {
@@ -1775,6 +1788,9 @@ func (a *App) SelectedRSSArticle() *core.RSSArticle {
 
 // SelectRSSArticle selects an article by ID.
 func (a *App) SelectRSSArticle(id string) {
+	if a.SelectedRSSArticleID != id {
+		a.selectedRSSCache = nil
+	}
 	a.SelectedRSSArticleID = id
 }
 
@@ -1797,6 +1813,15 @@ func (a *App) MarkRSSArticleRead(id string, read bool) error {
 			a.RSSArticles[i].UpdatedAt = now
 			break
 		}
+	}
+	if a.selectedRSSCache != nil && a.selectedRSSCache.ID == id {
+		a.selectedRSSCache.Read = read
+		if read {
+			a.selectedRSSCache.ReadAt = now
+		} else {
+			a.selectedRSSCache.ReadAt = 0
+		}
+		a.selectedRSSCache.UpdatedAt = now
 	}
 	a.reloadRSSCounts()
 	return nil
@@ -1823,6 +1848,15 @@ func (a *App) SetRSSArticleStarred(id string, starred bool) error {
 			a.RSSArticles[i].UpdatedAt = now
 			break
 		}
+	}
+	if a.selectedRSSCache != nil && a.selectedRSSCache.ID == id {
+		a.selectedRSSCache.Starred = starred
+		if starred {
+			a.selectedRSSCache.StarredAt = now
+		} else {
+			a.selectedRSSCache.StarredAt = 0
+		}
+		a.selectedRSSCache.UpdatedAt = now
 	}
 	a.reloadRSSCounts()
 	return nil

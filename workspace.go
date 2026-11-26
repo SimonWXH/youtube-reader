@@ -77,6 +77,8 @@ type WorkspaceState struct {
 	SidebarScroll ui.ScrollState
 	// ContentScroll is where the workspace's middle timeline is scrolled.
 	ContentScroll ui.ScrollState
+	// RSSList holds the virtualized article list's row measurement and scroll anchor.
+	RSSList ui.ListState
 	// Reader is the RSS reading view's place: the open article, where its body
 	// is scrolled, and its paragraph rail. Switching pages keeps it, so coming
 	// back to an article returns to the paragraph being read.
@@ -104,6 +106,17 @@ func (w *Window) workspaceRSSArticlesScroll() *ui.ScrollState {
 		w.workspaceStates[WorkspaceRSS] = st
 	}
 	return &st.ContentScroll
+}
+
+// workspaceRSSArticlesList returns the virtualized list state for the RSS article column.
+func (w *Window) workspaceRSSArticlesList() *ui.ListState {
+	w.ensureWorkspaceInit()
+	st := w.workspaceStates[WorkspaceRSS]
+	if st == nil {
+		st = &WorkspaceState{Selected: "all"}
+		w.workspaceStates[WorkspaceRSS] = st
+	}
+	return &st.RSSList
 }
 
 func (w *Window) ensureWorkspaceInit() {
@@ -768,7 +781,7 @@ func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens, visibleCount int) 
 	})
 }
 
-// rssArticlesArea renders the scrollable list of article item rows or the empty state.
+// rssArticlesArea renders the virtualized scrollable list of article item rows or the empty state.
 func (w *Window) rssArticlesArea(c *ui.Context, t mui.Tokens, articles []core.RSSArticle, feedTitles map[string]string) {
 	revealID := w.rssRevealSelection
 	w.rssRevealSelection = ""
@@ -777,9 +790,26 @@ func (w *Window) rssArticlesArea(c *ui.Context, t mui.Tokens, articles []core.RS
 		return
 	}
 
-	scroll := ui.Scroll(c.Key("rss-articles-scroll")).Grow(1).MinHeight(0).Clip().
+	listState := w.workspaceRSSArticlesList()
+	listState.Key = func(i int) any { return articles[i].ID }
+	listState.Label = func(i int) string { return articles[i].Title }
+	if revealID != "" {
+		for i := range articles {
+			if articles[i].ID == revealID {
+				listState.ScrollIntoView(i)
+				break
+			}
+		}
+	}
+
+	scroll := ui.List(c.Key("rss-articles-scroll"), listState, len(articles), func(i int) {
+		art := articles[i]
+		isSelected := w.app.SelectedRSSArticleID == art.ID
+		w.rssArticleItemRow(c, t, art, isSelected, feedTitles, false)
+	}).Grow(1).MinHeight(0).Clip().
 		TrackScroll(w.workspaceRSSArticlesScroll()).
 		Padding(mui.Space(2), mui.Space(3), mui.Space(3)+mui.ScrollBottomInset, mui.Space(3)).
+		Gap(mui.Space(1)).
 		Role(ui.RoleList).Label("Articles")
 
 	scroll.OnShortcut(0, ui.KeyDown, func() {
@@ -787,15 +817,6 @@ func (w *Window) rssArticlesArea(c *ui.Context, t mui.Tokens, articles []core.RS
 	})
 	scroll.OnShortcut(0, ui.KeyUp, func() {
 		w.moveRSSSelection(articles, -1)
-	})
-
-	scroll.Children(func() {
-		ui.Column(c).Grow(1).Gap(mui.Space(1)).Children(func() {
-			for _, art := range articles {
-				isSelected := w.app.SelectedRSSArticleID == art.ID
-				w.rssArticleItemRow(c, t, art, isSelected, feedTitles, revealID == art.ID)
-			}
-		})
 	})
 }
 

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -876,28 +878,58 @@ func (w *Window) importRSSOPML(c *ui.Context) {
 		})
 
 		// Background fetch newly imported feeds without blocking the UI. Each feed
-		// gets its own budget, only a bounded number fetch at once, and the window
-		// reloads as each one returns instead of waiting for the whole batch.
-		if len(res.NewFeedIDs) > 0 && w.app.Store != nil {
-			fetcher := core.NewRSSFetcher(w.app.Store)
-			slots := make(chan struct{}, core.DefaultRSSConcurrency)
-			for _, fid := range res.NewFeedIDs {
-				go func(fid string) {
-					slots <- struct{}{}
-					defer func() { <-slots }()
-					ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-					defer cancel()
-					if f, err := w.app.Store.GetRSSFeed(ctx, fid); err == nil && f != nil {
-						_, _ = fetcher.FetchFeed(ctx, *f)
-					}
-					mygo.RunOnMain(func() {
-						_ = w.app.ReloadRSS()
-						w.invalidateMainWindow()
-					})
-				}(fid)
-			}
-		}
+		// gets its own budget, only a bounded number fetch at once, and UI reloads
+		// are coalesced so bulk imports do not thrash SQLite or the main thread.
+		w.fetchNewRSSFeeds(res.NewFeedIDs)
 	}()
+}
+
+func (w *Window) fetchNewRSSFeeds(feedIDs []string) {
+	if len(feedIDs) == 0 || w.app == nil || w.app.Store == nil {
+		return
+	}
+	fetcher := core.NewRSSFetcher(w.app.Store)
+	slots := make(chan struct{}, core.DefaultRSSConcurrency)
+	var wg sync.WaitGroup
+	var dirty atomic.Bool
+	var lastReload time.Time
+	var reloadMu sync.Mutex
+
+	triggerReload := func(force bool) {
+		reloadMu.Lock()
+		now := time.Now()
+		if !force && now.Sub(lastReload) < 500*time.Millisecond {
+			dirty.Store(true)
+			reloadMu.Unlock()
+			return
+		}
+		lastReload = now
+		dirty.Store(false)
+		reloadMu.Unlock()
+		mygo.RunOnMain(func() {
+			_ = w.app.ReloadRSS()
+			w.invalidateMainWindow()
+		})
+	}
+
+	for _, fid := range feedIDs {
+		wg.Add(1)
+		go func(fid string) {
+			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			if f, err := w.app.Store.GetRSSFeed(ctx, fid); err == nil && f != nil {
+				_, _ = fetcher.FetchFeed(ctx, *f)
+			}
+			triggerReload(false)
+		}(fid)
+	}
+	wg.Wait()
+	if dirty.Load() {
+		triggerReload(true)
+	}
 }
 
 // rssOPMLImportToast words the outcome of an OPML import: what came in, and
