@@ -1000,27 +1000,29 @@ func (w *Window) rssEmptyState(c *ui.Context, t mui.Tokens) {
 		sentence = "订阅源的文章将显示在此处。"
 	}
 
-	unreadForced := w.app != nil && (w.app.Selected == "all" || w.app.Selected == "")
-	hasFeeds := w.app != nil && len(w.app.RSSFeeds) > 0
-	switch {
-	case w.app != nil && w.app.Search != "":
-		title, sentence = rssNoMatchCopy(zh, unreadForced)
-	case unreadForced && hasFeeds:
-		title = "You are up to date"
-		sentence = "New articles will appear here when your feeds publish them."
-		if zh {
-			title = "已无未读"
-			sentence = "订阅源更新后，新文章会出现在这里。"
+	if w.app != nil {
+		unreadForced := w.app.Selected == "all" || w.app.Selected == ""
+		hasFeeds := len(w.app.RSSFeeds) > 0
+		destinationArticles := w.app.RSSDestinationArticleCount()
+		filtersHide := strings.TrimSpace(w.app.Search) != "" || (w.app.UnreadOnly && !unreadForced)
+		switch {
+		case destinationArticles > 0 && filtersHide:
+			title, sentence = rssNoMatchCopy(zh, unreadForced)
+		case destinationArticles == 0 && unreadForced && hasFeeds:
+			title = "You are up to date"
+			sentence = "New articles will appear here when your feeds publish them."
+			if zh {
+				title = "已无未读"
+				sentence = "订阅源更新后，新文章会出现在这里。"
+			}
+		case destinationArticles == 0 && w.app.Selected == todayDestination && hasFeeds:
+			title = "No Articles in the Last 24 Hours"
+			sentence = "New articles will appear here as your feeds publish them."
+			if zh {
+				title = "最近 24 小时没有文章"
+				sentence = "订阅源更新后，新文章会出现在这里。"
+			}
 		}
-	case w.app != nil && w.app.Selected == todayDestination && hasFeeds && !w.app.UnreadOnly:
-		title = "No Articles in the Last 24 Hours"
-		sentence = "New articles will appear here as your feeds publish them."
-		if zh {
-			title = "最近 24 小时没有文章"
-			sentence = "订阅源更新后，新文章会出现在这里。"
-		}
-	case w.app != nil && w.app.UnreadOnly && !unreadForced && hasFeeds:
-		title, sentence = rssNoMatchCopy(zh, unreadForced)
 	}
 
 	mui.EmptyPane(c, t, mui.EmptySpec{

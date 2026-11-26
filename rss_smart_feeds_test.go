@@ -238,13 +238,15 @@ func TestRSSTodayDestinationSelectsTheWindow(t *testing.T) {
 				t.Fatalf("the empty Today column reads as an empty library: %v", tt.Texts())
 			}
 
+			// The window holds nothing, so a search hides nothing: the copy
+			// stays the window's own.
 			a.Search = "anything"
 			tt.Frame()
-			if !tt.HasText(tc.noMatchTitle) {
-				t.Fatalf("Today's search with no matches does not say so: %v", tt.Texts())
+			if !tt.HasText(tc.emptyTitle) || !tt.HasText(tc.emptySentence) {
+				t.Fatalf("the empty Today column lost its window copy under a search: %v", tt.Texts())
 			}
-			if tt.HasText(tc.emptyTitle) {
-				t.Fatalf("the Today window copy outranked the search's no-match state")
+			if tt.HasText(tc.noMatchTitle) {
+				t.Fatalf("a search over an already empty window named no matches: %v", tt.Texts())
 			}
 		})
 	}
@@ -447,14 +449,13 @@ func TestRSSAllUnreadStripDescribesItsList(t *testing.T) {
 func TestRSSAllUnreadEmptyStateSaysUpToDate(t *testing.T) {
 	for _, tc := range []struct {
 		locale, row, title, sentence, count, genericTitle, searchLabel, searchTitle string
-		searchSentence, unreadClause, feedSearchSentence                            string
+		feedSearchSentence                                                          string
 	}{
 		{
 			locale: "en", row: "All Unread", title: "You are up to date",
 			sentence: "New articles will appear here when your feeds publish them.",
 			count:    "0 articles", genericTitle: "No Articles",
 			searchLabel: "Search articles", searchTitle: "No Matching Articles",
-			searchSentence: "Try clearing the search term.", unreadClause: "unread filter",
 			feedSearchSentence: "Try clearing search terms or the unread filter.",
 		},
 		{
@@ -462,7 +463,6 @@ func TestRSSAllUnreadEmptyStateSaysUpToDate(t *testing.T) {
 			sentence: "订阅源更新后，新文章会出现在这里。",
 			count:    "0 篇文章", genericTitle: "暂无文章",
 			searchLabel: "搜索文章", searchTitle: "无匹配文章",
-			searchSentence: "尝试清除搜索词。", unreadClause: "未读过滤",
 			feedSearchSentence: "尝试清除搜索词或未读过滤。",
 		},
 	} {
@@ -502,21 +502,19 @@ func TestRSSAllUnreadEmptyStateSaysUpToDate(t *testing.T) {
 				t.Fatalf("the strip does not count %q: %v", tc.count, tt.Texts())
 			}
 
+			// All Unread holds nothing to hide, so a search leaves the
+			// caught-up copy in place.
 			a.Search = "anything"
 			tt.Frame()
-			if !tt.HasText(tc.searchTitle) {
-				t.Fatalf("a search with no matches does not say so: %v", tt.Texts())
+			if !tt.HasText(tc.title) || !tt.HasText(tc.sentence) {
+				t.Fatalf("the empty All Unread column lost its caught-up copy under a search: %v", tt.Texts())
 			}
-			if tt.HasText(tc.title) {
-				t.Fatalf("the up-to-date state outranked the search's no-match state")
-			}
-			if !tt.HasText(tc.searchSentence) {
-				t.Fatalf("the no-match copy does not name the search alone: %v", tt.Texts())
-			}
-			if tt.HasText(tc.unreadClause) {
-				t.Fatalf("the no-match copy names the Unread filter All Unread does not draw: %v", tt.Texts())
+			if tt.HasText(tc.searchTitle) {
+				t.Fatalf("a search over an already empty destination named no matches: %v", tt.Texts())
 			}
 
+			// The feed holds articles the search hides, so its no-match copy
+			// names both controls.
 			a.Selected = "feed:feed-today"
 			tt.Frame()
 			if !tt.HasText(tc.feedSearchSentence) {
@@ -633,25 +631,53 @@ func TestRSSStarredChineseSurfaceNamesOneDestination(t *testing.T) {
 	}
 }
 
-// TestRSSTodayUnreadFilterOwnsTheEmptyColumn covers Today when only the Unread
-// filter hides the list: the column names the filter that is hiding it instead
-// of claiming nothing was published in the window.
-func TestRSSTodayUnreadFilterOwnsTheEmptyColumn(t *testing.T) {
+// TestRSSTodayEmptyStateFollowsTheWindow covers which empty variant Today
+// shows: a window with nothing in it keeps the 24-hour copy even when the
+// unread filter is on, a window whose articles a filter hides shows the
+// no-match copy, and a blank search counts as no filter at all.
+func TestRSSTodayEmptyStateFollowsTheWindow(t *testing.T) {
 	for _, tc := range []struct {
-		locale, row, noMatchTitle, filterSentence, windowTitle string
+		locale, row, windowTitle, windowSentence, noMatchTitle string
 	}{
 		{
-			locale: "en", row: "Today", noMatchTitle: "No Matching Articles",
-			filterSentence: "Try clearing search terms or the unread filter.",
+			locale: "en", row: "Today",
 			windowTitle:    "No Articles in the Last 24 Hours",
+			windowSentence: "New articles will appear here as your feeds publish them.",
+			noMatchTitle:   "No Matching Articles",
 		},
 		{
-			locale: "zh", row: "今天", noMatchTitle: "无匹配文章",
-			filterSentence: "尝试清除搜索词或未读过滤。",
+			locale: "zh", row: "今天",
 			windowTitle:    "最近 24 小时没有文章",
+			windowSentence: "订阅源更新后，新文章会出现在这里。",
+			noMatchTitle:   "无匹配文章",
 		},
 	} {
-		t.Run(tc.locale, func(t *testing.T) {
+		t.Run(tc.locale+"/empty window with the unread filter on", func(t *testing.T) {
+			a, _, tt := rssTodayTestApp(t)
+			tt.SetLocale(tc.locale)
+			tt.Frame()
+			if err := tt.Click(tc.row); err != nil {
+				t.Fatalf("click %q: %v", tc.row, err)
+			}
+			later := rssTodayClock.Add(72 * time.Hour)
+			a.now = func() time.Time { return later }
+			if err := a.ReloadRSS(); err != nil {
+				t.Fatalf("reload rss: %v", err)
+			}
+			a.UnreadOnly = true
+			tt.Frame()
+			if got := len(a.VisibleRSSArticles()); got != 0 {
+				t.Fatalf("the empty window still lists %d articles", got)
+			}
+			if !tt.HasText(tc.windowTitle) || !tt.HasText(tc.windowSentence) {
+				t.Fatalf("an empty window with the unread filter on lost its 24-hour copy: %v", tt.Texts())
+			}
+			if tt.HasText(tc.noMatchTitle) {
+				t.Fatalf("the unread filter was blamed for an empty window: %v", tt.Texts())
+			}
+		})
+
+		t.Run(tc.locale+"/read articles with the unread filter on", func(t *testing.T) {
 			a, _, tt := rssTodayTestApp(t)
 			tt.SetLocale(tc.locale)
 			tt.Frame()
@@ -668,15 +694,39 @@ func TestRSSTodayUnreadFilterOwnsTheEmptyColumn(t *testing.T) {
 				}
 			}
 			tt.Frame()
-
 			if got := len(a.VisibleRSSArticles()); got != 0 {
-				t.Fatalf("the filtered column still lists %d articles", got)
+				t.Fatalf("the filtered window still lists %d articles", got)
 			}
-			if !tt.HasText(tc.noMatchTitle) || !tt.HasText(tc.filterSentence) {
-				t.Fatalf("the empty Today column does not name the filter hiding it: %v", tt.Texts())
+			if !tt.HasText(tc.noMatchTitle) {
+				t.Fatalf("articles hidden by the unread filter did not name it: %v", tt.Texts())
 			}
 			if tt.HasText(tc.windowTitle) {
-				t.Fatalf("the window copy outranked the Unread filter that hides the list: %v", tt.Texts())
+				t.Fatalf("the window copy outranked the filter that hides its articles: %v", tt.Texts())
+			}
+		})
+
+		t.Run(tc.locale+"/blank search", func(t *testing.T) {
+			a, _, tt := rssTodayTestApp(t)
+			tt.SetLocale(tc.locale)
+			tt.Frame()
+			if err := tt.Click(tc.row); err != nil {
+				t.Fatalf("click %q: %v", tc.row, err)
+			}
+			later := rssTodayClock.Add(72 * time.Hour)
+			a.now = func() time.Time { return later }
+			if err := a.ReloadRSS(); err != nil {
+				t.Fatalf("reload rss: %v", err)
+			}
+			a.Search = "   "
+			tt.Frame()
+			if got := len(a.VisibleRSSArticles()); got != 0 {
+				t.Fatalf("the empty window still lists %d articles", got)
+			}
+			if !tt.HasText(tc.windowTitle) || !tt.HasText(tc.windowSentence) {
+				t.Fatalf("a blank search replaced the window copy: %v", tt.Texts())
+			}
+			if tt.HasText(tc.noMatchTitle) {
+				t.Fatalf("a blank search selected the no-match copy: %v", tt.Texts())
 			}
 		})
 	}

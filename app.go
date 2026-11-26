@@ -1735,41 +1735,82 @@ func (a *App) clockNow() time.Time {
 	return time.Now()
 }
 
-// VisibleRSSArticles returns the list of RSS articles filtered by current selection,
-// unread filter, and search query, ordered newest first (published_at DESC, id DESC).
-func (a *App) VisibleRSSArticles() []core.RSSArticle {
-	selected := a.Selected
-	var allowedFeeds map[string]bool
-	starredOnly := false
-	todayOnly := false
-	unreadOnly := false
+// rssDestinationArticles is the selected destination's own articles, before
+// the search and unread filters: the rows a destination holds in its own
+// right. The article list and the column's empty state share it, so a
+// destination's count and its list cannot disagree.
+type rssDestinationArticles struct {
+	starredOnly  bool
+	todayOnly    bool
+	todayCutoff  time.Time
+	unreadForced bool
+	allowedFeeds map[string]bool
+}
 
+// rssDestination returns the selected destination's own article filter.
+func (a *App) rssDestination() rssDestinationArticles {
+	d := rssDestinationArticles{}
+	selected := a.Selected
 	switch {
 	case selected == "starred":
-		starredOnly = true
+		d.starredOnly = true
 	case selected == todayDestination:
-		todayOnly = true
+		d.todayOnly = true
 	case selected == "all" || selected == "":
-		unreadOnly = true
+		d.unreadForced = true
 	case strings.HasPrefix(selected, "feed:"):
-		fid := strings.TrimPrefix(selected, "feed:")
-		allowedFeeds = map[string]bool{fid: true}
+		d.allowedFeeds = map[string]bool{strings.TrimPrefix(selected, "feed:"): true}
 	case strings.HasPrefix(selected, "group:"):
+		d.allowedFeeds = map[string]bool{}
 		gid := strings.TrimPrefix(selected, "group:")
-		allowedFeeds = map[string]bool{}
 		for _, g := range a.RSSGroups {
 			if g.ID == gid {
 				for _, fid := range g.FeedIDs {
-					allowedFeeds[fid] = true
+					d.allowedFeeds[fid] = true
 				}
 				break
 			}
 		}
 	}
-	var todayCutoff time.Time
-	if todayOnly {
-		todayCutoff = a.clockNow()
+	if d.todayOnly {
+		d.todayCutoff = a.clockNow()
 	}
+	return d
+}
+
+// owns reports whether art belongs to the destination before the filters.
+func (d rssDestinationArticles) owns(art core.RSSArticle) bool {
+	switch {
+	case d.starredOnly && !art.Starred:
+		return false
+	case d.todayOnly && !rssPublishedWithin(art, d.todayCutoff):
+		return false
+	case d.unreadForced && art.Read:
+		return false
+	case d.allowedFeeds != nil && !d.allowedFeeds[art.FeedID]:
+		return false
+	}
+	return true
+}
+
+// RSSDestinationArticleCount is how many articles the selected destination
+// holds before the search and unread filters: zero tells an empty destination
+// apart from one the filters hide.
+func (a *App) RSSDestinationArticleCount() int {
+	destination := a.rssDestination()
+	count := 0
+	for _, art := range a.RSSArticles {
+		if destination.owns(art) {
+			count++
+		}
+	}
+	return count
+}
+
+// VisibleRSSArticles returns the list of RSS articles filtered by current selection,
+// unread filter, and search query, ordered newest first (published_at DESC, id DESC).
+func (a *App) VisibleRSSArticles() []core.RSSArticle {
+	destination := a.rssDestination()
 
 	q := strings.TrimSpace(strings.ToLower(a.Search))
 	var feedTitles map[string]string
@@ -1782,16 +1823,10 @@ func (a *App) VisibleRSSArticles() []core.RSSArticle {
 	out := make([]core.RSSArticle, 0, len(a.RSSArticles))
 
 	for _, art := range a.RSSArticles {
-		if starredOnly && !art.Starred {
+		if !destination.owns(art) {
 			continue
 		}
-		if todayOnly && !rssPublishedWithin(art, todayCutoff) {
-			continue
-		}
-		if allowedFeeds != nil && !allowedFeeds[art.FeedID] {
-			continue
-		}
-		if (unreadOnly || a.UnreadOnly) && art.Read {
+		if a.UnreadOnly && art.Read {
 			continue
 		}
 		if q != "" {
