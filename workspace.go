@@ -598,7 +598,7 @@ func (w *Window) rssSelectionUnreadCount() int {
 		return w.app.RSSUnreadCount("")
 	}
 	if selected == todayDestination {
-		return w.app.RSSTodayUnread
+		return w.app.RSSTodayUnreadCount()
 	}
 	if selected == "starred" {
 		cnt := 0

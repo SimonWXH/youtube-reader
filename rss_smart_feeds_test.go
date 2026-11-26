@@ -150,7 +150,7 @@ func TestRSSSidebarSmartFeedsAreThreeRows(t *testing.T) {
 
 			// The counts are the sidebar's own: unread inside the window, every
 			// unread article, and the starred ones.
-			if got, want := a.RSSTodayUnread, 3; got != want {
+			if got, want := a.RSSTodayUnreadCount(), 3; got != want {
 				t.Fatalf("Today's count = %d, want %d unread inside the window", got, want)
 			}
 			if got, want := a.RSSTotalUnread, 5; got != want {
@@ -215,13 +215,47 @@ func TestRSSTodayDestinationSelectsTheWindow(t *testing.T) {
 			if got := len(a.VisibleRSSArticles()); got != 0 {
 				t.Fatalf("the empty window still lists %d articles", got)
 			}
-			if got := a.RSSTodayUnread; got != 0 {
+			if got := a.RSSTodayUnreadCount(); got != 0 {
 				t.Fatalf("the empty window's count = %d, want none", got)
 			}
 			if !tt.HasText(tc.emptyTitle) {
 				t.Fatalf("the empty Today column shows no empty state: %v", tt.Texts())
 			}
 		})
+	}
+}
+
+// TestRSSTodayCountFollowsTheClockWithoutAReload covers the count and the list
+// reading one moment: the clock moves past an article's window with no reload,
+// and the sidebar count, the column header count and the list all drop it
+// together.
+func TestRSSTodayCountFollowsTheClockWithoutAReload(t *testing.T) {
+	a, _, tt := rssTodayTestApp(t)
+	if err := tt.Click("Today"); err != nil {
+		t.Fatalf("click Today: %v", err)
+	}
+	tt.Frame()
+	if got, want := a.RSSTodayUnreadCount(), 3; got != want {
+		t.Fatalf("Today's count = %d, want %d", got, want)
+	}
+
+	// Half an hour later the oldest unread article has left the window; no
+	// reload or read-state change runs between the two frames.
+	a.now = func() time.Time { return rssTodayClock.Add(30 * time.Minute) }
+	tt.Frame()
+
+	want := []string{"art-1h", "art-2h-read", "art-23h"}
+	if got := rssVisibleIDs(a); !slices.Equal(got, want) {
+		t.Fatalf("Today's articles = %q, want %q", got, want)
+	}
+	if got, want := a.RSSTodayUnreadCount(), 2; got != want {
+		t.Fatalf("Today's unread count = %d, want %d", got, want)
+	}
+	if !tt.HasText("2 unread") {
+		t.Fatalf("the column header did not follow the clock: %v", tt.Texts())
+	}
+	if tt.HasText("3 unread") {
+		t.Fatalf("the column header kept the count from before the clock moved: %v", tt.Texts())
 	}
 }
 

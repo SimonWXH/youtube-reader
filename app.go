@@ -37,10 +37,6 @@ type App struct {
 	RSSUnreadMap    map[string]int
 	RSSTotalUnread  int
 	RSSStarredTotal int
-	// RSSTodayUnread is how many unread articles the Today destination holds:
-	// published in the last 24 hours and not yet read. It is taken from the
-	// same summaries the article list filters, so the row and the list agree.
-	RSSTodayUnread int
 
 	// RSSArticles holds article summaries in memory; full article bodies are paged on demand via SelectedRSSArticle.
 	RSSArticles          []core.RSSArticle

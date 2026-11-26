@@ -268,7 +268,7 @@ func (w *Window) rssSidebar(c *ui.Context, t mui.Tokens, sidebar ui.Element) {
 	if w.app != nil {
 		totalUnreadCount = w.app.RSSTotalUnread
 		starredCount = w.app.RSSStarredTotal
-		todayUnreadCount = w.app.RSSTodayUnread
+		todayUnreadCount = w.app.RSSTodayUnreadCount()
 		selected = w.app.Selected
 	}
 

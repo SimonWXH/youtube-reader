@@ -117,7 +117,13 @@ func (a *App) reloadRSSCounts() {
 	a.RSSUnreadMap = unreadMap
 	a.RSSTotalUnread, _ = a.Store.RSSTotalUnreadCount(ctx)
 	a.RSSStarredTotal, _ = a.Store.RSSStarredCount(ctx)
-	a.RSSTodayUnread = rssTodayUnread(a.RSSArticles, a.clockNow())
+}
+
+// RSSTodayUnreadCount returns the unread articles the Today destination holds
+// at the app's current clock, so the sidebar row, the column header and the
+// filtered list always read the same moment.
+func (a *App) RSSTodayUnreadCount() int {
+	return rssTodayUnread(a.RSSArticles, a.clockNow())
 }
 
 // rssTodayUnread counts the unread articles the Today destination holds: the
