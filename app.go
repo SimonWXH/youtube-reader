@@ -1793,6 +1793,13 @@ func (d rssDestinationArticles) owns(art core.RSSArticle) bool {
 	return true
 }
 
+// RSSUnreadForced reports whether the selected destination lists only unread
+// articles: the All Unread destination does, so its strip hides the Unread
+// filter and its empty state never blames it.
+func (a *App) RSSUnreadForced() bool {
+	return a.rssDestination().unreadForced
+}
+
 // RSSDestinationArticleCount is how many articles the selected destination
 // holds before the search and unread filters: zero tells an empty destination
 // apart from one the filters hide.

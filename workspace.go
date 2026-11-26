@@ -550,24 +550,15 @@ func (w *Window) rssContent(c *ui.Context, t mui.Tokens) {
 
 // selectedRSSSourceTitle returns the human-readable title for the currently selected RSS source/folder.
 func (w *Window) selectedRSSSourceTitle(locale string) string {
-	zh := strings.HasPrefix(strings.ToLower(locale), "zh")
+	words := rssSmartFeedWords(locale)
 	if w.app == nil || w.app.Selected == "all" || w.app.Selected == "" {
-		if zh {
-			return "全部未读"
-		}
-		return "All Unread"
+		return words.all
 	}
 	if w.app.Selected == todayDestination {
-		if zh {
-			return "今天"
-		}
-		return "Today"
+		return words.today
 	}
 	if w.app.Selected == "starred" {
-		if zh {
-			return "标星"
-		}
-		return "Starred"
+		return words.starred
 	}
 	if strings.HasPrefix(w.app.Selected, "feed:") {
 		fid := strings.TrimPrefix(w.app.Selected, "feed:")
@@ -679,7 +670,7 @@ func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens, visibleCount int) 
 		searchLabel = "搜索文章"
 		unreadLabel = "未读"
 	}
-	unreadForced := w.app != nil && (w.app.Selected == "all" || w.app.Selected == "")
+	unreadForced := w.app != nil && w.app.RSSUnreadForced()
 
 	var countText string
 	if visibleCount == 1 {
@@ -1001,7 +992,7 @@ func (w *Window) rssEmptyState(c *ui.Context, t mui.Tokens) {
 	}
 
 	if w.app != nil {
-		unreadForced := w.app.Selected == "all" || w.app.Selected == ""
+		unreadForced := w.app.RSSUnreadForced()
 		hasFeeds := len(w.app.RSSFeeds) > 0
 		destinationArticles := w.app.RSSDestinationArticleCount()
 		searchActive := strings.TrimSpace(w.app.Search) != ""
