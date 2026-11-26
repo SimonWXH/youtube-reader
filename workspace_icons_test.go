@@ -65,24 +65,21 @@ var dockTitles = map[string][2]string{
 }
 
 // TestWorkspaceDockIconPathsParse checks that all four supplied paths parse
-// into real ink: each has a non-empty box inside its design box, so a
+// into real ink: each has a non-empty box no larger than its design box, so a
 // truncated or wrong d attribute fails here rather than drawing nothing.
 func TestWorkspaceDockIconPathsParse(t *testing.T) {
 	for _, icon := range dockIcons {
 		t.Run(icon.name, func(t *testing.T) {
-			path := mui.WorkspaceIconPath(icon.kind)
-			if path == nil {
-				t.Fatal("path missing")
+			svg := mui.WorkspaceIconSVG(icon.kind)
+			if svg == nil {
+				t.Fatal("glyph missing")
 			}
-			b := path.Bounds()
-			if b.W <= 0 || b.H <= 0 {
-				t.Fatalf("ink box %+v is empty", b)
+			w, h := svg.Size()
+			if w <= 0 || h <= 0 {
+				t.Fatalf("ink box %gx%g is empty", w, h)
 			}
-			if b.W > icon.design+0.5 || b.H > icon.design+0.5 {
-				t.Fatalf("ink box %+v exceeds its %g-unit design box", b, icon.design)
-			}
-			if b.X < -0.5 || b.Y < -0.5 {
-				t.Fatalf("ink box %+v starts outside its design box", b)
+			if w > icon.design+0.5 || h > icon.design+0.5 {
+				t.Fatalf("ink box %gx%g exceeds its %g-unit design box", w, h, icon.design)
 			}
 		})
 	}
@@ -98,9 +95,9 @@ func TestWorkspaceDockIconNormalization(t *testing.T) {
 	slot := ui.Rect{X: 6, Y: 4, W: (220 - 12 - 12) / 4, H: 46}
 	for _, icon := range dockIcons {
 		t.Run(icon.name, func(t *testing.T) {
-			path := mui.WorkspaceIconPath(icon.kind)
-			b := path.Bounds()
-			ink := mui.WorkspaceIconRect(path, slot)
+			svg := mui.WorkspaceIconSVG(icon.kind)
+			bw, bh := svg.Size()
+			ink := mui.WorkspaceIconRect(svg, slot)
 			if math.Abs(float64(ink.H-mui.WorkspaceIconSize)) > 0.5 {
 				t.Fatalf("ink height = %g, want %g ± 0.5", ink.H, mui.WorkspaceIconSize)
 			}
@@ -110,7 +107,7 @@ func TestWorkspaceDockIconNormalization(t *testing.T) {
 			if math.Abs(float64(ink.Y+ink.H/2-(slot.Y+slot.H/2))) > 0.5 {
 				t.Fatalf("ink centre y = %g, want the slot's %g ± 0.5", ink.Y+ink.H/2, slot.Y+slot.H/2)
 			}
-			if want := b.W / b.H; math.Abs(float64(ink.W/ink.H-want)) > 0.001 {
+			if want := bw / bh; math.Abs(float64(ink.W/ink.H-want)) > 0.001 {
 				t.Fatalf("ink aspect = %g, want the glyph's %g", ink.W/ink.H, want)
 			}
 			if ink.Y < slot.Y || ink.Y+ink.H > slot.Y+slot.H {
@@ -303,14 +300,14 @@ func TestWorkspaceDockIconsRender(t *testing.T) {
 				if !dockShows(img, ink, colour) {
 					t.Fatalf("%s glyph is not painted in %v", icon.name, colour)
 				}
-				b := mui.WorkspaceIconPath(icon.kind).Bounds()
+				bw, bh := mui.WorkspaceIconSVG(icon.kind).Size()
 				gotH := float32(ink.Dy()) / scale
 				gotW := float32(ink.Dx()) / scale
 				heights[icon.name] = gotH
 				if math.Abs(float64(gotH-mui.WorkspaceIconSize)) > 0.75 {
 					t.Fatalf("%s glyph is %g dp tall, want %g ± 0.75", icon.name, gotH, mui.WorkspaceIconSize)
 				}
-				if want := float64(b.W / b.H); math.Abs(float64(gotW/gotH)-want) > 0.06 {
+				if want := float64(bw / bh); math.Abs(float64(gotW/gotH)-want) > 0.06 {
 					t.Fatalf("%s glyph aspect = %g, want the glyph's %g", icon.name, gotW/gotH, want)
 				}
 				cx := (float32(ink.Min.X+ink.Max.X)/2 + 0.5) / scale

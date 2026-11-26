@@ -33,14 +33,6 @@ const (
 	workspaceWeChatPathD = "M928 161H699.2c-49.1 0-97.1 14.1-138.4 40.7L512 233l-48.8-31.3A255.2 255.2 0 0 0 324.8 161H96c-17.7 0-32 14.3-32 32v568c0 17.7 14.3 32 32 32h228.8c49.1 0 97.1 14.1 138.4 40.7l44.4 28.6c1.3.8 2.8 1.3 4.3 1.3s3-.4 4.3-1.3l44.4-28.6C602 807.1 650.1 793 699.2 793H928c17.7 0 32-14.3 32-32V193c0-17.7-14.3-32-32-32M404 553.5c0 4.1-3.2 7.5-7.1 7.5H211.1c-3.9 0-7.1-3.4-7.1-7.5v-45c0-4.1 3.2-7.5 7.1-7.5h185.7c3.9 0 7.1 3.4 7.1 7.5v45zm0-140c0 4.1-3.2 7.5-7.1 7.5H211.1c-3.9 0-7.1-3.4-7.1-7.5v-45c0-4.1 3.2-7.5 7.1-7.5h185.7c3.9 0 7.1 3.4 7.1 7.5v45zm416 140c0 4.1-3.2 7.5-7.1 7.5H627.1c-3.9 0-7.1-3.4-7.1-7.5v-45c0-4.1 3.2-7.5 7.1-7.5h185.7c3.9 0 7.1 3.4 7.1 7.5v45zm0-140c0 4.1-3.2 7.5-7.1 7.5H627.1c-3.9 0-7.1-3.4-7.1-7.5v-45c0-4.1 3.2-7.5 7.1-7.5h185.7c3.9 0 7.1 3.4 7.1 7.5v45z"
 )
 
-// workspaceIconPaths are the four glyphs' outlines, measured by their ink box.
-var workspaceIconPaths = [workspaceIconKindCount]*ui.Path{
-	WorkspaceIconVideos:      ui.MustParsePath(workspaceVideoPathD),
-	WorkspaceIconRSS:         ui.MustParsePath(workspaceRSSPathD),
-	WorkspaceIconReadLater:   ui.MustParsePath(workspaceLaterPathD),
-	WorkspaceIconWeChatNotes: ui.MustParsePath(workspaceWeChatPathD),
-}
-
 // workspaceIconSVGs frame each outline's ink box as an SVG viewBox, drawn in
 // the current text colour. The dock draws one at exactly that box's size, so
 // the rasterizer works at the display's resolution for the size shown:
@@ -48,10 +40,10 @@ var workspaceIconPaths = [workspaceIconKindCount]*ui.Path{
 // design units first, which leaves the 24-unit Video and 16-unit 稍后读 glyphs
 // blurry at 30 pt, or the 1024-unit 微信读书 one in an oversized mask.
 var workspaceIconSVGs = [workspaceIconKindCount]*ui.SVG{
-	WorkspaceIconVideos:      workspaceIconSVG(workspaceVideoPathD, workspaceIconPaths[WorkspaceIconVideos]),
-	WorkspaceIconRSS:         workspaceIconSVG(workspaceRSSPathD, workspaceIconPaths[WorkspaceIconRSS]),
-	WorkspaceIconReadLater:   workspaceIconSVG(workspaceLaterPathD, workspaceIconPaths[WorkspaceIconReadLater]),
-	WorkspaceIconWeChatNotes: workspaceIconSVG(workspaceWeChatPathD, workspaceIconPaths[WorkspaceIconWeChatNotes]),
+	WorkspaceIconVideos:      workspaceIconSVG(workspaceVideoPathD),
+	WorkspaceIconRSS:         workspaceIconSVG(workspaceRSSPathD),
+	WorkspaceIconReadLater:   workspaceIconSVG(workspaceLaterPathD),
+	WorkspaceIconWeChatNotes: workspaceIconSVG(workspaceWeChatPathD),
 }
 
 // workspaceIconSVG frames d's ink box as an SVG's viewBox. The outline is the
@@ -59,19 +51,20 @@ var workspaceIconSVGs = [workspaceIconKindCount]*ui.SVG{
 // space the icon shows. The paths cut their inner shapes (Video's play triangle)
 // out by winding, which only even-odd fills as the icon set draws them; the
 // other three glyphs paint the same either way.
-func workspaceIconSVG(d string, path *ui.Path) *ui.SVG {
-	b := path.Bounds()
+func workspaceIconSVG(d string) *ui.SVG {
+	b := ui.MustParsePath(d).Bounds()
 	return ui.MustParseSVG([]byte(fmt.Sprintf(
 		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="%g %g %g %g" fill-rule="evenodd"><path fill="currentColor" d="%s"/></svg>`,
 		b.X, b.Y, b.W, b.H, d)))
 }
 
-// WorkspaceIconPath returns kind's parsed glyph, or nil for an unknown kind.
-func WorkspaceIconPath(kind WorkspaceIconKind) *ui.Path {
-	if int(kind) >= len(workspaceIconPaths) {
+// WorkspaceIconSVG returns kind's glyph, framed at its ink box, or nil for an
+// unknown kind.
+func WorkspaceIconSVG(kind WorkspaceIconKind) *ui.SVG {
+	if int(kind) >= len(workspaceIconSVGs) {
 		return nil
 	}
-	return workspaceIconPaths[kind]
+	return workspaceIconSVGs[kind]
 }
 
 // WorkspaceIconColor returns the token that colours kind in the dock. The
@@ -91,30 +84,31 @@ func (t Tokens) WorkspaceIconColor(kind WorkspaceIconKind) ui.Color {
 	return t.Muted
 }
 
-// WorkspaceIconRect returns where path's ink box lands when drawn into r: its
+// WorkspaceIconRect returns where svg's ink box lands when drawn into r: its
 // measured ink is WorkspaceIconSize dp tall, its design aspect kept, and its
-// centre on r's centre. An empty path has an empty box.
-func WorkspaceIconRect(path *ui.Path, r ui.Rect) ui.Rect {
-	if path == nil {
+// centre on r's centre. An empty SVG has an empty box.
+func WorkspaceIconRect(svg *ui.SVG, r ui.Rect) ui.Rect {
+	if svg == nil {
 		return ui.Rect{}
 	}
-	b := path.Bounds()
-	if b.W <= 0 || b.H <= 0 {
+	bw, bh := svg.Size()
+	if bw <= 0 || bh <= 0 {
 		return ui.Rect{}
 	}
-	scale := WorkspaceIconSize / b.H
-	w, h := b.W*scale, b.H*scale
+	scale := WorkspaceIconSize / bh
+	w, h := bw*scale, bh*scale
 	return ui.Rect{X: r.X + (r.W-w)/2, Y: r.Y + (r.H-h)/2, W: w, H: h}
 }
 
 // WorkspaceIconDraw paints kind's glyph into r in c, sized and centred by
-// WorkspaceIconRect. The scale comes from the path's own bounds at draw time,
+// WorkspaceIconRect. The scale comes from the glyph's own ink box at draw time,
 // so the four glyphs read as one size, and nothing is parsed or allocated
 // here: the outline and its framed SVG are made once at init.
 func WorkspaceIconDraw(p *ui.Painter, r ui.Rect, kind WorkspaceIconKind, c ui.Color) {
-	ink := WorkspaceIconRect(WorkspaceIconPath(kind), r)
+	svg := WorkspaceIconSVG(kind)
+	ink := WorkspaceIconRect(svg, r)
 	if ink.W <= 0 || ink.H <= 0 {
 		return
 	}
-	p.Icon(workspaceIconSVGs[kind], ink, c)
+	p.Icon(svg, ink, c)
 }
