@@ -17,9 +17,9 @@ const (
 	workspaceIconKindCount
 )
 
-// WorkspaceIconSize is every dock glyph's measured ink height in dp. The four
+// WorkspaceIconSize is every dock glyph's measured ink height in pt. The four
 // source paths fill their design boxes to very different degrees (Video is
-// about 59% tall, 微信读书 about 62%, RSS and 稍后读 100%), so a glyph is
+// about 61% tall, 微信读书 about 69%, RSS and 稍后读 100%), so a glyph is
 // normalized by its own bounds instead of by the design viewBox: otherwise the
 // four would look visibly unequal and one of them would grow past the slot.
 const WorkspaceIconSize float32 = 30
@@ -85,7 +85,7 @@ func (t Tokens) WorkspaceIconColor(kind WorkspaceIconKind) ui.Color {
 }
 
 // WorkspaceIconRect returns where svg's ink box lands when drawn into r: its
-// measured ink is WorkspaceIconSize dp tall, its design aspect kept, and its
+// measured ink is WorkspaceIconSize pt tall, its design aspect kept, and its
 // centre on r's centre. An empty SVG has an empty box.
 func WorkspaceIconRect(svg *ui.SVG, r ui.Rect) ui.Rect {
 	if svg == nil {
