@@ -352,12 +352,13 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 		t.Fatalf("Column header missing '2 unread': texts = %v", tt.Texts())
 	}
 
-	// 3. Verify Article Filters strip contains search, unread checkbox, and count text
+	// 3. Verify the Article Filters strip keeps its search field and count, and
+	// leaves out the Unread filter the destination already forces
 	if !tt.HasText("Search articles") {
 		t.Fatalf("Article filters strip missing search field")
 	}
-	if !tt.HasText("Unread") {
-		t.Fatalf("Article filters strip missing Unread checkbox")
+	if _, ok := tt.Find("Unread"); ok {
+		t.Fatalf("the All Unread destination draws an Unread filter it cannot control")
 	}
 	if !tt.HasText("2 articles") {
 		t.Fatalf("Article filters strip missing '2 articles' count text")

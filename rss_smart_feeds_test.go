@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -346,6 +347,142 @@ func rssColumnHeaderHas(t *testing.T, tt *ui.Tester, text string) bool {
 		}
 	}
 	return false
+}
+
+// rssUnreadCheckbox reports whether the filter strip draws the Unread filter.
+func rssUnreadCheckbox(t *testing.T, tt *ui.Tester, label string) bool {
+	t.Helper()
+	for _, info := range tt.AccessAll() {
+		if info.Role == ui.RoleCheckBox && info.Name == label {
+			return true
+		}
+	}
+	return false
+}
+
+// TestRSSAllUnreadStripDescribesItsList covers the filter strip at All Unread:
+// the destination already forces the unread filter, so the checkbox that could
+// only contradict it is gone, and the sidebar badge, the strip count and the
+// drawn rows all read the same number.
+func TestRSSAllUnreadStripDescribesItsList(t *testing.T) {
+	for _, tc := range []struct {
+		locale, allUnread, starred, today, unreadLabel, stripCount string
+	}{
+		{locale: "en", allUnread: "All Unread", starred: "Starred", today: "Today", unreadLabel: "Unread", stripCount: "5 articles"},
+		{locale: "zh", allUnread: "全部未读", starred: "标星", today: "今天", unreadLabel: "未读", stripCount: "5 篇文章"},
+	} {
+		t.Run(tc.locale, func(t *testing.T) {
+			a, _, tt := rssTodayTestApp(t)
+			tt.SetLocale(tc.locale)
+			tt.Frame()
+			if err := tt.Click(tc.allUnread); err != nil {
+				t.Fatalf("click %q: %v", tc.allUnread, err)
+			}
+			tt.Frame()
+
+			if rssUnreadCheckbox(t, tt, tc.unreadLabel) {
+				t.Fatalf("All Unread draws the Unread filter it cannot control: %v", tt.Texts())
+			}
+			if !tt.HasText(tc.stripCount) {
+				t.Fatalf("the strip does not count %q: %v", tc.stripCount, tt.Texts())
+			}
+			drawn := 0
+			for _, art := range rssTodayArticles {
+				if tt.HasText(art.id) {
+					drawn++
+				}
+			}
+			if drawn != a.RSSTotalUnread {
+				t.Fatalf("the column draws %d article rows against All Unread's %d unread articles", drawn, a.RSSTotalUnread)
+			}
+			if _, ok := tt.Find(fmt.Sprint(a.RSSTotalUnread)); !ok {
+				t.Fatalf("no sidebar row shows the unread badge %d: %v", a.RSSTotalUnread, tt.Texts())
+			}
+			for _, read := range []string{"art-2h-read", "art-30h-read"} {
+				if tt.HasText(read) {
+					t.Fatalf("the column lists the read article %q", read)
+				}
+			}
+
+			for _, row := range []string{tc.starred, tc.today} {
+				if err := tt.Click(row); err != nil {
+					t.Fatalf("click %q: %v", row, err)
+				}
+				tt.Frame()
+				if !rssUnreadCheckbox(t, tt, tc.unreadLabel) {
+					t.Fatalf("%q does not offer the Unread filter: %v", row, tt.Texts())
+				}
+			}
+		})
+	}
+}
+
+// TestRSSAllUnreadEmptyStateSaysUpToDate covers the empty column at All Unread:
+// with every article read it says the reader is caught up instead of claiming
+// the library is empty, in both languages, and an active search still wins.
+func TestRSSAllUnreadEmptyStateSaysUpToDate(t *testing.T) {
+	for _, tc := range []struct {
+		locale, row, title, sentence, count, genericTitle, searchLabel, searchTitle string
+	}{
+		{
+			locale: "en", row: "All Unread", title: "You are up to date",
+			sentence: "New articles will appear here when your feeds publish them.",
+			count:    "0 articles", genericTitle: "No Articles",
+			searchLabel: "Search articles", searchTitle: "No Matching Articles",
+		},
+		{
+			locale: "zh", row: "全部未读", title: "已无未读",
+			sentence: "订阅源更新后，新文章会出现在这里。",
+			count:    "0 篇文章", genericTitle: "暂无文章",
+			searchLabel: "搜索文章", searchTitle: "无匹配文章",
+		},
+	} {
+		t.Run(tc.locale, func(t *testing.T) {
+			a, _, tt := rssTodayTestApp(t)
+			tt.SetLocale(tc.locale)
+			tt.Frame()
+			if err := tt.Click(tc.row); err != nil {
+				t.Fatalf("click %q: %v", tc.row, err)
+			}
+			if !tt.HasText(tc.searchLabel) {
+				t.Fatalf("the strip lost its search field: %v", tt.Texts())
+			}
+			for _, art := range rssTodayArticles {
+				if art.read {
+					continue
+				}
+				if err := a.MarkRSSArticleRead(art.id, true); err != nil {
+					t.Fatalf("mark %q read: %v", art.id, err)
+				}
+			}
+			tt.Frame()
+
+			if got := len(a.VisibleRSSArticles()); got != 0 {
+				t.Fatalf("the column still lists %d articles", got)
+			}
+			if !tt.HasText(tc.title) {
+				t.Fatalf("the empty All Unread column does not say it is up to date: %v", tt.Texts())
+			}
+			if !tt.HasText(tc.sentence) {
+				t.Fatalf("the up-to-date state is missing its sentence: %v", tt.Texts())
+			}
+			if tt.HasText(tc.genericTitle) {
+				t.Fatalf("the read library reads as an empty one: %v", tt.Texts())
+			}
+			if !tt.HasText(tc.count) {
+				t.Fatalf("the strip does not count %q: %v", tc.count, tt.Texts())
+			}
+
+			a.Search = "anything"
+			tt.Frame()
+			if !tt.HasText(tc.searchTitle) {
+				t.Fatalf("a search with no matches does not say so: %v", tt.Texts())
+			}
+			if tt.HasText(tc.title) {
+				t.Fatalf("the up-to-date state outranked the search's no-match state")
+			}
+		})
+	}
 }
 
 // TestRSSSmartFeedRowMetrics pins the rows the reference measures: the smart

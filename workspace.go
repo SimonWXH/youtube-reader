@@ -668,7 +668,9 @@ func (w *Window) rssColumnHeader(c *ui.Context, t mui.Tokens) {
 	})
 }
 
-// rssContentStrip renders the filter and search bar for RSS articles.
+// rssContentStrip renders the filter and search bar for RSS articles. The
+// Unread filter is left out at the All Unread destination, where the list is
+// already unread-only and the checkbox would have nothing to control.
 func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens, visibleCount int) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	searchLabel := "Search articles"
@@ -677,6 +679,7 @@ func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens, visibleCount int) 
 		searchLabel = "搜索文章"
 		unreadLabel = "未读"
 	}
+	unreadForced := w.app != nil && (w.app.Selected == "all" || w.app.Selected == "")
 
 	var countText string
 	if visibleCount == 1 {
@@ -691,15 +694,22 @@ func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens, visibleCount int) 
 		}
 	}
 
-	labelWidth, _ := c.MeasureText(0, ui.Span{Text: unreadLabel, Size: mui.Control.Size, Weight: int(mui.Control.Weight)})
+	var checkboxWidth float32
+	if !unreadForced {
+		labelWidth, _ := c.MeasureText(0, ui.Span{Text: unreadLabel, Size: mui.Control.Size, Weight: int(mui.Control.Weight)})
+		checkboxWidth = mui.Space(4) + mui.Space(2) + labelWidth
+	}
 	countWidth, _ := c.MeasureText(0, ui.Span{Text: countText, Size: mui.Metadata.Size, Weight: int(mui.Metadata.Weight)})
-	checkboxWidth := mui.Space(4) + mui.Space(2) + labelWidth
 	available := w.contentWidth
 	if available <= 0 {
 		available = windowWidth(c)
 	}
+	gaps := 3
+	if unreadForced {
+		gaps = 2
+	}
 	_, searchWidth, gap, _ := fitFilterStrip(
-		max(0, available-2*mui.Space(4)), 0, checkboxWidth, 0, countWidth+2, 3,
+		max(0, available-2*mui.Space(4)), 0, checkboxWidth, 0, countWidth+2, gaps,
 	)
 
 	strip := ui.Row(c.Key("rss-filter-strip")).Height(contentStripHeight).Shrink(0).FillWidth().
@@ -714,8 +724,10 @@ func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens, visibleCount int) 
 			ui.SearchField(c.Key("rss-search"), &w.app.Search).
 				Width(searchWidth).MinWidth(searchWidth).MaxWidth(searchWidth).Shrink(0).
 				Height(toolbarControl).FontSize(mui.Control.Size).Label(searchLabel)
-			ui.Checkbox(c.Key("rss-unread"), &w.app.UnreadOnly, unreadLabel).
-				FontSize(mui.Control.Size).FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
+			if !unreadForced {
+				ui.Checkbox(c.Key("rss-unread"), &w.app.UnreadOnly, unreadLabel).
+					FontSize(mui.Control.Size).FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
+			}
 		}
 		ui.Spacer(c)
 		ui.Text(c, countText).FontSize(mui.Metadata.Size).TextColor(t.Muted).SingleLine().Shrink(0)
@@ -988,7 +1000,21 @@ func (w *Window) rssEmptyState(c *ui.Context, t mui.Tokens) {
 		sentence = "订阅源的文章将显示在此处。"
 	}
 
-	if w.app != nil && (w.app.Search != "" || w.app.UnreadOnly) {
+	if w.app != nil && w.app.Search != "" {
+		title = "No Matching Articles"
+		sentence = "Try clearing search terms or the unread filter."
+		if zh {
+			title = "无匹配文章"
+			sentence = "尝试清除搜索词或未读过滤。"
+		}
+	} else if w.app != nil && (w.app.Selected == "all" || w.app.Selected == "") {
+		title = "You are up to date"
+		sentence = "New articles will appear here when your feeds publish them."
+		if zh {
+			title = "已无未读"
+			sentence = "订阅源更新后，新文章会出现在这里。"
+		}
+	} else if w.app != nil && w.app.UnreadOnly {
 		title = "No Matching Articles"
 		sentence = "Try clearing search terms or the unread filter."
 		if zh {
