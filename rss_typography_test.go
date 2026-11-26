@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"image"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/simon/youtube-reader/core"
 	mui "github.com/simon/youtube-reader/ui"
 )
 
@@ -438,5 +440,117 @@ func TestRSSReadingSizeBilingualNames(t *testing.T) {
 	}
 	if _, ok := tt.AccessByRole(ui.RoleRadioGroup, "字号"); !ok {
 		t.Fatalf("the size control has no Chinese group name, texts = %v", tt.Texts())
+	}
+}
+
+// rssBlockInk is the painted extent of one laid-out body block in the last
+// frame: the pixels of the block's own box that differ from the page behind
+// them, which is how much room the block's text actually took. Two blocks
+// drawn at the same type size paint the same words the same size, so a
+// difference here is a difference in the style the block was built with.
+func rssBlockInk(img *image.RGBA, box ui.Rect) ui.Rect {
+	back := img.RGBAAt(int(box.X-8), int(box.Y+box.H/2))
+	ink := ui.Rect{X: box.X + box.W, Y: box.Y + box.H}
+	right, bottom := box.X, box.Y
+	for y := int(box.Y); y < int(box.Y+box.H); y++ {
+		for x := int(box.X); x < int(box.X+box.W); x++ {
+			c := img.RGBAAt(x, y)
+			diff := absDiff(int(c.R), int(back.R)) + absDiff(int(c.G), int(back.G)) + absDiff(int(c.B), int(back.B))
+			if diff <= 40 {
+				continue
+			}
+			ink.X = min(ink.X, float32(x))
+			ink.Y = min(ink.Y, float32(y))
+			right = max(right, float32(x))
+			bottom = max(bottom, float32(y))
+		}
+	}
+	return ui.Rect{X: ink.X, Y: ink.Y, W: right - ink.X, H: bottom - ink.Y}
+}
+
+// TestRSSHeadingLevelsRenderDistinctly reads one article holding a first-,
+// second-, third-, fourth-, and fifth-level heading and a paragraph through all
+// three text steps. The five heading blocks carry the same words, so the levels
+// are only distinguishable if the reader builds them at different type sizes:
+// each of the first four levels paints narrower than the one above it at every
+// step, a fifth-level heading draws exactly as the fourth, each level's line
+// height grows with the step, an in-body first-level heading draws with the
+// body's own first-level role 2 pt above the second level - the header headline
+// is not what that block measures - and the body stays at the step's 13, 15, or
+// 17 pt.
+func TestRSSHeadingLevelsRenderDistinctly(t *testing.T) {
+	blocks := []core.ArticleBlock{
+		{Type: core.BlockHeading, Level: 1, Text: "Readable words"},
+		{Type: core.BlockHeading, Level: 2, Text: "Readable words"},
+		{Type: core.BlockHeading, Level: 3, Text: "Readable words"},
+		{Type: core.BlockHeading, Level: 4, Text: "Readable words"},
+		{Type: core.BlockHeading, Level: 5, Text: "Readable words"},
+		{Type: core.BlockParagraph, Text: "Readable words"},
+	}
+	want := []struct {
+		name     string
+		size     float32
+		lineHigh [6]float32 // level 1, 2, 3, 4, 5, and the paragraph
+	}{
+		{"small", 13, [6]float32{28, 25, 22, 21, 21, 21}},
+		{"default", 15, [6]float32{31, 28, 25, 22, 22, 24}},
+		{"large", 17, [6]float32{34, 31, 28, 25, 25, 27}},
+	}
+	var h2Widths []float32
+	for _, tc := range want {
+		t.Run(tc.name, func(t *testing.T) {
+			art := core.RSSArticle{ID: "art-headings-" + tc.name, Title: "Heading Steps", IsFullText: true, Blocks: blocks}
+			_, w, tt := rssReaderScopedWindow(t, art)
+			if err := tt.Click(rssTextSizeStepLabel(mui.ArticleStep(tc.size), tc.size, false)); err != nil {
+				t.Fatalf("choose the %v pt step: %v", tc.size, err)
+			}
+			tt.Frame()
+			if got := w.readingType().Body.Size; got != tc.size {
+				t.Fatalf("the reader draws at %v pt, want %v", got, tc.size)
+			}
+			if len(w.rssReader.ticks) != len(blocks) {
+				t.Fatalf("%d blocks laid out for %d in the body", len(w.rssReader.ticks), len(blocks))
+			}
+			img := tt.Image()
+			var widths [6]float32
+			for i, box := range w.rssReader.ticks {
+				ink := rssBlockInk(img, box)
+				if ink.W <= 0 || ink.H <= 0 {
+					t.Fatalf("block %d at %v painted nothing", i, box)
+				}
+				// A heading's line height is its style's, and a single line of
+				// words sits inside it exactly.
+				if box.H != tc.lineHigh[i] {
+					t.Fatalf("block %d is %v tall, want the %v pt line height", i, box.H, tc.lineHigh[i])
+				}
+				widths[i] = ink.W
+			}
+			// The first four levels step down in width, and a fifth-level heading
+			// draws exactly as the fourth does.
+			for _, i := range []int{1, 2} {
+				if !(widths[i] > widths[i+1]) {
+					t.Fatalf("level %d paints %v wide, level %d %v: the levels are not distinguishable",
+						i, widths[i], i+1, widths[i+1])
+				}
+			}
+			if widths[4] != widths[3] {
+				t.Fatalf("a fifth-level heading paints %v wide, the fourth %v", widths[4], widths[3])
+			}
+			// An in-body first-level heading draws wider than the second level,
+			// and the fourth level wider than the body.
+			if !(widths[0] > widths[1]) || !(widths[3] > widths[5]) {
+				t.Fatalf("the levels invert: level 1 %v, h2 %v, h4 %v, body %v",
+					widths[0], widths[1], widths[3], widths[5])
+			}
+			h2Widths = append(h2Widths, widths[1])
+		})
+	}
+	// The same heading grows with the text step: 18, 20, then 22 pt.
+	if len(h2Widths) != len(want) {
+		t.Fatalf("%d of %d text steps painted a second-level heading", len(h2Widths), len(want))
+	}
+	if !(h2Widths[0] < h2Widths[1] && h2Widths[1] < h2Widths[2]) {
+		t.Fatalf("a second-level heading paints %v wide across the three steps, want it growing",
+			h2Widths)
 	}
 }

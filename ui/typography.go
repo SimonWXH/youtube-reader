@@ -88,12 +88,27 @@ var (
 	EmptyTitle = TextStyle{Size: 15, LineHeight: 20, Weight: Semibold}
 	// EmptyBody is an empty state's explanation.
 	EmptyBody = TextStyle{Size: 13, LineHeight: 18, Weight: Regular}
-	// ArticleTitle is the reading view's article headline, at the middle
-	// body step; ArticleTypeForSize gives the headline of either other step.
-	ArticleTitle = TextStyle{Size: 24, LineHeight: 30, Weight: Semibold, Tracking: -0.2}
-	// ArticleHeading is a section heading inside a reading view's body, at
-	// the middle body step.
-	ArticleHeading = TextStyle{Size: 18, LineHeight: 25, Weight: Semibold, Tracking: -0.1}
+	// ArticleTitle is the reading view's article headline at the middle body
+	// step; ArticleTypeForSize gives the headline of either other step. It is
+	// the page header's role, never an in-body heading: the headline is its own
+	// per-rung role outside the body's heading table, the small and default
+	// steps share 21 pt and the large step carries 27 pt.
+	ArticleTitle = TextStyle{Size: 21, LineHeight: 27, Weight: Semibold, Tracking: -0.2}
+	// ArticleHeading1 is a first-level heading inside a reading view's body, at
+	// the middle body step: the second level's size plus 2 pt at the same
+	// leading ratio, rounded to the point, and the largest of the body's four
+	// heading roles.
+	ArticleHeading1 = TextStyle{Size: 22, LineHeight: 31, Weight: Semibold, Tracking: -0.1}
+	// ArticleHeading2 is a second-level heading inside a reading view's body,
+	// at the middle body step.
+	ArticleHeading2 = TextStyle{Size: 20, LineHeight: 28, Weight: Semibold, Tracking: -0.1}
+	// ArticleHeading3 is a third-level heading inside a reading view's body,
+	// at the middle body step: the level the published scale drew before the
+	// section levels split apart.
+	ArticleHeading3 = TextStyle{Size: 18, LineHeight: 25, Weight: Semibold, Tracking: -0.1}
+	// ArticleHeading4 is a fourth-level heading and every level under it, at
+	// the middle body step: one step above the body, never at it.
+	ArticleHeading4 = TextStyle{Size: 16, LineHeight: 22, Weight: Semibold, Tracking: -0.1}
 	// ArticleBody is long-form reading copy, a step larger and looser than
 	// Body so the reading column stays comfortable over a long article.
 	ArticleBody = TextStyle{Size: 15, LineHeight: 24, Weight: Regular}
@@ -106,33 +121,69 @@ var (
 )
 
 // ArticleType is the reading view's whole type scale for one body size: the
-// headline, section heading, body, quote, and code roles sized from that
-// body, and the vertical rhythm the step sets. The body's size is the step,
-// and one value carries the whole page, so a size change never leaves a role
-// or a gap at the old step.
+// headline, the four body heading levels, body, quote, and code roles, and the
+// vertical rhythm the step sets. The body's size is the step, and one value
+// carries the whole page, so a size change never leaves a role or a gap at the
+// old step.
 type ArticleType struct {
 	Title TextStyle
-	// Heading is a section heading inside the body; a first-level heading
-	// takes Title, the article's own size.
-	Heading TextStyle
-	Body    TextStyle
-	Quote   TextStyle
-	Code    TextStyle
+	// Heading1 through Heading4 are the headings inside the body: first level,
+	// second level, third level, and fourth level and below. Heading1 is never
+	// the article's headline, which is Title; the headline a feed supplies as
+	// content draws with Heading1, and the ArticleHeading tokens pin the sizes.
+	Heading1 TextStyle
+	Heading2 TextStyle
+	Heading3 TextStyle
+	Heading4 TextStyle
+	Body     TextStyle
+	Quote    TextStyle
+	Code     TextStyle
 	// BlockGap is the space between the body's blocks, and HeadingGap the
 	// extra lead-in a section heading keeps above it.
 	BlockGap   float32
 	HeadingGap float32
 }
 
+// HeadingFor returns the heading role a body block at level draws with: the
+// body's own first level at 1, its second and third at 2 and 3, and the
+// smallest body level for 4 and every deeper one, so no level is left without
+// a role. A level outside 1 to 6 is the caller's to clamp; rssBlock folds it
+// to level 2 before asking.
+func (a ArticleType) HeadingFor(level int) TextStyle {
+	switch level {
+	case 1:
+		return a.Heading1
+	case 2:
+		return a.Heading2
+	case 3:
+		return a.Heading3
+	default:
+		return a.Heading4
+	}
+}
+
 // articleTypes is the type ladder, one rung per offered body size. The body
-// grows 2 pt a step with 1.6 times its size for a line (21, 24, 27), the
-// headline sits at 1.6 times the body, a section heading at 1.2, and code a
-// step under the body so code never shouts beside prose. The middle rung is
-// the published Article tokens.
+// grows 2 pt a step with 1.6 times its size for a line (21, 24, 27), and the
+// code block a step under the body so code never shouts beside prose. The
+// middle rung is the published Article tokens.
+//
+// The four body heading levels are a hand-set table rather than ratios of the
+// body: the chosen sizes are exact (22/31, 20/28, 18/25, 16/22 at the default
+// step), the first level is the second level's size plus 2 pt, and each of the
+// default and large steps keeps every level 2 pt under the one above, while the
+// small one runs 20, 18, 16, 15, so its bottom gap is 1 pt. Each level's line
+// height is the default step's own ratio of its size, rounded, so a wrapped
+// heading keeps its leading as the reader enlarges the text. The headline is
+// its own per-rung role outside that table: the small and default steps share
+// 21 pt and the large step carries 27 pt, so the article's title is never one
+// of the body's heading levels.
 var articleTypes = [...]ArticleType{
 	{
 		Title:      TextStyle{Size: 21, LineHeight: 27, Weight: Semibold, Tracking: -0.2},
-		Heading:    TextStyle{Size: 16, LineHeight: 22, Weight: Semibold, Tracking: -0.1},
+		Heading1:   TextStyle{Size: 20, LineHeight: 28, Weight: Semibold, Tracking: -0.1},
+		Heading2:   TextStyle{Size: 18, LineHeight: 25, Weight: Semibold, Tracking: -0.1},
+		Heading3:   TextStyle{Size: 16, LineHeight: 22, Weight: Semibold, Tracking: -0.1},
+		Heading4:   TextStyle{Size: 15, LineHeight: 21, Weight: Semibold, Tracking: -0.1},
 		Body:       TextStyle{Size: 13, LineHeight: 21, Weight: Regular},
 		Quote:      TextStyle{Size: 13, LineHeight: 21, Weight: Regular},
 		Code:       TextStyle{Family: MonoFont, Size: 11.5, LineHeight: 17, Weight: Regular},
@@ -141,7 +192,10 @@ var articleTypes = [...]ArticleType{
 	},
 	{
 		Title:      ArticleTitle,
-		Heading:    ArticleHeading,
+		Heading1:   ArticleHeading1,
+		Heading2:   ArticleHeading2,
+		Heading3:   ArticleHeading3,
+		Heading4:   ArticleHeading4,
 		Body:       ArticleBody,
 		Quote:      ArticleQuote,
 		Code:       ArticleCode,
@@ -150,7 +204,10 @@ var articleTypes = [...]ArticleType{
 	},
 	{
 		Title:      TextStyle{Size: 27, LineHeight: 34, Weight: Semibold, Tracking: -0.2},
-		Heading:    TextStyle{Size: 20, LineHeight: 28, Weight: Semibold, Tracking: -0.1},
+		Heading1:   TextStyle{Size: 24, LineHeight: 34, Weight: Semibold, Tracking: -0.1},
+		Heading2:   TextStyle{Size: 22, LineHeight: 31, Weight: Semibold, Tracking: -0.1},
+		Heading3:   TextStyle{Size: 20, LineHeight: 28, Weight: Semibold, Tracking: -0.1},
+		Heading4:   TextStyle{Size: 18, LineHeight: 25, Weight: Semibold, Tracking: -0.1},
 		Body:       TextStyle{Size: 17, LineHeight: 27, Weight: Regular},
 		Quote:      TextStyle{Size: 17, LineHeight: 27, Weight: Regular},
 		Code:       TextStyle{Family: MonoFont, Size: 15, LineHeight: 23, Weight: Regular},
