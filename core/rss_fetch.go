@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"html"
@@ -119,11 +120,13 @@ type RSSFetcher struct {
 	retentionMaxAge      time.Duration
 }
 
+var defaultRSSHTTPClient = &http.Client{Timeout: DefaultRSSTimeout}
+
 // NewRSSFetcher creates and initializes a new RSSFetcher.
 func NewRSSFetcher(store *Store, opts ...RSSFetcherOption) *RSSFetcher {
 	f := &RSSFetcher{
 		store:                store,
-		client:               &http.Client{Timeout: DefaultRSSTimeout},
+		client:               defaultRSSHTTPClient,
 		concurrency:          DefaultRSSConcurrency,
 		timeout:              DefaultRSSTimeout,
 		maxRetries:           DefaultRSSMaxRetries,
@@ -134,6 +137,9 @@ func NewRSSFetcher(store *Store, opts ...RSSFetcherOption) *RSSFetcher {
 	}
 	for _, opt := range opts {
 		opt(f)
+	}
+	if f.client == defaultRSSHTTPClient && f.timeout != DefaultRSSTimeout {
+		f.client = &http.Client{Timeout: f.timeout}
 	}
 	return f
 }
@@ -256,6 +262,8 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 	res.Title = feed.DisplayName()
 	res.ItemsFetched = len(parsed.Items)
 
+	existing, _ := f.store.ListRSSArticleFingerprints(ctx, feed.ID)
+
 	// Transform parsed items into RSSArticle models
 	articles := make([]RSSArticle, 0, len(parsed.Items))
 	for _, item := range parsed.Items {
@@ -274,6 +282,7 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 			author = item.Authors[0].Name
 		}
 
+		hasExplicitDate := item.PublishedParsed != nil || item.UpdatedParsed != nil
 		publishedAt := time.UnixMilli(now).UTC().Format(time.RFC3339)
 		if item.PublishedParsed != nil {
 			publishedAt = item.PublishedParsed.UTC().Format(time.RFC3339)
@@ -285,6 +294,13 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 		if feedContent == "" {
 			feedContent = item.Description
 		}
+		if prev, ok := existing[artID]; ok && prev.HasBody && prev.Title == item.Title && prev.Link == articleLink &&
+			(!hasExplicitDate || prev.PublishedAt == publishedAt) {
+			if prev.IsFullText || (feedContent != "" && !f.extractFullText && sha256.Sum256([]byte(feedContent)) == prev.ContentHash) {
+				continue
+			}
+		}
+
 		snippet := CleanSnippet(item.Description, item.Content, 200)
 
 		heroImage := ""
@@ -311,7 +327,10 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 			}
 			blocks = ParseHTMLBlocks(contentHTML)
 			if heroImage == "" {
-				heroImage = ExtractHeroImage(contentHTML)
+				heroImage = firstBlockImageURL(blocks)
+				if heroImage == "" {
+					heroImage = ExtractHeroImage(contentHTML)
+				}
 			}
 			isFullText = false
 		}
@@ -383,7 +402,17 @@ func (f *RSSFetcher) FetchAllFeeds(ctx context.Context, force bool) ([]FetchFeed
 		wg.Add(1)
 		go func(idx int, target RSSFeed) {
 			defer wg.Done()
-			sem <- struct{}{}
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				results[idx] = FetchFeedResult{
+					FeedID:  target.ID,
+					FeedURL: target.FeedURL,
+					Title:   target.DisplayName(),
+					Error:   ctx.Err(),
+				}
+				return
+			}
 			defer func() { <-sem }()
 
 			res, _ := f.FetchFeed(ctx, target)
@@ -473,7 +502,7 @@ func DiscoverFeedURL(ctx context.Context, client *http.Client, targetURL string)
 		return canonical, nil
 	}
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	doc, err := goquery.NewDocumentFromReader(io.LimitReader(resp.Body, MaxFeedBodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("feed discovery failed for %s: %w", requestURL, err)
 	}

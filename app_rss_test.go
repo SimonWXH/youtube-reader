@@ -270,3 +270,59 @@ func TestAppRSSFailureStateAndUnreadCounts(t *testing.T) {
 		t.Fatalf("expected cleared failure state, got count %d, error %q", cleared.FailureCount, cleared.LastError)
 	}
 }
+
+func TestAppReloadRSSLoadsSummariesAndSelectsFullArticleOnDemand(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	defer a.Close()
+
+	ctx := context.Background()
+	feed := core.RSSFeed{
+		ID:        "feed:ondemand",
+		FeedURL:   "https://example.com/feed.xml",
+		Title:     "On-Demand Feed",
+		UpdatedAt: 1000,
+	}
+	if err := a.Store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.SaveRSSArticles(ctx, []core.RSSArticle{{
+		ID:          "art:ondemand:1",
+		FeedID:      feed.ID,
+		Title:       "Heavy Article",
+		Link:        "https://example.com/heavy",
+		PublishedAt: "2026-03-01T12:00:00Z",
+		Snippet:     "Short summary",
+		ContentHTML: "<p>Full heavy article body</p>",
+		Blocks:      []core.ArticleBlock{{Type: core.BlockParagraph, Text: "Full heavy article body"}},
+		UpdatedAt:   1000,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := a.ReloadRSS(); err != nil {
+		t.Fatalf("ReloadRSS failed: %v", err)
+	}
+	if len(a.RSSArticles) != 1 {
+		t.Fatalf("got %d articles, want 1", len(a.RSSArticles))
+	}
+	if a.RSSArticles[0].ContentHTML != "" || len(a.RSSArticles[0].Blocks) != 0 {
+		t.Fatalf("App.RSSArticles must hold summaries only, got html=%q blocks=%d", a.RSSArticles[0].ContentHTML, len(a.RSSArticles[0].Blocks))
+	}
+
+	a.SelectRSSArticle("art:ondemand:1")
+	selected := a.SelectedRSSArticle()
+	if selected == nil {
+		t.Fatal("SelectedRSSArticle returned nil")
+	}
+	if selected.ContentHTML != "<p>Full heavy article body</p>" || len(selected.Blocks) != 1 {
+		t.Fatalf("SelectedRSSArticle must load body on demand, got html=%q blocks=%d", selected.ContentHTML, len(selected.Blocks))
+	}
+
+	if err := a.MarkRSSArticleRead("art:ondemand:1", true); err != nil {
+		t.Fatalf("MarkRSSArticleRead failed: %v", err)
+	}
+	if updated := a.SelectedRSSArticle(); updated == nil || !updated.Read {
+		t.Fatalf("SelectedRSSArticle did not reflect MarkRSSArticleRead")
+	}
+}

@@ -708,3 +708,50 @@ func TestFetchResolvesRelativeArticleLinks(t *testing.T) {
 		t.Fatalf("image block URL must resolve against the resolved article link, got %q; want %q", imageBlockURL, wantImage)
 	}
 }
+
+func TestFetchFeedSkipsUnchangedExistingArticles(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+
+	feed := RSSFeed{
+		ID:        "feed:skip-unchanged",
+		FeedURL:   "https://example.com/feed.xml",
+		UpdatedAt: 1000,
+	}
+	if err := store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &http.Client{
+		Transport: &mockTransport{
+			roundTripFunc: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Header:     http.Header{"Content-Type": []string{"application/rss+xml"}},
+					Body:       io.NopCloser(strings.NewReader(sampleRSS20)),
+				}, nil
+			},
+		},
+	}
+
+	fetcher := NewRSSFetcher(store, WithHTTPClient(client))
+	first, err := fetcher.FetchFeed(ctx, feed)
+	if err != nil {
+		t.Fatalf("first FetchFeed failed: %v", err)
+	}
+	if first.ItemsSaved != 1 {
+		t.Fatalf("first ItemsSaved = %d, want 1", first.ItemsSaved)
+	}
+
+	// Second fetch sees the identical feed without 304: should parse metadata
+	// and skip re-saving the unchanged article.
+	savedFeed, _ := store.GetRSSFeed(ctx, feed.ID)
+	second, err := fetcher.FetchFeed(ctx, *savedFeed)
+	if err != nil {
+		t.Fatalf("second FetchFeed failed: %v", err)
+	}
+	if second.ItemsFetched != 1 || second.ItemsSaved != 0 {
+		t.Fatalf("second fetch got fetched=%d saved=%d, want fetched=1 saved=0", second.ItemsFetched, second.ItemsSaved)
+	}
+}

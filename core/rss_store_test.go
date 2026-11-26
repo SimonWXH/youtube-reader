@@ -918,3 +918,85 @@ func TestRSSStoreSaveFeedPreservesCustomTitle(t *testing.T) {
 		t.Fatalf("Title = %q, want %q", saved.Title, "Updated Site Title")
 	}
 }
+
+func TestRSSStoreListSummariesOmitsBodiesAndCapsFingerprints(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+
+	feed := RSSFeed{
+		ID:        "feed:summary-test",
+		FeedURL:   "https://example.com/feed.xml",
+		Title:     "Summary Feed",
+		UpdatedAt: 1000,
+	}
+	if err := store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatal(err)
+	}
+
+	blocks := []ArticleBlock{{Type: BlockParagraph, Text: "Full article paragraph", HTML: "<p>Full article paragraph</p>"}}
+	if err := store.SaveRSSArticles(ctx, []RSSArticle{
+		{
+			ID:          "art-with-snippet",
+			FeedID:      feed.ID,
+			Title:       "Has Snippet",
+			Link:        "https://example.com/1",
+			PublishedAt: "2026-03-01T12:00:00Z",
+			Snippet:     "Explicit summary",
+			ContentHTML: "<p>Full HTML body that must not be loaded into summary slice</p>",
+			Blocks:      blocks,
+			HeroImage:   "https://example.com/1.png",
+			UpdatedAt:   1000,
+		},
+		{
+			ID:          "art-empty-snippet",
+			FeedID:      feed.ID,
+			Title:       "Needs Snippet Fallback",
+			Link:        "https://example.com/2",
+			PublishedAt: "2026-03-01T11:00:00Z",
+			Snippet:     "",
+			ContentHTML: "<p>Derived <b>snippet</b> from content HTML.</p>",
+			Blocks:      blocks,
+			UpdatedAt:   1000,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	summaries, err := store.ListRSSArticleSummaries(ctx, RSSArticleFilter{FeedID: feed.ID})
+	if err != nil {
+		t.Fatalf("ListRSSArticleSummaries failed: %v", err)
+	}
+	if len(summaries) != 2 {
+		t.Fatalf("got %d summaries, want 2", len(summaries))
+	}
+	if summaries[0].ID != "art-with-snippet" || summaries[0].Snippet != "Explicit summary" {
+		t.Fatalf("unexpected first summary: %+v", summaries[0])
+	}
+	if summaries[0].ContentHTML != "" || len(summaries[0].Blocks) != 0 {
+		t.Fatalf("summary must omit ContentHTML and Blocks, got html=%q blocks=%d", summaries[0].ContentHTML, len(summaries[0].Blocks))
+	}
+	if summaries[1].Snippet != "Derived snippet from content HTML." {
+		t.Fatalf("fallback snippet = %q, want %q", summaries[1].Snippet, "Derived snippet from content HTML.")
+	}
+	if summaries[1].ContentHTML != "" || len(summaries[1].Blocks) != 0 {
+		t.Fatalf("fallback summary must omit ContentHTML and Blocks")
+	}
+
+	// Full GetRSSArticle must still return the complete body and blocks.
+	full, err := store.GetRSSArticle(ctx, "art-with-snippet")
+	if err != nil || full == nil {
+		t.Fatalf("GetRSSArticle failed: %v", err)
+	}
+	if full.ContentHTML == "" || len(full.Blocks) != 1 {
+		t.Fatalf("GetRSSArticle lost body: html=%q blocks=%d", full.ContentHTML, len(full.Blocks))
+	}
+
+	// Fingerprints match saved articles and reflect purged ContentHTML.
+	fps, err := store.ListRSSArticleFingerprints(ctx, feed.ID)
+	if err != nil {
+		t.Fatalf("ListRSSArticleFingerprints failed: %v", err)
+	}
+	if len(fps) != 2 || !fps["art-with-snippet"].HasBody {
+		t.Fatalf("unexpected fingerprints: %+v", fps)
+	}
+}

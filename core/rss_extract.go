@@ -9,10 +9,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/go-shiori/go-readability"
+	xhtml "golang.org/x/net/html"
 )
 
 const (
@@ -23,14 +25,12 @@ const (
 )
 
 var (
-	htmlTagRegex    = regexp.MustCompile(`<[^>]*>`)
-	brRegex         = regexp.MustCompile(`(?i)<br\s*/?>|</p>|</div>|</h[1-6]>|</li>`)
-	whitespaceRegex = regexp.MustCompile(`\s+`)
-	codeLangRegex   = regexp.MustCompile(`(?:language-|lang-)([a-zA-Z0-9_\-]+)`)
+	codeLangRegex = regexp.MustCompile(`(?:language-|lang-)([a-zA-Z0-9_\-]+)`)
 )
 
 // CleanSnippet strips HTML tags, decodes HTML entities, collapses extra whitespace,
-// and truncates the string to maxRunes for list previews.
+// and truncates the string to maxRunes for list previews. It streams HTML tokens
+// without building a DOM tree and stops once maxRunes+1 runes are collected.
 func CleanSnippet(desc, content string, maxRunes int) string {
 	raw := desc
 	if strings.TrimSpace(raw) == "" {
@@ -39,26 +39,83 @@ func CleanSnippet(desc, content string, maxRunes int) string {
 	if strings.TrimSpace(raw) == "" {
 		return ""
 	}
-
-	// Ensure line breaks and block closures translate into whitespace
-	preprocessed := brRegex.ReplaceAllString(raw, " ")
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(preprocessed))
-	var text string
-	if err == nil {
-		text = doc.Text()
-	} else {
-		text = html.UnescapeString(htmlTagRegex.ReplaceAllString(preprocessed, " "))
-	}
-	text = strings.TrimSpace(whitespaceRegex.ReplaceAllString(text, " "))
-
 	if maxRunes <= 0 {
 		maxRunes = 200
 	}
-	if utf8.RuneCountInString(text) > maxRunes {
-		runes := []rune(text)
-		return string(runes[:maxRunes]) + "..."
+
+	z := xhtml.NewTokenizer(strings.NewReader(raw))
+	var out strings.Builder
+	out.Grow(min(len(raw), maxRunes*4))
+	runeCount := 0
+	needSpace := false
+	truncated := false
+	skipDepth := 0
+
+	appendText := func(s string) {
+		for _, r := range s {
+			if unicode.IsSpace(r) {
+				if runeCount > 0 {
+					needSpace = true
+				}
+				continue
+			}
+			if needSpace && runeCount > 0 {
+				if runeCount >= maxRunes {
+					truncated = true
+					return
+				}
+				out.WriteByte(' ')
+				runeCount++
+				needSpace = false
+			}
+			if runeCount >= maxRunes {
+				truncated = true
+				return
+			}
+			out.WriteRune(r)
+			runeCount++
+		}
 	}
-	return text
+
+	for !truncated {
+		tt := z.Next()
+		if tt == xhtml.ErrorToken {
+			break
+		}
+		switch tt {
+		case xhtml.TextToken:
+			if skipDepth == 0 {
+				appendText(string(z.Text()))
+			}
+		case xhtml.StartTagToken, xhtml.EndTagToken, xhtml.SelfClosingTagToken:
+			nameBytes, _ := z.TagName()
+			tag := strings.ToLower(string(nameBytes))
+			if tag == "script" || tag == "style" {
+				if tt == xhtml.StartTagToken {
+					skipDepth++
+				} else if tt == xhtml.EndTagToken && skipDepth > 0 {
+					skipDepth--
+				}
+				continue
+			}
+			if isSnippetBreakTag(tag) && runeCount > 0 {
+				needSpace = true
+			}
+		}
+	}
+
+	if truncated {
+		return out.String() + "..."
+	}
+	return out.String()
+}
+
+func isSnippetBreakTag(tag string) bool {
+	switch tag {
+	case "br", "p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "tr", "blockquote", "pre", "section", "article", "hr":
+		return true
+	}
+	return false
 }
 
 // ExtractHeroImage scans HTML for the first valid image source.
@@ -335,8 +392,22 @@ func ExtractFullText(ctx context.Context, client *http.Client, pageURL string, f
 	}
 	blocks = ParseHTMLBlocks(contentHTML)
 	if heroImage == "" {
-		heroImage = ExtractHeroImage(contentHTML)
+		heroImage = firstBlockImageURL(blocks)
+		if heroImage == "" {
+			heroImage = ExtractHeroImage(contentHTML)
+		}
 	}
 	isFullText = false
 	return contentHTML, blocks, false, heroImage, nil
+}
+
+func firstBlockImageURL(blocks []ArticleBlock) string {
+	for _, b := range blocks {
+		if b.Type == BlockImage {
+			if u := strings.TrimSpace(b.URL); u != "" {
+				return u
+			}
+		}
+	}
+	return ""
 }

@@ -77,11 +77,11 @@ func thumbnailPlaceholder(c *ui.Context, tokens Tokens, label string, failed boo
 	})
 }
 
-// thumbMaxSide bounds the bitmap kept for a frame w wide, at about three
+// thumbMaxSide bounds the bitmap kept for a frame w wide, at 2x Retina
 // pixels per point.
 func thumbMaxSide(w float32) int {
 	if w <= 0 {
 		return 640
 	}
-	return int(w * 3)
+	return int(w * 2)
 }
