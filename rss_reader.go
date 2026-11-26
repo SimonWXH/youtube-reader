@@ -716,7 +716,7 @@ func rssHeaderSourceWidth(c *ui.Context, feedName, date string) float32 {
 	width := float32(0)
 	children := 0
 	if feedName != "" {
-		width += rssHeaderFeedMin
+		width += min(rssHeaderFeedMin, rssTextWidth(c, mui.Metadata, feedName))
 		children++
 	}
 	if date != "" {

@@ -1012,7 +1012,7 @@ func (w *Window) rssEmptyState(c *ui.Context, t mui.Tokens) {
 			title = "已无未读"
 			sentence = "订阅源更新后，新文章会出现在这里。"
 		}
-	case w.app != nil && w.app.Selected == todayDestination && hasFeeds:
+	case w.app != nil && w.app.Selected == todayDestination && hasFeeds && !w.app.UnreadOnly:
 		title = "No Articles in the Last 24 Hours"
 		sentence = "New articles will appear here as your feeds publish them."
 		if zh {

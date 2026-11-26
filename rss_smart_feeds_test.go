@@ -633,6 +633,55 @@ func TestRSSStarredChineseSurfaceNamesOneDestination(t *testing.T) {
 	}
 }
 
+// TestRSSTodayUnreadFilterOwnsTheEmptyColumn covers Today when only the Unread
+// filter hides the list: the column names the filter that is hiding it instead
+// of claiming nothing was published in the window.
+func TestRSSTodayUnreadFilterOwnsTheEmptyColumn(t *testing.T) {
+	for _, tc := range []struct {
+		locale, row, noMatchTitle, filterSentence, windowTitle string
+	}{
+		{
+			locale: "en", row: "Today", noMatchTitle: "No Matching Articles",
+			filterSentence: "Try clearing search terms or the unread filter.",
+			windowTitle:    "No Articles in the Last 24 Hours",
+		},
+		{
+			locale: "zh", row: "今天", noMatchTitle: "无匹配文章",
+			filterSentence: "尝试清除搜索词或未读过滤。",
+			windowTitle:    "最近 24 小时没有文章",
+		},
+	} {
+		t.Run(tc.locale, func(t *testing.T) {
+			a, _, tt := rssTodayTestApp(t)
+			tt.SetLocale(tc.locale)
+			tt.Frame()
+			if err := tt.Click(tc.row); err != nil {
+				t.Fatalf("click %q: %v", tc.row, err)
+			}
+			a.UnreadOnly = true
+			for _, art := range rssTodayArticles {
+				if art.read {
+					continue
+				}
+				if err := a.MarkRSSArticleRead(art.id, true); err != nil {
+					t.Fatalf("mark %q read: %v", art.id, err)
+				}
+			}
+			tt.Frame()
+
+			if got := len(a.VisibleRSSArticles()); got != 0 {
+				t.Fatalf("the filtered column still lists %d articles", got)
+			}
+			if !tt.HasText(tc.noMatchTitle) || !tt.HasText(tc.filterSentence) {
+				t.Fatalf("the empty Today column does not name the filter hiding it: %v", tt.Texts())
+			}
+			if tt.HasText(tc.windowTitle) {
+				t.Fatalf("the window copy outranked the Unread filter that hides the list: %v", tt.Texts())
+			}
+		})
+	}
+}
+
 // TestRSSSmartFeedRowMetrics pins the rows the reference measures: the smart
 // feeds and the feeds under them share the sidebar's 28 pt row, and a feed's
 // icon is the reference's compact 16 pt favicon.
