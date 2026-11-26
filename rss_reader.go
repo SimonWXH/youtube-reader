@@ -1610,10 +1610,7 @@ func (w *Window) rssBlock(c *ui.Context, t mui.Tokens, art core.RSSArticle, bloc
 		if level < 1 || level > 6 {
 			level = 2
 		}
-		style := scale.Heading
-		if level <= 1 {
-			style = scale.Title
-		}
+		style := scale.HeadingFor(level)
 		return style.Apply(ui.Text(c, block.Text)).TextColor(t.Text).
 			Key(key).FillWidth().Margin(scale.HeadingGap, 0, 0, 0).Wrap()
 
