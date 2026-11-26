@@ -43,7 +43,7 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 		`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`,
 		`CREATE TABLE IF NOT EXISTS queue (id INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT)`,
 		`CREATE TABLE IF NOT EXISTS notified (video_id TEXT PRIMARY KEY, notified_at INTEGER NOT NULL)`,
-		`CREATE TABLE IF NOT EXISTS rss_feeds (id TEXT PRIMARY KEY, feed_url TEXT NOT NULL, site_url TEXT, title TEXT, custom_title TEXT, group_ids TEXT, avatar_url TEXT, etag TEXT, last_modified TEXT, last_fetched_at INTEGER NOT NULL DEFAULT 0, failure_count INTEGER NOT NULL DEFAULT 0, last_error TEXT, last_error_at INTEGER NOT NULL DEFAULT 0, refresh_interval_mins INTEGER NOT NULL DEFAULT 30, updated_at INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE TABLE IF NOT EXISTS rss_feeds (id TEXT PRIMARY KEY, feed_url TEXT NOT NULL, site_url TEXT, title TEXT, custom_title TEXT, group_ids TEXT, avatar_url TEXT, etag TEXT, last_modified TEXT, last_fetched_at INTEGER NOT NULL DEFAULT 0, failure_count INTEGER NOT NULL DEFAULT 0, last_error TEXT, last_error_at INTEGER NOT NULL DEFAULT 0, refresh_interval_mins INTEGER NOT NULL DEFAULT 30, updated_at INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER NOT NULL DEFAULT 0, fetch_full_text INTEGER)`,
 		`CREATE TABLE IF NOT EXISTS rss_groups (id TEXT PRIMARY KEY, name TEXT NOT NULL, feed_ids TEXT, sort_order INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE TABLE IF NOT EXISTS rss_articles (id TEXT PRIMARY KEY, feed_id TEXT NOT NULL, title TEXT NOT NULL, link TEXT, guid TEXT, author TEXT, published_at TEXT, snippet TEXT, content_html TEXT, is_full_text INTEGER NOT NULL DEFAULT 0, hero_image TEXT, blocks_json TEXT, read INTEGER NOT NULL DEFAULT 0, read_at INTEGER NOT NULL DEFAULT 0, starred INTEGER NOT NULL DEFAULT 0, starred_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS idx_rss_articles_feed_id ON rss_articles(feed_id)`,
@@ -60,11 +60,14 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 	}
 	// A store an earlier build wrote keeps every row it holds and gains the
 	// fields those builds did not have: the page token that remembers how far a
-	// channel's history paging got, and the mark that keeps a video the reader
-	// loaded that way out of retention's reach.
+	// channel's history paging got, the mark that keeps a video the reader
+	// loaded that way out of retention's reach, and the feed's answer to the
+	// reader's automatic full-text fetch, which a NULL column leaves at the
+	// default of fetching it.
 	for _, column := range [][3]string{
 		{"channels", "next_page_token", "next_page_token TEXT"},
 		{"videos", "is_backfilled", "is_backfilled INTEGER NOT NULL DEFAULT 0"},
+		{"rss_feeds", "fetch_full_text", "fetch_full_text INTEGER"},
 	} {
 		if err := s.ensureColumn(ctx, column[0], column[1], column[2]); err != nil {
 			db.Close()

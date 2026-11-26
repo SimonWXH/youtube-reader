@@ -23,8 +23,8 @@ func (s *Store) SaveRSSFeed(ctx context.Context, f RSSFeed) error {
 	sql := `INSERT INTO rss_feeds(
 		id, feed_url, site_url, title, custom_title, group_ids, avatar_url,
 		etag, last_modified, last_fetched_at, failure_count, last_error, last_error_at,
-		refresh_interval_mins, updated_at, deleted, deleted_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		refresh_interval_mins, updated_at, deleted, deleted_at, fetch_full_text
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	ON CONFLICT(id) DO UPDATE SET
 		feed_url=excluded.feed_url,
 		site_url=COALESCE(NULLIF(excluded.site_url, ''), rss_feeds.site_url),
@@ -39,14 +39,25 @@ func (s *Store) SaveRSSFeed(ctx context.Context, f RSSFeed) error {
 		last_error=excluded.last_error,
 		last_error_at=excluded.last_error_at,
 		refresh_interval_mins=excluded.refresh_interval_mins,
-		updated_at=excluded.updated_at`
+		updated_at=excluded.updated_at,
+		fetch_full_text=COALESCE(excluded.fetch_full_text, rss_feeds.fetch_full_text)`
 
 	_, err := s.db.Execute(ctx, sql,
 		f.ID, f.FeedURL, f.SiteURL, f.Title, f.CustomTitle, string(groupJSON), f.AvatarURL,
 		f.ETag, f.LastModified, f.LastFetchedAt, f.FailureCount, f.LastError, f.LastErrorAt,
-		f.RefreshIntervalMins, f.UpdatedAt, boolInt(f.Deleted), f.DeletedAt,
+		f.RefreshIntervalMins, f.UpdatedAt, boolInt(f.Deleted), f.DeletedAt, feedFetchFullText(f),
 	)
 	return err
+}
+
+// feedFetchFullText is the column value for the feed's answer to automatic
+// full-text fetching: NULL while no answer is stored, so the column keeps the
+// default of fetching the article's text.
+func feedFetchFullText(f RSSFeed) any {
+	if f.FetchFullText == nil {
+		return nil
+	}
+	return boolInt(*f.FetchFullText)
 }
 
 // SubscribeRSSFeed records a user subscription, reviving a previously soft-deleted feed.
@@ -65,7 +76,7 @@ func (s *Store) GetRSSFeed(ctx context.Context, id string) (*RSSFeed, error) {
 	rows, err := s.db.Query(ctx, `SELECT
 		id, feed_url, site_url, title, custom_title, group_ids, avatar_url,
 		etag, last_modified, last_fetched_at, failure_count, last_error, last_error_at,
-		refresh_interval_mins, updated_at, deleted, deleted_at
+		refresh_interval_mins, updated_at, deleted, deleted_at, fetch_full_text
 	FROM rss_feeds WHERE id = ?`, id)
 	if err != nil {
 		return nil, err
@@ -82,7 +93,7 @@ func (s *Store) ListRSSFeeds(ctx context.Context, includeDeleted bool) ([]RSSFee
 	sql := `SELECT
 		id, feed_url, site_url, title, custom_title, group_ids, avatar_url,
 		etag, last_modified, last_fetched_at, failure_count, last_error, last_error_at,
-		refresh_interval_mins, updated_at, deleted, deleted_at
+		refresh_interval_mins, updated_at, deleted, deleted_at, fetch_full_text
 	FROM rss_feeds`
 	if !includeDeleted {
 		sql += ` WHERE deleted = 0`
@@ -139,6 +150,10 @@ func rowToFeed(r []any) RSSFeed {
 	f.UpdatedAt, _ = int64FromAny(r[14])
 	f.Deleted = intFromAnyBool(r[15])
 	f.DeletedAt, _ = int64FromAny(r[16])
+	if fetch, ok := intFromAny(r[17]); ok {
+		on := fetch != 0
+		f.FetchFullText = &on
+	}
 	return f
 }
 

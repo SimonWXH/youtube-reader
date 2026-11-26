@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -67,6 +68,11 @@ type App struct {
 	// attempt clears the failure, and so does leaving the channel.
 	BackfillBusy string
 	BackfillErr  string
+
+	// rssHTTPClient fetches the article pages the reader's full-text fetch
+	// reads. Nil means the shared client; a test replaces it so no article
+	// selection reaches the network.
+	rssHTTPClient *http.Client
 }
 
 // GroupCollapsed reports whether a subscription group's channel list is

@@ -276,7 +276,8 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 
 	t.Run("every row keeps the feed name's room", func(t *testing.T) {
 		_, w := rssReaderTestApp(t)
-		w.rssRefetchingID = "art-reader"
+		// Hold the header in its fetching face for every width.
+		w.rssFullText = rssFullTextStatus{articleID: "art-reader", phase: rssFullTextFetching}
 		inlineRows, widths := 0, 0
 		for width := 1200; width <= 1300; width += 2 {
 			tt := ui.NewTester(w.view, width, 808)
