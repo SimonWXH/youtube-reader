@@ -30,7 +30,7 @@ var (
 
 // CleanSnippet strips HTML tags, decodes HTML entities, collapses extra whitespace,
 // and truncates the string to maxRunes for list previews. It streams HTML tokens
-// without building a DOM tree and stops once maxRunes+1 runes are collected.
+// without building a DOM tree and stops once maxRunes runes are collected.
 func CleanSnippet(desc, content string, maxRunes int) string {
 	raw := desc
 	if strings.TrimSpace(raw) == "" {

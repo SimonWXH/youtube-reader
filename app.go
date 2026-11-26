@@ -37,6 +37,7 @@ type App struct {
 	RSSTotalUnread  int
 	RSSStarredTotal int
 
+	// RSSArticles holds article summaries in memory; full article bodies are paged on demand via SelectedRSSArticle.
 	RSSArticles          []core.RSSArticle
 	SelectedRSSArticleID string
 	selectedRSSCache     *core.RSSArticle
