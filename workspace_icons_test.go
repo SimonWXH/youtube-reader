@@ -220,7 +220,7 @@ func TestWorkspaceDockRSSColourSurvivesDarkMode(t *testing.T) {
 		bg   ui.Color
 	}{
 		{"dark", dark.WorkspaceRSS, dark.Sidebar},
-		{"dark selected", dark.WorkspaceRSS, dark.AccentSoft},
+		{"dark selected", dark.WorkspaceRSS, dark.WorkspaceDockSelected},
 	} {
 		if ratio := dockContrast(tc.ink, tc.bg); ratio < 3 {
 			t.Fatalf("%s RSS glyph contrast on its background = %.2f:1, want at least 3:1", tc.name, ratio)
@@ -249,8 +249,8 @@ func dockContrast(fg, bg ui.Color) float64 {
 
 // TestWorkspaceDockIconsRender checks the app's own pixels: in both
 // appearances every slot paints its own glyph 30 dp tall and centred in the
-// slot, and the selected slot keeps that colour over its AccentSoft
-// background instead of tinting the glyph. A placeholder workspace is coloured
+// slot, and the selected slot keeps that colour over the dock's selected fill
+// instead of tinting the glyph. A placeholder workspace is coloured
 // like the others: its placeholder state is content, not ink.
 func TestWorkspaceDockIconsRender(t *testing.T) {
 	_, w := setupWorkspaceTestApp(t)
@@ -329,6 +329,136 @@ func TestWorkspaceDockIconsRender(t *testing.T) {
 				t.Fatalf("glyph heights %v differ by %g dp, want them equal within 0.5", heights, hi-lo)
 			}
 		})
+	}
+}
+
+// TestWorkspaceDockStateCues checks the dock's non-glyph state cues: the
+// active slot's fill is visible against the sidebar, and hover and press each
+// read differently from selection and from the idle slot, in both appearances.
+func TestWorkspaceDockStateCues(t *testing.T) {
+	for _, appearance := range []struct {
+		name string
+		dark bool
+		tok  mui.Tokens
+	}{
+		{"light", false, mui.NewTokens(nil, false)},
+		{"dark", true, mui.NewTokens(nil, true)},
+	} {
+		t.Run(appearance.name, func(t *testing.T) {
+			tok := appearance.tok
+			for _, tc := range []struct {
+				name string
+				fg   ui.Color
+				bg   ui.Color
+				want float64
+			}{
+				{"selected fill on the sidebar", tok.WorkspaceDockSelected, tok.Sidebar, 3},
+				{"hover fill on the sidebar", tok.WorkspaceDockHover, tok.Sidebar, 1.5},
+				{"pressed fill against the selected fill", tok.WorkspaceDockPressed, tok.WorkspaceDockSelected, 1.5},
+				{"hover fill against the selected fill", tok.WorkspaceDockHover, tok.WorkspaceDockSelected, 1.5},
+			} {
+				if ratio := dockContrast(tc.fg, tc.bg); ratio < tc.want {
+					t.Fatalf("%s = %.2f:1, want at least %.1f:1", tc.name, ratio, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// TestWorkspaceDockStateFillsRender checks the dock paints its own state fills:
+// the active slot shows the selected fill, an idle slot shows the dock
+// background, and the slot under the pointer shows the hover fill, then the
+// pressed fill while the pointer is down, in both appearances.
+func TestWorkspaceDockStateFillsRender(t *testing.T) {
+	_, w := setupWorkspaceTestApp(t)
+	const scale float32 = 2
+	tt := ui.NewTester(w.view, 1280, 808)
+	tt.SetScale(scale)
+
+	for _, appearance := range []struct {
+		name string
+		dark bool
+		tok  mui.Tokens
+	}{
+		{"light", false, mui.NewTokens(nil, false)},
+		{"dark", true, mui.NewTokens(nil, true)},
+	} {
+		t.Run(appearance.name, func(t *testing.T) {
+			tt.SetDark(appearance.dark)
+			tt.Advance(mui.MotionInteraction + 20*time.Millisecond)
+			tt.Move(1, 1)
+			tt.Frame()
+
+			active, ok := tt.Find(dockTitles[WorkspaceVideos][0])
+			if !ok {
+				t.Fatal("the active dock slot is not in the accessibility tree")
+			}
+			idle, ok := tt.Find(dockTitles[WorkspaceRSS][0])
+			if !ok {
+				t.Fatal("the idle dock slot is not in the accessibility tree")
+			}
+			// A point in the slot's top band: on its fill, above the glyph.
+			fill := func(r ui.Rect) color.RGBA {
+				return tt.Image().RGBAAt(
+					int(math.Round(float64((r.X+r.W/2)*scale))),
+					int(math.Round(float64((r.Y+4)*scale))))
+			}
+			want := func(c ui.Color) color.RGBA { return color.RGBA{R: c.R, G: c.G, B: c.B, A: c.A} }
+
+			if got := fill(active); got != want(appearance.tok.WorkspaceDockSelected) {
+				t.Fatalf("active slot fill = %v, want the dock selected fill %v", got, appearance.tok.WorkspaceDockSelected)
+			}
+			if got := fill(idle); got != want(appearance.tok.Sidebar) {
+				t.Fatalf("idle slot fill = %v, want the dock background %v", got, appearance.tok.Sidebar)
+			}
+
+			tt.Move(idle.X+idle.W/2, idle.Y+idle.H/2)
+			tt.Frame()
+			if got := fill(idle); got != want(appearance.tok.WorkspaceDockHover) {
+				t.Fatalf("hovered slot fill = %v, want the dock hover fill %v", got, appearance.tok.WorkspaceDockHover)
+			}
+
+			tt.Press(idle.X+idle.W/2, idle.Y+idle.H/2)
+			tt.Frame()
+			if got := fill(idle); got != want(appearance.tok.WorkspaceDockPressed) {
+				t.Fatalf("pressed slot fill = %v, want the dock pressed fill %v", got, appearance.tok.WorkspaceDockPressed)
+			}
+			tt.CancelPress()
+			tt.Move(1, 1)
+			tt.Frame()
+		})
+	}
+}
+
+// TestWorkspaceDockReportsActiveTab checks the dock tells assistive technology
+// which workspace is active, and that the report follows a workspace switch.
+func TestWorkspaceDockReportsActiveTab(t *testing.T) {
+	_, w := setupWorkspaceTestApp(t)
+	tt := ui.NewTester(w.view, 1280, 808)
+	tt.Frame()
+
+	selected := func() map[string]bool {
+		got := map[string]bool{}
+		for _, icon := range dockIcons {
+			name := dockTitles[icon.id][0]
+			info, ok := tt.AccessByRole(ui.RoleTab, name)
+			if !ok {
+				t.Fatalf("dock item %q is not a tab in the accessibility tree", name)
+			}
+			got[icon.id] = info.Selected
+		}
+		return got
+	}
+
+	if got := selected(); !got[WorkspaceVideos] || got[WorkspaceRSS] || got[WorkspaceReadLater] || got[WorkspaceWeChatNotes] {
+		t.Fatalf("active dock tabs = %v, want only Videos", got)
+	}
+	if err := tt.Click(dockTitles[WorkspaceRSS][0]); err != nil {
+		t.Fatalf("clicking the RSS dock tab: %v", err)
+	}
+	tt.Frame()
+	if got := selected(); !got[WorkspaceRSS] || got[WorkspaceVideos] || got[WorkspaceReadLater] || got[WorkspaceWeChatNotes] {
+		t.Fatalf("active dock tabs after switching to RSS = %v, want only RSS", got)
 	}
 }
 

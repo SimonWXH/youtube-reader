@@ -353,7 +353,7 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 
 			slot := ui.Box(c.Key("dock-item-" + id)).
 				Grow(1).MinWidth(0).Height(46).Radius(mui.RadiusControl).
-				Role(ui.RoleTab).Label(meta.Title).Tooltip(meta.Title).
+				Role(ui.RoleTab).Label(meta.Title).Tooltip(meta.Title).AccessSelected(selected).
 				Cursor(ui.CursorPointer)
 
 			slot.Drag(workspaceDockDrag{ID: id, Index: i})
@@ -393,11 +393,11 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 			slot.Draw(func(p *ui.Painter, r ui.Rect) {
 				switch {
 				case selected:
-					p.Fill(r, t.AccentSoft, mui.RadiusControl)
+					p.Fill(r, t.WorkspaceDockSelected, mui.RadiusControl)
 				case slot.Pressed():
-					p.Fill(r, t.AccentSoft, mui.RadiusControl)
+					p.Fill(r, t.WorkspaceDockPressed, mui.RadiusControl)
 				case slot.Hovered():
-					p.Fill(r, t.SurfaceAlt, mui.RadiusControl)
+					p.Fill(r, t.WorkspaceDockHover, mui.RadiusControl)
 				}
 
 				if over && dragged.ID != "" && dragged.ID != id {
