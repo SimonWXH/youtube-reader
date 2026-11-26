@@ -531,7 +531,8 @@ func (w *Window) rssReaderEmpty(c *ui.Context, t mui.Tokens) {
 
 // rssReaderHeader is the fixed article header: its source and date, its title,
 // its author, the star that toggles the article's star, the text size control,
-// and the two actions that leave the app's rendering.
+// and two actions on the article: Open in Browser, and a full-text fetch that
+// reads as Refetch, Fetching… or Retry full text as the fetch moves on.
 func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticle) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	openLabel := "Open in Browser"
@@ -826,9 +827,9 @@ func (w *Window) rssReaderStarAction(c *ui.Context, t mui.Tokens, art core.RSSAr
 }
 
 // rssReaderBody is the scrolling article body: the reading column of blocks,
-// the summary notice when only the feed's own text is available, and the
-// original article link. blocks are the body the pane parsed once for this
-// frame, which the paragraph rail maps.
+// the line above them that follows the full-text fetch whenever only the
+// feed's own text is available, and the original article link. blocks are the
+// body the pane parsed once for this frame, which the paragraph rail maps.
 func (w *Window) rssReaderBody(c *ui.Context, t mui.Tokens, art core.RSSArticle, blocks []core.ArticleBlock) {
 	st := &w.rssReader
 	scale := w.readingType()
