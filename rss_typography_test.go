@@ -469,12 +469,13 @@ func rssBlockInk(img *image.RGBA, box ui.Rect) ui.Rect {
 }
 
 // TestRSSHeadingLevelsRenderDistinctly reads one article holding a first-,
-// second-, third-, and fourth-level heading and a paragraph through all three
-// text steps. The four heading blocks carry the same words, so the levels are
-// only distinguishable if the reader builds them at different type sizes: each
-// level paints narrower and shorter than the one above it at every step, the
-// steps scale with the size control, an in-body first-level heading draws with
-// the article title's role, and the body stays at the step's 13, 15, or 17 pt.
+// second-, third-, fourth-, and fifth-level heading and a paragraph through all
+// three text steps. The five heading blocks carry the same words, so the levels
+// are only distinguishable if the reader builds them at different type sizes:
+// each section level paints narrower than the one above it at every step, a
+// fifth-level heading draws exactly as the fourth, each section level's line
+// height grows with the step, an in-body first-level heading draws with the
+// article title's role, and the body stays at the step's 13, 15, or 17 pt.
 func TestRSSHeadingLevelsRenderDistinctly(t *testing.T) {
 	blocks := []core.ArticleBlock{
 		{Type: core.BlockHeading, Level: 1, Text: "Readable words"},
@@ -522,8 +523,8 @@ func TestRSSHeadingLevelsRenderDistinctly(t *testing.T) {
 				}
 				widths[i] = ink.W
 			}
-			// The three section levels step down, and a fifth-level heading
-			// draws exactly as the fourth does.
+			// The three section levels step down in width, and a fifth-level
+			// heading draws exactly as the fourth does.
 			for _, i := range []int{1, 2} {
 				if !(widths[i] > widths[i+1]) {
 					t.Fatalf("level %d paints %v wide, level %d %v: the levels are not distinguishable",
@@ -533,8 +534,8 @@ func TestRSSHeadingLevelsRenderDistinctly(t *testing.T) {
 			if widths[4] != widths[3] {
 				t.Fatalf("a fifth-level heading paints %v wide, the fourth %v", widths[4], widths[3])
 			}
-			// An in-body first-level heading draws with the article title's role,
-			// over every section level, and the body stays under them all.
+			// An in-body first-level heading draws wider than the second level,
+			// and the fourth level wider than the body.
 			if !(widths[0] > widths[1]) || !(widths[3] > widths[5]) {
 				t.Fatalf("the levels invert: level 1 %v, h2 %v, h4 %v, body %v",
 					widths[0], widths[1], widths[3], widths[5])
