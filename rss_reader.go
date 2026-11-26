@@ -583,13 +583,20 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 		now = w.app.clockNow()
 	}
 	date := rssReaderDate(art.PublishedAt, now)
-	inline := rssHeaderRowWidth(c, feedName, date) <= content
+	rowGap := mui.Space(2)
+	pillWidth := rssHeaderActionsWidth()
+	sizeWidth := rssTextSizeControlWidth(c)
+	sourceWidth := rssHeaderSourceWidth(c, feedName, date)
+	sizeOnFirstRow := pillWidth+2*rowGap+sizeWidth <= content
+	sourceOnFirstRow := sourceWidth > 0 && pillWidth+rowGap+sourceWidth <= content &&
+		(!sizeOnFirstRow || pillWidth+rowGap+sourceWidth+rowGap+sizeWidth <= content)
 	actions := func() {
 		w.rssHeaderActions(c, t, art)
 	}
 	source := func() {
 		if feedName != "" {
-			mui.Metadata.Apply(ui.Text(c, feedName)).TextColor(t.Accent).SingleLine().Shrink(1)
+			mui.Metadata.Apply(ui.Text(c, feedName)).TextColor(t.Accent).SingleLine().
+				Shrink(1).MinWidth(rssHeaderFeedMin)
 		}
 		if date != "" {
 			if feedName != "" {
@@ -606,19 +613,28 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 		p.Fill(ui.Rect{X: r.X, Y: r.Y + r.H - mui.Hairline, W: r.W, H: mui.Hairline}, t.BorderSoft, 0)
 	})
 	head.Children(func() {
-		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(mui.Space(2)).Children(func() {
+		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(rowGap).Children(func() {
 			actions()
-			if inline {
+			if sourceOnFirstRow {
 				source()
 			}
 			ui.Spacer(c)
-			w.rssTextSizeControl(c, t)
+			if sizeOnFirstRow {
+				w.rssTextSizeControl(c, t)
+			}
 		})
-		if !inline {
-			// A narrow reader keeps the pill and the size control on the
-			// leading and trailing edges and gives the source its own row, so
-			// neither leaves the pane and the feed name keeps its room.
-			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(mui.Space(2)).Children(source)
+		if !sizeOnFirstRow {
+			// A reader too narrow for the pill and the size control together
+			// keeps the pill leading the first row and gives the size control
+			// its own trailing-aligned row beneath it.
+			ui.Row(c).FillWidth().Justify(ui.End).Children(func() {
+				w.rssTextSizeControl(c, t)
+			})
+		}
+		if !sourceOnFirstRow {
+			// A narrow reader gives the source its own row, so the feed name
+			// keeps its room and nothing leaves the pane.
+			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(rowGap).Children(source)
 		}
 		w.readingType().Title.Apply(ui.Text(c, art.Title)).TextColor(t.Text).MaxLines(3).Wrap()
 		if author := strings.TrimSpace(art.Author); author != "" {
@@ -694,17 +710,14 @@ func (w *Window) rssTextSizeControl(c *ui.Context, t mui.Tokens) {
 	}
 }
 
-// rssHeaderRowWidth is the width the header's metadata row needs to stay
-// inline: the action pill, the date, the text size control, the row's own gaps,
-// and the least room the feed name and its separator keep. Below it the row
-// stacks rather than shrinking the feed name to a stub. The pill is measured at
-// its full six icons, so the row never flips to the stacked layout because a
-// fetch moved on.
-func rssHeaderRowWidth(c *ui.Context, feedName, date string) float32 {
-	width := rssHeaderActionsWidth() + rssTextSizeControlWidth(c)
-	children := 4 // the action pill, the feed name, the spacer, and the size control
+// rssHeaderSourceWidth is the width the feed name, its separator and the day
+// stamp need, including the gaps between them.
+func rssHeaderSourceWidth(c *ui.Context, feedName, date string) float32 {
+	width := float32(0)
+	children := 0
 	if feedName != "" {
 		width += rssHeaderFeedMin
+		children++
 	}
 	if date != "" {
 		width += rssTextWidth(c, mui.Metadata, date)
@@ -714,7 +727,10 @@ func rssHeaderRowWidth(c *ui.Context, feedName, date string) float32 {
 			children++
 		}
 	}
-	return width + float32(children-1)*mui.Space(2)
+	if children > 1 {
+		width += float32(children-1) * mui.Space(2)
+	}
+	return width
 }
 
 // rssHeaderActionsWidth is the action pill's own width: its border and
@@ -770,7 +786,9 @@ type rssHeaderActionSpec struct {
 // rssHeaderAction is one borderless icon control of the reader header's action
 // group: a 24 pt box with a 16 pt glyph, the quiet accent face under the
 // pointer, and the shared focus ring. The label is what the pointer's tooltip
-// and the accessibility tree read.
+// and the accessibility tree read. A disabled control takes no pointer tooltip
+// in mygo, so the reason it cannot act is carried as its accessible
+// description, matching ui.PaneAction.
 func (w *Window) rssHeaderAction(c *ui.Context, t mui.Tokens, spec rssHeaderActionSpec) ui.Element {
 	color := spec.color
 	switch {
