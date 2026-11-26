@@ -19,9 +19,9 @@ func TestArticleTypeLadder(t *testing.T) {
 			name:  "small",
 			body:  TextStyle{Size: 13, LineHeight: 21, Weight: Regular},
 			title: TextStyle{Size: 21, LineHeight: 27, Weight: Semibold, Tracking: -0.2},
-			h2:    TextStyle{Size: 18, LineHeight: 28, Weight: Semibold, Tracking: -0.1},
-			h3:    TextStyle{Size: 16, LineHeight: 25, Weight: Semibold, Tracking: -0.1},
-			h4:    TextStyle{Size: 15, LineHeight: 22, Weight: Semibold, Tracking: -0.1},
+			h2:    TextStyle{Size: 18, LineHeight: 25, Weight: Semibold, Tracking: -0.1},
+			h3:    TextStyle{Size: 16, LineHeight: 22, Weight: Semibold, Tracking: -0.1},
+			h4:    TextStyle{Size: 15, LineHeight: 21, Weight: Semibold, Tracking: -0.1},
 		},
 		{
 			name:  "default",
@@ -35,9 +35,9 @@ func TestArticleTypeLadder(t *testing.T) {
 			name:  "large",
 			body:  TextStyle{Size: 17, LineHeight: 27, Weight: Regular},
 			title: TextStyle{Size: 27, LineHeight: 34, Weight: Semibold, Tracking: -0.2},
-			h2:    TextStyle{Size: 22, LineHeight: 28, Weight: Semibold, Tracking: -0.1},
-			h3:    TextStyle{Size: 20, LineHeight: 25, Weight: Semibold, Tracking: -0.1},
-			h4:    TextStyle{Size: 18, LineHeight: 22, Weight: Semibold, Tracking: -0.1},
+			h2:    TextStyle{Size: 22, LineHeight: 31, Weight: Semibold, Tracking: -0.1},
+			h3:    TextStyle{Size: 20, LineHeight: 28, Weight: Semibold, Tracking: -0.1},
+			h4:    TextStyle{Size: 18, LineHeight: 25, Weight: Semibold, Tracking: -0.1},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,13 +52,14 @@ func TestArticleTypeLadder(t *testing.T) {
 				t.Fatalf("no rung draws a %v pt body", tc.body.Size)
 			}
 			// The body keeps the size it shipped with; the three section levels
-			// are the roles this change splits, and the headline is hand-set per
-			// rung rather than taken from them.
+			// are the roles this change splits. The headline is a per-rung role
+			// outside them: 21 pt on the small and default steps, 27 pt on the
+			// large one.
 			if scale.Body != tc.body {
 				t.Fatalf("body = %+v, want the unchanged %+v", scale.Body, tc.body)
 			}
 			if scale.Title != tc.title {
-				t.Fatalf("title = %+v, want the unchanged %+v", scale.Title, tc.title)
+				t.Fatalf("title = %+v, want the expected %+v", scale.Title, tc.title)
 			}
 			for _, want := range []struct {
 				name  string
@@ -77,8 +78,9 @@ func TestArticleTypeLadder(t *testing.T) {
 					t.Fatalf("%s: %v/%q/%.2f, want the system face, Semibold, -0.1 tracking",
 						want.name, got.Weight, got.Family, got.Tracking)
 				}
-				if got.LineHeight <= got.Size {
-					t.Fatalf("%s: the %v line height clips its %v size", want.name, got.LineHeight, got.Size)
+				if got.LineHeight < got.Size*1.3 {
+					t.Fatalf("%s: the %v line height is under 1.3 times its %v size",
+						want.name, got.LineHeight, got.Size)
 				}
 			}
 			// Three levels stay strictly ordered, and the page's own headline

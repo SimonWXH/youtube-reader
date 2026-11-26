@@ -88,8 +88,10 @@ var (
 	EmptyTitle = TextStyle{Size: 15, LineHeight: 20, Weight: Semibold}
 	// EmptyBody is an empty state's explanation.
 	EmptyBody = TextStyle{Size: 13, LineHeight: 18, Weight: Regular}
-	// ArticleTitle is the reading view's article headline, at the middle
-	// body step; ArticleTypeForSize gives the headline of either other step.
+	// ArticleTitle is the reading view's article headline at the middle body
+	// step; ArticleTypeForSize gives the headline of either other step. The
+	// headline is its own per-rung role outside the three section steps: the
+	// small and default steps share 21 pt and the large step carries 27 pt.
 	ArticleTitle = TextStyle{Size: 21, LineHeight: 27, Weight: Semibold, Tracking: -0.2}
 	// ArticleHeading2 is a second-level heading inside a reading view's body,
 	// at the middle body step, and the largest of the three section levels.
@@ -154,23 +156,25 @@ func (a ArticleType) HeadingFor(level int) TextStyle {
 }
 
 // articleTypes is the type ladder, one rung per offered body size. The body
-// grows 2 pt a step with 1.6 times its size for a line (21, 24, 27), and code
-// a step under the body so code never shouts beside prose. The middle rung is
-// the published Article tokens.
+// grows 2 pt a step with 1.6 times its size for a line (21, 24, 27), and the
+// code block a step under the body so code never shouts beside prose. The
+// middle rung is the published Article tokens.
 //
 // The three section levels are a hand-set table rather than ratios of the
 // body: the chosen sizes are exact (20/28, 18/25, 16/22 at the default step)
-// and each rung keeps them strictly ordered, so a heading level never drifts
-// into its neighbour as the body size changes. The headline is hand-set too,
-// outside that table: it is the page's own 21 pt on the small and default
-// steps and 27 pt on the large one, so the article's title is never one of the
-// three section steps.
+// and step 2 pt then 2 pt at the default and large steps, and 2 pt then 1 pt
+// at the small one, so a heading level never drifts into its neighbour as the
+// body size changes. Each level's line height is the default step's own ratio
+// of its size, rounded, so a wrapped heading keeps its leading as the reader
+// enlarges the text. The headline is its own per-rung role outside that table:
+// the small and default steps share 21 pt and the large step carries 27 pt, so
+// the article's title is never one of the three section steps.
 var articleTypes = [...]ArticleType{
 	{
 		Title:      TextStyle{Size: 21, LineHeight: 27, Weight: Semibold, Tracking: -0.2},
-		Heading2:   TextStyle{Size: 18, LineHeight: 28, Weight: Semibold, Tracking: -0.1},
-		Heading3:   TextStyle{Size: 16, LineHeight: 25, Weight: Semibold, Tracking: -0.1},
-		Heading4:   TextStyle{Size: 15, LineHeight: 22, Weight: Semibold, Tracking: -0.1},
+		Heading2:   TextStyle{Size: 18, LineHeight: 25, Weight: Semibold, Tracking: -0.1},
+		Heading3:   TextStyle{Size: 16, LineHeight: 22, Weight: Semibold, Tracking: -0.1},
+		Heading4:   TextStyle{Size: 15, LineHeight: 21, Weight: Semibold, Tracking: -0.1},
 		Body:       TextStyle{Size: 13, LineHeight: 21, Weight: Regular},
 		Quote:      TextStyle{Size: 13, LineHeight: 21, Weight: Regular},
 		Code:       TextStyle{Family: MonoFont, Size: 11.5, LineHeight: 17, Weight: Regular},
@@ -190,9 +194,9 @@ var articleTypes = [...]ArticleType{
 	},
 	{
 		Title:      TextStyle{Size: 27, LineHeight: 34, Weight: Semibold, Tracking: -0.2},
-		Heading2:   TextStyle{Size: 22, LineHeight: 28, Weight: Semibold, Tracking: -0.1},
-		Heading3:   TextStyle{Size: 20, LineHeight: 25, Weight: Semibold, Tracking: -0.1},
-		Heading4:   TextStyle{Size: 18, LineHeight: 22, Weight: Semibold, Tracking: -0.1},
+		Heading2:   TextStyle{Size: 22, LineHeight: 31, Weight: Semibold, Tracking: -0.1},
+		Heading3:   TextStyle{Size: 20, LineHeight: 28, Weight: Semibold, Tracking: -0.1},
+		Heading4:   TextStyle{Size: 18, LineHeight: 25, Weight: Semibold, Tracking: -0.1},
 		Body:       TextStyle{Size: 17, LineHeight: 27, Weight: Regular},
 		Quote:      TextStyle{Size: 17, LineHeight: 27, Weight: Regular},
 		Code:       TextStyle{Family: MonoFont, Size: 15, LineHeight: 23, Weight: Regular},

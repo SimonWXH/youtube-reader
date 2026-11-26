@@ -455,7 +455,7 @@ func rssBlockInk(img *image.RGBA, box ui.Rect) ui.Rect {
 	for y := int(box.Y); y < int(box.Y+box.H); y++ {
 		for x := int(box.X); x < int(box.X+box.W); x++ {
 			c := img.RGBAAt(x, y)
-			diff := absInt(int(c.R)-int(back.R)) + absInt(int(c.G)-int(back.G)) + absInt(int(c.B)-int(back.B))
+			diff := absDiff(int(c.R), int(back.R)) + absDiff(int(c.G), int(back.G)) + absDiff(int(c.B), int(back.B))
 			if diff <= 40 {
 				continue
 			}
@@ -473,8 +473,8 @@ func rssBlockInk(img *image.RGBA, box ui.Rect) ui.Rect {
 // text steps. The four heading blocks carry the same words, so the levels are
 // only distinguishable if the reader builds them at different type sizes: each
 // level paints narrower and shorter than the one above it at every step, the
-// steps scale with the size control, the article's own headline keeps its own
-// size, and the body stays at the step's 13, 15, or 17 pt.
+// steps scale with the size control, an in-body first-level heading draws with
+// the article title's role, and the body stays at the step's 13, 15, or 17 pt.
 func TestRSSHeadingLevelsRenderDistinctly(t *testing.T) {
 	blocks := []core.ArticleBlock{
 		{Type: core.BlockHeading, Level: 1, Text: "Readable words"},
@@ -489,9 +489,9 @@ func TestRSSHeadingLevelsRenderDistinctly(t *testing.T) {
 		size     float32
 		lineHigh [6]float32 // level 1, 2, 3, 4, 5, and the paragraph
 	}{
-		{"small", 13, [6]float32{27, 28, 25, 22, 22, 21}},
+		{"small", 13, [6]float32{27, 25, 22, 21, 21, 21}},
 		{"default", 15, [6]float32{27, 28, 25, 22, 22, 24}},
-		{"large", 17, [6]float32{34, 28, 25, 22, 22, 27}},
+		{"large", 17, [6]float32{34, 31, 28, 25, 25, 27}},
 	}
 	var h2Widths []float32
 	for _, tc := range want {
@@ -533,10 +533,10 @@ func TestRSSHeadingLevelsRenderDistinctly(t *testing.T) {
 			if widths[4] != widths[3] {
 				t.Fatalf("a fifth-level heading paints %v wide, the fourth %v", widths[4], widths[3])
 			}
-			// The page's own headline stays over every section level, and the
-			// body stays under them all.
+			// An in-body first-level heading draws with the article title's role,
+			// over every section level, and the body stays under them all.
 			if !(widths[0] > widths[1]) || !(widths[3] > widths[5]) {
-				t.Fatalf("the page's sizes invert: level 1 %v, h2 %v, h4 %v, body %v",
+				t.Fatalf("the levels invert: level 1 %v, h2 %v, h4 %v, body %v",
 					widths[0], widths[1], widths[3], widths[5])
 			}
 			h2Widths = append(h2Widths, widths[1])
@@ -550,12 +550,4 @@ func TestRSSHeadingLevelsRenderDistinctly(t *testing.T) {
 		t.Fatalf("a second-level heading paints %v wide across the three steps, want it growing",
 			h2Widths)
 	}
-}
-
-// iabsInt is v's distance from zero.
-func absInt(v int) int {
-	if v < 0 {
-		return -v
-	}
-	return v
 }
