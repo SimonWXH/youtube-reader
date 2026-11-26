@@ -296,7 +296,6 @@ func (w *Window) restoreWorkspaceState(id string) {
 }
 
 type dockItemMeta struct {
-	ID    string
 	Icon  mui.WorkspaceIconKind
 	Title string
 }
@@ -304,7 +303,7 @@ type dockItemMeta struct {
 // dockMeta names one dock entrance. Its title is the workspace's name in the
 // active locale and is also all its tooltip says: the dock carries no unread
 // count, so no tooltip adds one.
-func (w *Window) dockMeta(locale, id string) dockItemMeta {
+func dockMeta(locale, id string) dockItemMeta {
 	zh := strings.HasPrefix(strings.ToLower(locale), "zh")
 	switch id {
 	case WorkspaceVideos:
@@ -312,27 +311,27 @@ func (w *Window) dockMeta(locale, id string) dockItemMeta {
 		if zh {
 			title = "视频"
 		}
-		return dockItemMeta{ID: WorkspaceVideos, Icon: mui.WorkspaceIconVideos, Title: title}
+		return dockItemMeta{Icon: mui.WorkspaceIconVideos, Title: title}
 	case WorkspaceRSS:
 		title := "RSS"
 		if zh {
 			title = "RSS 文章"
 		}
-		return dockItemMeta{ID: WorkspaceRSS, Icon: mui.WorkspaceIconRSS, Title: title}
+		return dockItemMeta{Icon: mui.WorkspaceIconRSS, Title: title}
 	case WorkspaceReadLater:
 		title := "Read Later"
 		if zh {
 			title = "稍后读"
 		}
-		return dockItemMeta{ID: WorkspaceReadLater, Icon: mui.WorkspaceIconReadLater, Title: title}
+		return dockItemMeta{Icon: mui.WorkspaceIconReadLater, Title: title}
 	case WorkspaceWeChatNotes:
 		title := "WeChat Notes"
 		if zh {
 			title = "微信读书笔记"
 		}
-		return dockItemMeta{ID: WorkspaceWeChatNotes, Icon: mui.WorkspaceIconWeChatNotes, Title: title}
+		return dockItemMeta{Icon: mui.WorkspaceIconWeChatNotes, Title: title}
 	}
-	return dockItemMeta{ID: id, Title: id}
+	return dockItemMeta{Title: id}
 }
 
 // sidebarWorkspaceDock renders the A2 horizontal dock at the top of the sidebar.
@@ -349,7 +348,7 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 		for i, id := range order {
 			i := i
 			id := id
-			meta := w.dockMeta(locale, id)
+			meta := dockMeta(locale, id)
 			selected := id == active
 
 			slot := ui.Box(c.Key("dock-item-" + id)).

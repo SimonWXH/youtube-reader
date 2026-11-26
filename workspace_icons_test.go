@@ -32,6 +32,29 @@ var dockIcons = []struct {
 	{WorkspaceWeChatNotes, mui.WorkspaceIconWeChatNotes, "WeChat Readings", 1024},
 }
 
+// dockIconHexes are the colours the four glyphs are specified to paint, per
+// appearance (0 light, 1 dark), taken from the icon set's spec rather than
+// from the theme: the tokens and the painted pixels both answer to these, so a
+// swapped or mistyped token cannot satisfy itself.
+var dockIconHexes = map[mui.WorkspaceIconKind][2]string{
+	mui.WorkspaceIconVideos:      {"#ff0033", "#ff5b74"},
+	mui.WorkspaceIconRSS:         {"#000000", "#f2f2f3"},
+	mui.WorkspaceIconReadLater:   {"#f46b26", "#ff8b52"},
+	mui.WorkspaceIconWeChatNotes: {"#35a8ff", "#6cc3ff"},
+}
+
+// dockIconColour is the spec colour of kind in the light or dark appearance.
+func dockIconColour(kind mui.WorkspaceIconKind, dark bool) ui.Color {
+	hexes, ok := dockIconHexes[kind]
+	if !ok {
+		return ui.Color{}
+	}
+	if dark {
+		return ui.Hex(hexes[1])
+	}
+	return ui.Hex(hexes[0])
+}
+
 // dockTitles are the English and Chinese workspace names, which are also the
 // only thing the dock's tooltip says.
 var dockTitles = map[string][2]string{
@@ -117,7 +140,7 @@ func TestWorkspaceDockTooltipIsWorkspaceName(t *testing.T) {
 			tt.Frame()
 			for _, icon := range dockIcons {
 				want := dockTitles[icon.id][locale.index]
-				meta := w.dockMeta(locale.code, icon.id)
+				meta := dockMeta(locale.code, icon.id)
 				if meta.Title != want {
 					t.Fatalf("%s title = %q, want %q", icon.id, meta.Title, want)
 				}
@@ -187,11 +210,11 @@ func dockRowBounds(tt *ui.Tester) (ui.Rect, bool) {
 // TestWorkspaceDockRSSColourSurvivesDarkMode checks the RSS glyph leaves black
 // for near-white ink in the dark appearance, on the sidebar it sits on.
 func TestWorkspaceDockRSSColourSurvivesDarkMode(t *testing.T) {
-	if got, want := mui.NewTokens(nil, false).WorkspaceRSS, ui.Hex("#000000"); got != want {
+	if got, want := mui.NewTokens(nil, false).WorkspaceRSS, dockIconColour(mui.WorkspaceIconRSS, false); got != want {
 		t.Fatalf("light RSS token = %v, want black %v", got, want)
 	}
 	dark := mui.NewTokens(nil, true)
-	if got, want := dark.WorkspaceRSS, ui.Hex("#F2F2F3"); got != want {
+	if got, want := dark.WorkspaceRSS, dockIconColour(mui.WorkspaceIconRSS, true); got != want {
 		t.Fatalf("dark RSS token = %v, want %v", got, want)
 	}
 	for _, tc := range []struct {
@@ -247,6 +270,12 @@ func TestWorkspaceDockIconsRender(t *testing.T) {
 		{"light", false, mui.NewTokens(nil, false)},
 		{"dark", true, mui.NewTokens(nil, true)},
 	} {
+		for _, icon := range dockIcons {
+			colour := dockIconColour(icon.kind, appearance.dark)
+			if got := appearance.tok.WorkspaceIconColor(icon.kind); got != colour {
+				t.Fatalf("%s %s token = %v, want the spec colour %v", appearance.name, icon.name, got, colour)
+			}
+		}
 		t.Run(appearance.name, func(t *testing.T) {
 			tt.SetDark(appearance.dark)
 			// The appearance change animates colours, and the Tester's
@@ -265,8 +294,8 @@ func TestWorkspaceDockIconsRender(t *testing.T) {
 					t.Fatalf("dock slot %q not found", want)
 				}
 				// Every glyph, a placeholder workspace's included,
-				// shows its own colour in every state.
-				colour := appearance.tok.WorkspaceIconColor(icon.kind)
+				// shows its own specified colour in every state.
+				colour := dockIconColour(icon.kind, appearance.dark)
 				ink, count := dockInkOf(img, slot, scale)
 				if count < 100 {
 					t.Fatalf("%s glyph painted %d pixels, want a real glyph", icon.name, count)

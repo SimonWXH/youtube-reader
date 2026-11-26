@@ -62,10 +62,10 @@ func TestWorkspaceDockRendersFourEntrances(t *testing.T) {
 	}
 
 	// In English:
-	metaVideos := w.dockMeta("en", WorkspaceVideos)
-	metaRSS := w.dockMeta("en", WorkspaceRSS)
-	metaReadLater := w.dockMeta("en", WorkspaceReadLater)
-	metaWeChatNotes := w.dockMeta("en", WorkspaceWeChatNotes)
+	metaVideos := dockMeta("en", WorkspaceVideos)
+	metaRSS := dockMeta("en", WorkspaceRSS)
+	metaReadLater := dockMeta("en", WorkspaceReadLater)
+	metaWeChatNotes := dockMeta("en", WorkspaceWeChatNotes)
 
 	if metaVideos.Title != "Videos" {
 		t.Fatalf("videos meta = %+v, want Videos", metaVideos)
@@ -84,10 +84,10 @@ func TestWorkspaceDockRendersFourEntrances(t *testing.T) {
 	tt.SetLocale("zh-CN")
 	tt.Frame()
 
-	metaZhVideos := w.dockMeta("zh-CN", WorkspaceVideos)
-	metaZhRSS := w.dockMeta("zh-CN", WorkspaceRSS)
-	metaZhReadLater := w.dockMeta("zh-CN", WorkspaceReadLater)
-	metaZhWeChatNotes := w.dockMeta("zh-CN", WorkspaceWeChatNotes)
+	metaZhVideos := dockMeta("zh-CN", WorkspaceVideos)
+	metaZhRSS := dockMeta("zh-CN", WorkspaceRSS)
+	metaZhReadLater := dockMeta("zh-CN", WorkspaceReadLater)
+	metaZhWeChatNotes := dockMeta("zh-CN", WorkspaceWeChatNotes)
 
 	if metaZhVideos.Title != "视频" {
 		t.Fatalf("zh videos title = %q, want 视频", metaZhVideos.Title)
