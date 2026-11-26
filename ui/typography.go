@@ -113,10 +113,10 @@ var (
 )
 
 // ArticleType is the reading view's whole type scale for one body size: the
-// headline, the three section heading levels, body, quote, and code roles
-// sized from that body, and the vertical rhythm the step sets. The body's size
-// is the step, and one value carries the whole page, so a size change never
-// leaves a role or a gap at the old step.
+// headline, the three section heading levels, body, quote, and code roles, and
+// the vertical rhythm the step sets. The body's size is the step, and one value
+// carries the whole page, so a size change never leaves a role or a gap at the
+// old step.
 type ArticleType struct {
 	Title TextStyle
 	// Heading2, Heading3, and Heading4 are the section headings inside the
@@ -154,15 +154,15 @@ func (a ArticleType) HeadingFor(level int) TextStyle {
 }
 
 // articleTypes is the type ladder, one rung per offered body size. The body
-// grows 2 pt a step with 1.6 times its size for a line (21, 24, 27), the
-// headline sits at 1.6 times the body, and code a step under the body so code
-// never shouts beside prose. The middle rung is the published Article tokens.
+// grows 2 pt a step with 1.6 times its size for a line (21, 24, 27), and code
+// a step under the body so code never shouts beside prose. The middle rung is
+// the published Article tokens.
 //
 // The three section levels are a hand-set table rather than ratios of the
 // body: the chosen sizes are exact (20/28, 18/25, 16/22 at the default step)
-// and each rung keeps a fixed 2 pt step between them, so a heading level never
-// drifts into its neighbour as the body size changes. The headline stays
-// outside that ladder: it is the page's own 21 pt on the small and default
+// and each rung keeps them strictly ordered, so a heading level never drifts
+// into its neighbour as the body size changes. The headline is hand-set too,
+// outside that table: it is the page's own 21 pt on the small and default
 // steps and 27 pt on the large one, so the article's title is never one of the
 // three section steps.
 var articleTypes = [...]ArticleType{

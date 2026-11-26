@@ -51,9 +51,9 @@ func TestArticleTypeLadder(t *testing.T) {
 			if !found {
 				t.Fatalf("no rung draws a %v pt body", tc.body.Size)
 			}
-			// The body and the headline keep the sizes they shipped with; the
-			// heading levels are the only roles this ladder splits, and the
-			// headline stays outside the three steps on every rung.
+			// The body keeps the size it shipped with; the three section levels
+			// are the roles this change splits, and the headline is hand-set per
+			// rung rather than taken from them.
 			if scale.Body != tc.body {
 				t.Fatalf("body = %+v, want the unchanged %+v", scale.Body, tc.body)
 			}
