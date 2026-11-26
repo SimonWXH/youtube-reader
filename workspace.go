@@ -386,8 +386,8 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 			// Every glyph keeps its own colour in every state, a
 			// placeholder workspace's included: a workspace that is not
 			// built yet says so in its content, not by fading its icon.
-			// Selection, hover and press show in the slot's outline and
-			// edge bar, never in a plate behind the ink, so no state
+			// The active slot shows an accent edge bar and hover and
+			// press an outline, never a plate behind the ink, so no state
 			// lowers a glyph's contrast.
 			iconColor := t.WorkspaceIconColor(meta.Icon)
 

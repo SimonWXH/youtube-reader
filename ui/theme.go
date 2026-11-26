@@ -82,10 +82,10 @@ type Tokens struct {
 	// ElevationModal geometry below.
 	ModalShadow ui.Color
 	// The workspace dock's four glyphs keep their own colours instead of
-	// following the interaction states, so selection shows in the slot's
-	// outline and edge bar and the brand reads at a glance. Dark mode lifts
-	// the warm inks and turns RSS from black to near-white, because a black
-	// glyph would disappear on the dark sidebar.
+	// following the interaction states, so the active slot shows an accent
+	// edge bar, hover and press an outline, and the brand reads at a glance.
+	// Dark mode lifts the warm inks and turns RSS from black to near-white,
+	// because a black glyph would disappear on the dark sidebar.
 	WorkspaceVideo     ui.Color // WorkspaceVideo is the Video dock glyph.
 	WorkspaceRSS       ui.Color // WorkspaceRSS is the RSS dock glyph.
 	WorkspaceReadLater ui.Color // WorkspaceReadLater is the 稍后读 dock glyph.
