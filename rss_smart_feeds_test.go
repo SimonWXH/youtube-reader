@@ -286,6 +286,30 @@ func TestRSSTodayCountFollowsTheClockWithoutAReload(t *testing.T) {
 	}
 }
 
+// TestRSSArticleRowDateFollowsTheClock pins the middle column's relative date
+// to the same clock the Today window uses: the seeded hour-old article reads as
+// "1h ago" at the pinned moment, and moving the clock two hours re-renders it
+// as "3h ago" without touching the machine's real clock.
+func TestRSSArticleRowDateFollowsTheClock(t *testing.T) {
+	a, _, tt := rssTodayTestApp(t)
+	if err := tt.Click("The Daily Feed"); err != nil {
+		t.Fatalf("open the feed: %v", err)
+	}
+	tt.Frame()
+	if !tt.HasText("1h ago") {
+		t.Fatalf("the row date does not follow the pinned clock: %v", tt.Texts())
+	}
+
+	a.now = func() time.Time { return rssTodayClock.Add(2 * time.Hour) }
+	tt.Frame()
+	if !tt.HasText("3h ago") {
+		t.Fatalf("the row date did not follow the moved clock: %v", tt.Texts())
+	}
+	if tt.HasText("1h ago") {
+		t.Fatalf("the row date kept the clock reading from before the move: %v", tt.Texts())
+	}
+}
+
 // TestRSSSmartFeedsKeepTheOtherDestinations guards what the new rows sit beside:
 // Starred still lists only starred articles, and the feed destination still
 // lists every article it holds, read ones included.

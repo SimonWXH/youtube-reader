@@ -844,7 +844,11 @@ func (w *Window) rssArticleItemRow(c *ui.Context, t mui.Tokens, art core.RSSArti
 						})
 					}
 					ui.Spacer(c)
-					dateStr := FormatArticleDate(art.PublishedAt, time.Now())
+					now := time.Now()
+					if w.app != nil {
+						now = w.app.clockNow()
+					}
+					dateStr := FormatArticleDate(art.PublishedAt, now)
 					mui.Metadata.Apply(ui.Text(c, dateStr)).TextColor(t.Muted).SingleLine().Shrink(0)
 				})
 
