@@ -603,6 +603,82 @@ func TestRSSAllUnreadEmptyStateNeedsAFeed(t *testing.T) {
 	}
 }
 
+// TestRSSStarredEmptyState covers the Starred smart feed's own empty state:
+// with nothing starred it says how an article gets there, a search that hides
+// a starred article still wins with the no-match copy, and a library with no
+// feeds keeps the generic copy.
+func TestRSSStarredEmptyState(t *testing.T) {
+	for _, tc := range []struct {
+		locale, starred, emptyTitle, emptySentence string
+		noMatch, genericTitle, genericSentence     string
+	}{
+		{
+			locale: "en", starred: "Starred",
+			emptyTitle: "No Starred Articles", emptySentence: "Star an article and it will wait for you here.",
+			noMatch: "No Matching Articles", genericTitle: "No Articles",
+			genericSentence: "Articles from subscribed feeds will appear here.",
+		},
+		{
+			locale: "zh", starred: "标星",
+			emptyTitle: "没有标星文章", emptySentence: "把文章标星，它就会出现在这里。",
+			noMatch: "无匹配文章", genericTitle: "暂无文章",
+			genericSentence: "订阅源的文章将显示在此处。",
+		},
+	} {
+		t.Run(tc.locale, func(t *testing.T) {
+			a, _, tt := rssTodayTestApp(t)
+			tt.SetLocale(tc.locale)
+			tt.Frame()
+			if err := a.SetRSSArticleStarred("art-30h-read", false); err != nil {
+				t.Fatalf("unstar the seeded article: %v", err)
+			}
+			if err := tt.Click(tc.starred); err != nil {
+				t.Fatalf("click %s: %v", tc.starred, err)
+			}
+			tt.Frame()
+			if !tt.HasText(tc.emptyTitle) || !tt.HasText(tc.emptySentence) {
+				t.Fatalf("an empty Starred list does not describe itself: %v", tt.Texts())
+			}
+			if tt.HasText(tc.genericSentence) {
+				t.Fatalf("an empty Starred list reads as an empty library: %v", tt.Texts())
+			}
+
+			if err := a.SetRSSArticleStarred("art-30h-read", true); err != nil {
+				t.Fatalf("star the seeded article again: %v", err)
+			}
+			a.Search = "zzz"
+			tt.Frame()
+			if !tt.HasText(tc.noMatch) {
+				t.Fatalf("a search that hides a starred article does not say so: %v", tt.Texts())
+			}
+			if tt.HasText(tc.emptyTitle) {
+				t.Fatalf("the Starred empty copy outranked the search's no-match state: %v", tt.Texts())
+			}
+			a.Search = ""
+		})
+
+		t.Run(tc.locale+"/no feeds", func(t *testing.T) {
+			a := newTestApp(t, t.TempDir())
+			t.Cleanup(func() { a.Close() })
+			w := &Window{app: a, selectedIndex: new(int)}
+			w.selectWorkspace(WorkspaceRSS)
+			tt := ui.NewTester(w.view, 1280, 808)
+			tt.SetLocale(tc.locale)
+			tt.Frame()
+			if err := tt.Click(tc.starred); err != nil {
+				t.Fatalf("click %s: %v", tc.starred, err)
+			}
+			tt.Frame()
+			if !tt.HasText(tc.genericTitle) || !tt.HasText(tc.genericSentence) {
+				t.Fatalf("a library with no feeds does not show its generic copy: %v", tt.Texts())
+			}
+			if tt.HasText(tc.emptyTitle) {
+				t.Fatalf("a library with no feeds describes an empty Starred list: %v", tt.Texts())
+			}
+		})
+	}
+}
+
 // TestRSSStarredChineseSurfaceNamesOneDestination covers the Starred smart
 // feed's Chinese name: the sidebar row and the column header above its list
 // read the same word.

@@ -483,7 +483,7 @@ func TestRSSKeyboardTogglesStar(t *testing.T) {
 	if a.RSSStarredTotal != 0 {
 		t.Fatalf("starred total after unstarring = %d, want 0", a.RSSStarredTotal)
 	}
-	if !tt.HasText("No Articles") {
+	if !tt.HasText("No Starred Articles") || !tt.HasText("Star an article and it will wait for you here.") {
 		t.Fatalf("the empty Starred destination should say so, texts = %v", tt.Texts())
 	}
 	stored, err = a.Store.GetRSSArticle(ctx, "art-00")

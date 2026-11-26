@@ -1014,6 +1014,13 @@ func (w *Window) rssEmptyState(c *ui.Context, t mui.Tokens) {
 				title = "最近 24 小时没有文章"
 				sentence = "订阅源更新后，新文章会出现在这里。"
 			}
+		case destinationArticles == 0 && w.app.Selected == "starred" && hasFeeds:
+			title = "No Starred Articles"
+			sentence = "Star an article and it will wait for you here."
+			if zh {
+				title = "没有标星文章"
+				sentence = "把文章标星，它就会出现在这里。"
+			}
 		}
 	}
 
