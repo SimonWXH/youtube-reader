@@ -95,8 +95,9 @@ var (
 	// steps share 21 pt and the large step carries 27 pt.
 	ArticleTitle = TextStyle{Size: 21, LineHeight: 27, Weight: Semibold, Tracking: -0.2}
 	// ArticleHeading1 is a first-level heading inside a reading view's body, at
-	// the middle body step: the second level's size plus 2 pt with the same
-	// leading ratio, and the largest of the body's four heading roles.
+	// the middle body step: the second level's size plus 2 pt at the same
+	// leading ratio, rounded to the point, and the largest of the body's four
+	// heading roles.
 	ArticleHeading1 = TextStyle{Size: 22, LineHeight: 31, Weight: Semibold, Tracking: -0.1}
 	// ArticleHeading2 is a second-level heading inside a reading view's body,
 	// at the middle body step.
@@ -127,10 +128,9 @@ var (
 type ArticleType struct {
 	Title TextStyle
 	// Heading1 through Heading4 are the headings inside the body: first level,
-	// second level, third level, and fourth level and below. Heading1 is the
-	// second level's size plus 2 pt with the same leading ratio, never the
-	// article's headline, which is Title; the headline a feed supplies as
-	// content draws with Heading1.
+	// second level, third level, and fourth level and below. Heading1 is never
+	// the article's headline, which is Title; the headline a feed supplies as
+	// content draws with Heading1, and the ArticleHeading tokens pin the sizes.
 	Heading1 TextStyle
 	Heading2 TextStyle
 	Heading3 TextStyle
