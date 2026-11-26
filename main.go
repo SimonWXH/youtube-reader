@@ -183,9 +183,9 @@ type Window struct {
 	// and every retry goes through.
 	rssFullText        rssFullTextStatus
 	rssFullTextFetcher *rssFullTextFetcher
-	// now is the window's clock, the wall clock in the app and a fixed moment
-	// in tests, for header copy that depends on today's date.
-	now func() time.Time
+	// rssShareMenuOpen is the reader header's share menu's open flag, which the
+	// button owns so its pressed face stays painted while the menu shows.
+	rssShareMenuOpen bool
 	// groupDragOrder is the group order before the drag that is moving one of
 	// them began, so giving that drag up puts the groups back as they were.
 	// nil when no group drag has moved the list.

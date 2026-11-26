@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"testing"
@@ -202,23 +203,25 @@ func TestRSSReadingColumnNarrowsWithTheWindow(t *testing.T) {
 }
 
 // TestRSSHeaderSizeControlFitsTheReader checks the control never leaves the
-// pane: on the shipped default window and the widest reader it shares the
-// actions' row, and on readers too narrow for it and a readable feed name it
-// takes its own row above them, each segment inside the reader and the track's
-// inset, and the feed name never squeezed below its minimum.
+// header's content box: the size control trails the action pill on its row
+// when both fit, a reader too narrow for them moves the control to its own
+// trailing row, and a reader too narrow for the feed name as well gives the
+// source the row after, each segment inside the reader and the track's inset,
+// and the feed name never squeezed below its minimum.
 func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		width   int
-		sidebar float32
-		list    float32
-		reader  float32
-		inline  bool
+		name      string
+		width     int
+		sidebar   float32
+		list      float32
+		reader    float32
+		inline    bool
+		sizeBelow bool
 	}{
 		{name: "default window", width: 1280, sidebar: defaultSidebarWidth, list: defaultRSSListWidth, reader: 618, inline: true},
 		{name: "widest reader", width: 1280, sidebar: minSidebarWidth, list: minRSSListWidth, reader: 798, inline: true},
-		{name: "band under an inline row", width: 1200, sidebar: maxSidebarWidth, list: defaultRSSListWidth, reader: 478, inline: false},
-		{name: "minimum window", width: 960, sidebar: maxSidebarWidth, list: maxRSSListWidth, reader: rssReaderMinWidth, inline: false},
+		{name: "band under an inline row", width: 1200, sidebar: maxSidebarWidth, list: maxRSSListWidth, reader: 398, inline: false},
+		{name: "minimum window", width: 960, sidebar: maxSidebarWidth, list: maxRSSListWidth, reader: rssReaderMinWidth, inline: false, sizeBelow: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, w := rssReaderTestApp(t)
@@ -246,14 +249,24 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 			if track.H != 28 {
 				t.Fatalf("the size control's track is %v tall, want the header's 28 pt control height", track.H)
 			}
-			action, ok := tt.Find("Open in Browser")
-			if !ok {
-				t.Fatal("the reader's Open in Browser action is missing")
+			gutter := rssReaderPadding(w.rssLayout.readerWidth - rssTickRailWidth)
+			contentLeft := header.Bounds.X + gutter
+			contentRight := header.Bounds.X + header.Bounds.W - rssTickRailWidth - gutter
+			actions := rssHeaderActionsArea(t, tt)
+			sizeSharesPillRow := track.Y < actions.Y+actions.H && track.Y+track.H > actions.Y
+			if sizeSharesPillRow == tc.sizeBelow {
+				t.Fatalf("the size control shares the pill's row = %v, want its own row = %v", sizeSharesPillRow, tc.sizeBelow)
+			}
+			if actions.X < contentLeft || actions.X+actions.W > contentRight {
+				t.Fatalf("the action pill %v overhangs the header's content box %v..%v", actions, contentLeft, contentRight)
+			}
+			if track.X < contentLeft || track.X+track.W > contentRight {
+				t.Fatalf("the size control %v overhangs the header's content box %v..%v", track, contentLeft, contentRight)
 			}
 			for i, segment := range segments {
 				box := segment.Bounds
-				if box.X < header.Bounds.X || box.X+box.W > header.Bounds.X+header.Bounds.W {
-					t.Fatalf("segment %d at %v leaves the header %v", i, box, header.Bounds)
+				if box.X < contentLeft || box.X+box.W > contentRight {
+					t.Fatalf("segment %d at %v overhangs the header's content box %v..%v", i, box, contentLeft, contentRight)
 				}
 				if box.H != 22 || box.Y != track.Y+3 {
 					t.Fatalf("segment %d at %v does not fill the track's 2 pt inset and 1 pt border, want y %v, height 22",
@@ -262,13 +275,13 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 				if box.Y < header.Bounds.Y || box.Y+box.H > header.Bounds.Y+header.Bounds.H {
 					t.Fatalf("segment %d at %v leaves the header %v", i, box, header.Bounds)
 				}
-				sharesRow := box.Y+box.H > action.Y && box.Y < action.Y+action.H
-				if sharesRow != tc.inline {
-					t.Fatalf("segment %d at %v shares the actions' row = %v, want %v", i, box, sharesRow, tc.inline)
-				}
 			}
-			if action.X+action.W > header.Bounds.X+header.Bounds.W {
-				t.Fatalf("the actions run outside the header: %v in %v", action, header.Bounds)
+			feed, ok := rssHeaderNode(t, tt, header.Bounds, "The Long Read")
+			if !ok {
+				t.Fatal("the header draws no feed name")
+			}
+			if sharesRow := feed.Y < actions.Y+actions.H; sharesRow != tc.inline {
+				t.Fatalf("the feed name at %v shares the pill's row = %v, want %v", feed, sharesRow, tc.inline)
 			}
 			rssHeaderFeedBox(t, tt, header.Bounds)
 		})
@@ -279,7 +292,7 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 		// Hold the header in its fetching face for every width.
 		w.rssFullText = rssFullTextStatus{articleID: "art-reader", phase: rssFullTextFetching}
 		inlineRows, widths := 0, 0
-		for width := 1200; width <= 1300; width += 2 {
+		for width := 1100; width <= 1200; width += 2 {
 			tt := ui.NewTester(w.view, width, 808)
 			tt.Frame()
 			openRSSReaderTickArticle(t, tt)
@@ -292,12 +305,37 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 			if len(segments) != 3 {
 				t.Fatalf("%d pt: the size control has %d segments, want the three steps", width, len(segments))
 			}
-			action, ok := tt.Find("Fetching…")
-			if !ok {
-				t.Fatalf("%d pt: the re-fetch action is missing while fetching", width)
+			if got := rssHeaderAction(t, tt, "Fetching…").Bounds; got.W != 24 {
+				t.Fatalf("%d pt: the fetching action is %v pt wide, want the reference's 24 pt box", width, got.W)
 			}
-			if box := segments[0].Bounds; box.Y+box.H > action.Y && box.Y < action.Y+action.H {
+			actions := rssHeaderActionsArea(t, tt)
+			if got := rssHeaderAction(t, tt, "Fetching…").Bounds; got.Y < actions.Y || got.Y+got.H > actions.Y+actions.H {
+				t.Fatalf("%d pt: the fetching action %v does not sit inside the pill %v", width, got, actions)
+			}
+			feed, ok := rssHeaderNode(t, tt, header.Bounds, "The Long Read")
+			if !ok {
+				t.Fatalf("%d pt: the header draws no feed name", width)
+			}
+			if feed.Y < actions.Y+actions.H {
 				inlineRows++
+			}
+			gutter := rssReaderPadding(w.rssLayout.readerWidth - rssTickRailWidth)
+			contentLeft := header.Bounds.X + gutter
+			contentRight := header.Bounds.X + header.Bounds.W - rssTickRailWidth - gutter
+			track, ok := rssHeaderNode(t, tt, header.Bounds, "Text Size")
+			if !ok {
+				t.Fatalf("%d pt: the header draws no text size control", width)
+			}
+			for _, box := range []ui.Rect{actions, track} {
+				if box.X < contentLeft || box.X+box.W > contentRight {
+					t.Fatalf("%d pt: %v overhangs the header's content box %v..%v", width, box, contentLeft, contentRight)
+				}
+			}
+			for i, segment := range segments {
+				if box := segment.Bounds; box.X < contentLeft || box.X+box.W > contentRight {
+					t.Fatalf("%d pt: segment %d at %v overhangs the header's content box %v..%v",
+						width, i, box, contentLeft, contentRight)
+				}
 			}
 			rssHeaderFeedBox(t, tt, header.Bounds)
 			widths++
@@ -306,6 +344,60 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 			t.Fatalf("%d of %d rows were inline, want both layouts across the band", inlineRows, widths)
 		}
 	})
+}
+
+// TestRSSHeaderShortFeedTitleDrawsSnug covers a short feed name: its box stays
+// its own text width rather than the readable floor reserved for long names, so
+// the separator follows immediately instead of after a padded gap.
+func TestRSSHeaderShortFeedTitleDrawsSnug(t *testing.T) {
+	a, w, tt := rssReaderTestWindow(t)
+	feed := a.RSSFeeds[0]
+	feed.Title = "36氪"
+	if err := a.Store.SaveRSSFeed(context.Background(), feed); err != nil {
+		t.Fatalf("rename the feed: %v", err)
+	}
+	if err := a.ReloadRSS(); err != nil {
+		t.Fatalf("reload rss: %v", err)
+	}
+	tt.Frame()
+	openRSSReaderTickArticle(t, tt)
+
+	header, ok := tt.AccessByRole(ui.RoleGroup, "Article header")
+	if !ok {
+		t.Fatal("the reader header has no accessible group")
+	}
+	title, ok := rssHeaderNode(t, tt, header.Bounds, "36氪")
+	if !ok {
+		t.Fatalf("the header draws no short feed name: %v", tt.Texts())
+	}
+	if title.W >= 56 {
+		t.Fatalf("the short feed name is %v pt wide, want its own text width rather than the 56 pt readable floor", title.W)
+	}
+	sep, ok := rssHeaderNode(t, tt, header.Bounds, "·")
+	if !ok {
+		t.Fatal("the header draws no separator after the short feed name")
+	}
+	if gap := sep.X - (title.X + title.W); gap < mui.Space(2)-0.5 || gap > mui.Space(2)+0.5 {
+		t.Fatalf("the separator sits %v pt after the short feed name, want the row's %v pt gap", gap, mui.Space(2))
+	}
+
+	// A width that just fits the short source beside the pill keeps it there
+	// instead of reserving the long name's readable floor.
+	narrow := ui.NewTester(w.view, 1100, 808)
+	narrow.Frame()
+	openRSSReaderTickArticle(t, narrow)
+	narrowHeader, ok := narrow.AccessByRole(ui.RoleGroup, "Article header")
+	if !ok {
+		t.Fatal("the narrow reader header has no accessible group")
+	}
+	narrowTitle, ok := rssHeaderNode(t, narrow, narrowHeader.Bounds, "36氪")
+	if !ok {
+		t.Fatalf("the narrow header draws no short feed name: %v", narrow.Texts())
+	}
+	narrowActions := rssHeaderActionsArea(t, narrow)
+	if narrowTitle.Y >= narrowActions.Y+narrowActions.H {
+		t.Fatalf("the short feed name at %v was pushed to its own row although it fits beside the pill %v", narrowTitle, narrowActions)
+	}
 }
 
 // rssHeaderFeedBox checks the row drew its feed name at least at the minimum

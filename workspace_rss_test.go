@@ -89,11 +89,10 @@ func TestRSSSidebarWorkspaceIsolation(t *testing.T) {
 	if !tt.HasText("Hacker News") {
 		t.Fatal("RSS sidebar should display RSS feed Hacker News")
 	}
-	if !tt.HasText("All articles") {
-		t.Fatal("RSS sidebar should display All articles")
-	}
-	if !tt.HasText("Starred") {
-		t.Fatal("RSS sidebar should display Starred")
+	for _, want := range []string{"Today", "All Unread", "Starred"} {
+		if !tt.HasText(want) {
+			t.Fatalf("RSS sidebar should display the smart feed %q", want)
+		}
 	}
 
 	// Switch back to Videos workspace

@@ -218,16 +218,17 @@ func TestVisibleRSSArticlesFilteringAndSorting(t *testing.T) {
 	_ = a.Store.SaveRSSArticles(ctx, articles)
 	_ = a.ReloadRSS()
 
-	// 1. All articles: should sort newest first, excluding deleted feed
+	// 1. All Unread: only the unread articles, newest first, excluding the
+	// deleted feed
 	a.Selected = "all"
 	a.Search = ""
 	a.UnreadOnly = false
 	vis := a.VisibleRSSArticles()
-	if len(vis) != 3 {
-		t.Fatalf("VisibleRSSArticles(all) len = %d, want 3", len(vis))
+	if len(vis) != 2 {
+		t.Fatalf("VisibleRSSArticles(all) len = %d, want the 2 unread articles", len(vis))
 	}
-	if vis[0].ID != "art:newest" || vis[1].ID != "art:middle" || vis[2].ID != "art:oldest" {
-		t.Fatalf("articles not sorted newest first: %v", []string{vis[0].ID, vis[1].ID, vis[2].ID})
+	if vis[0].ID != "art:newest" || vis[1].ID != "art:middle" {
+		t.Fatalf("unread articles not sorted newest first: %v", []string{vis[0].ID, vis[1].ID})
 	}
 
 	// 2. Filter by feed:f1
@@ -344,26 +345,33 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 	}
 
 	// 2. Verify Column Header renders current selection and unread count
-	if !tt.HasText("All Articles") {
-		t.Fatalf("Column header missing 'All Articles': texts = %v", tt.Texts())
+	if !tt.HasText("All Unread") {
+		t.Fatalf("Column header missing 'All Unread': texts = %v", tt.Texts())
 	}
 	if !tt.HasText("2 unread") {
 		t.Fatalf("Column header missing '2 unread': texts = %v", tt.Texts())
 	}
 
-	// 3. Verify Article Filters strip contains search, unread checkbox, and count text
+	// 3. Verify the Article Filters strip keeps its search field and count, and
+	// leaves out the Unread filter the destination already forces
 	if !tt.HasText("Search articles") {
 		t.Fatalf("Article filters strip missing search field")
 	}
-	if !tt.HasText("Unread") {
-		t.Fatalf("Article filters strip missing Unread checkbox")
+	if _, ok := tt.Find("Unread"); ok {
+		t.Fatalf("the All Unread destination draws an Unread filter it cannot control")
 	}
-	if !tt.HasText("3 articles") {
-		t.Fatalf("Article filters strip missing '3 articles' count text")
+	if !tt.HasText("2 articles") {
+		t.Fatalf("Article filters strip missing '2 articles' count text")
 	}
 
-	// 4. Verify Article list items
+	// 4. Verify the unread list items; the read article stays out of it
 	for _, art := range articles {
+		if art.Read {
+			if tt.HasText(art.Title) {
+				t.Errorf("read article %q is listed under All Unread", art.Title)
+			}
+			continue
+		}
 		if !tt.HasText(art.Title) {
 			t.Errorf("article title %q not found in UI", art.Title)
 		}
@@ -374,12 +382,9 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 		t.Errorf("expected snippet fallback from ContentHTML to render as plain text: %v", tt.Texts())
 	}
 
-	// Verify unread dot exists for unread items and does not exist for read items
+	// Verify the unread dot exists for unread items
 	if _, ok := tt.Find("Unread: Quantum Computing Advances"); !ok {
 		t.Errorf("unread dot missing for unread article art-1")
-	}
-	if _, ok := tt.Find("Unread: Minimalism in Scandinavian Design"); ok {
-		t.Errorf("read article art-2 should not render an unread dot")
 	}
 
 	// 5. Click an article item to select it
@@ -398,25 +403,24 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 		t.Fatalf("expected onRSSArticleSelected to be called with 'art-1', got %v", selectedObserverCalls)
 	}
 
-	// 6. Keyboard navigation: Arrow Down moves to art-2
-	tt.Key(0, ui.KeyDown)
-	tt.Frame()
-	if a.SelectedRSSArticleID != "art-2" {
-		t.Fatalf("after KeyDown, SelectedRSSArticleID = %q, want 'art-2'", a.SelectedRSSArticleID)
-	}
-
-	// Arrow Down again moves to art-3
+	// 6. Keyboard navigation walks the unread list: Arrow Down moves to art-3,
+	// which is the last unread row, and Arrow Up comes back to art-1
 	tt.Key(0, ui.KeyDown)
 	tt.Frame()
 	if a.SelectedRSSArticleID != "art-3" {
-		t.Fatalf("after second KeyDown, SelectedRSSArticleID = %q, want 'art-3'", a.SelectedRSSArticleID)
+		t.Fatalf("after KeyDown, SelectedRSSArticleID = %q, want 'art-3'", a.SelectedRSSArticleID)
 	}
 
-	// Arrow Up moves back to art-2
+	tt.Key(0, ui.KeyDown)
+	tt.Frame()
+	if a.SelectedRSSArticleID != "art-3" {
+		t.Fatalf("KeyDown past the last unread row chose %q, want 'art-3'", a.SelectedRSSArticleID)
+	}
+
 	tt.Key(0, ui.KeyUp)
 	tt.Frame()
-	if a.SelectedRSSArticleID != "art-2" {
-		t.Fatalf("after KeyUp, SelectedRSSArticleID = %q, want 'art-2'", a.SelectedRSSArticleID)
+	if a.SelectedRSSArticleID != "art-1" {
+		t.Fatalf("after KeyUp, SelectedRSSArticleID = %q, want 'art-1'", a.SelectedRSSArticleID)
 	}
 
 	// 7. The unread dot is a status indicator: clicking its area selects the row
@@ -433,7 +437,8 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 		t.Fatalf("clicking the dot must not mark the article read, unread count = %d, want %d", got, unreadCountBefore)
 	}
 
-	// 8. Context menu right-click marks the article read
+	// 8. Context menu right-click marks the article read, which takes it out of
+	// the All Unread column while the reader keeps it open
 	if err := tt.RightClick("Quantum Computing Advances"); err != nil {
 		t.Fatalf("right-click article row: %v", err)
 	}
@@ -451,27 +456,33 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 	if !tt.HasText("1 unread") {
 		t.Fatalf("header should show '1 unread' after context-menu read: texts = %v", tt.Texts())
 	}
+	for _, art := range a.VisibleRSSArticles() {
+		if art.ID == "art-1" {
+			t.Errorf("the read article is still listed under All Unread: %+v", art)
+		}
+	}
 	if _, ok := tt.Find("Unread: Quantum Computing Advances"); ok {
-		t.Errorf("unread dot should disappear after marking art-1 read")
+		t.Errorf("the read article's unread dot is still drawn")
+	}
+	if a.SelectedRSSArticleID != "art-1" {
+		t.Fatalf("marking the open article read moved the selection to %q", a.SelectedRSSArticleID)
 	}
 
-	// 9. Context menu right-click marks the article unread again
-	if err := tt.RightClick("Quantum Computing Advances"); err != nil {
-		t.Fatalf("right-click article row: %v", err)
-	}
-	if err := tt.ChooseMenuItem("Mark as Unread"); err != nil {
-		t.Fatalf("choose 'Mark as Unread': %v", err)
+	// 9. The reader's toggle marks the still-open article unread again, and it
+	// returns to the column
+	if err := tt.Click("Mark as Unread (M)"); err != nil {
+		t.Fatalf("click the reader's read toggle: %v", err)
 	}
 	tt.Frame()
 	storedMenu, err = a.Store.GetRSSArticle(ctx, "art-1")
 	if err != nil || storedMenu == nil || storedMenu.Read {
-		t.Fatalf("art-1 should be marked unread via context menu: %v %+v", err, storedMenu)
+		t.Fatalf("art-1 should be marked unread via the reader toggle: %v %+v", err, storedMenu)
 	}
 	if !tt.HasText("2 unread") {
 		t.Fatalf("header should restore '2 unread': texts = %v", tt.Texts())
 	}
 	if _, ok := tt.Find("Unread: Quantum Computing Advances"); !ok {
-		t.Errorf("unread dot should return after marking art-1 unread")
+		t.Errorf("the unread article should return to the All Unread column")
 	}
 
 	// 10. Search filtering in UI
@@ -710,16 +721,22 @@ func TestRSSScenariosEndToEnd(t *testing.T) {
 	// Scenario 1: NetNewsWire-style article card layout and styling
 	t.Run("Scenario 1: NetNewsWire-style article card layout and styling", func(t *testing.T) {
 		for _, art := range articles {
+			if art.Read {
+				if tt.HasText(art.Title) {
+					t.Errorf("read article %q is listed under All Unread", art.Title)
+				}
+				continue
+			}
 			if !tt.HasText(art.Title) {
 				t.Errorf("expected article title %q to be rendered", art.Title)
 			}
 		}
 
-		if !tt.HasText("Tech Weekly") || !tt.HasText("Design Systems") || !tt.HasText("Science Journal") {
-			t.Errorf("expected feed source names to be visible on line 1")
+		if !tt.HasText("Tech Weekly") || !tt.HasText("Science Journal") {
+			t.Errorf("expected the feeds with unread articles to be visible on line 1")
 		}
 
-		if !tt.HasText("15m ago") || !tt.HasText("3h ago") || !tt.HasText("Aug 14, 2025") {
+		if !tt.HasText("15m ago") || !tt.HasText("Aug 14, 2025") {
 			t.Errorf("expected formatted dates on line 1: texts = %v", tt.Texts())
 		}
 
@@ -732,22 +749,22 @@ func TestRSSScenariosEndToEnd(t *testing.T) {
 
 	// Scenario 2: Column header, count, unread filter, and chronological sorting
 	t.Run("Scenario 2: Column header, count, unread filter, and sorting", func(t *testing.T) {
-		if !tt.HasText("All Articles") {
-			t.Errorf("column header must show 'All Articles'")
+		if !tt.HasText("All Unread") {
+			t.Errorf("column header must show 'All Unread'")
 		}
 		if !tt.HasText("3 unread") {
 			t.Errorf("column header must show '3 unread', texts = %v", tt.Texts())
 		}
-		if !tt.HasText("5 articles") {
-			t.Errorf("toolbar strip must show '5 articles', texts = %v", tt.Texts())
+		if !tt.HasText("3 articles") {
+			t.Errorf("toolbar strip must show '3 articles', texts = %v", tt.Texts())
 		}
 		if !tt.HasText("Search articles") {
 			t.Errorf("toolbar strip must have search input placeholder")
 		}
 
 		vis := a.VisibleRSSArticles()
-		if len(vis) != 5 {
-			t.Fatalf("expected 5 visible articles, got %d", len(vis))
+		if len(vis) != 3 {
+			t.Fatalf("expected the 3 unread articles, got %d", len(vis))
 		}
 		for i := 1; i < len(vis); i++ {
 			if vis[i-1].PublishedAt < vis[i].PublishedAt {
@@ -795,20 +812,20 @@ func TestRSSScenariosEndToEnd(t *testing.T) {
 
 		tt.Key(0, ui.KeyDown)
 		tt.Frame()
-		if a.SelectedRSSArticleID != "art-102" {
-			t.Fatalf("after KeyDown, expected SelectedRSSArticleID 'art-102', got %q", a.SelectedRSSArticleID)
+		if a.SelectedRSSArticleID != "art-103" {
+			t.Fatalf("after KeyDown, expected SelectedRSSArticleID 'art-103', got %q", a.SelectedRSSArticleID)
 		}
 
 		tt.Key(0, ui.KeyDown)
 		tt.Frame()
-		if a.SelectedRSSArticleID != "art-103" {
-			t.Fatalf("after second KeyDown, expected SelectedRSSArticleID 'art-103', got %q", a.SelectedRSSArticleID)
+		if a.SelectedRSSArticleID != "art-105" {
+			t.Fatalf("after second KeyDown, expected SelectedRSSArticleID 'art-105', got %q", a.SelectedRSSArticleID)
 		}
 
 		tt.Key(0, ui.KeyUp)
 		tt.Frame()
-		if a.SelectedRSSArticleID != "art-102" {
-			t.Fatalf("after KeyUp, expected SelectedRSSArticleID 'art-102', got %q", a.SelectedRSSArticleID)
+		if a.SelectedRSSArticleID != "art-103" {
+			t.Fatalf("after KeyUp, expected SelectedRSSArticleID 'art-103', got %q", a.SelectedRSSArticleID)
 		}
 
 		saveEvidenceScreenshot(t, tt, "scenario3_selection_and_keyboard_navigation.png")
@@ -821,8 +838,11 @@ func TestRSSScenariosEndToEnd(t *testing.T) {
 			t.Fatalf("initial unread count = %d, want 3", initialUnread)
 		}
 
-		if err := a.MarkRSSArticleRead("art-101", true); err != nil {
-			t.Fatalf("MarkRSSArticleRead failed: %v", err)
+		if err := tt.RightClick("Go 1.25 Runtime Scheduler and Memory Management Enhancements"); err != nil {
+			t.Fatalf("right-click article row: %v", err)
+		}
+		if err := tt.ChooseMenuItem("Mark as Read"); err != nil {
+			t.Fatalf("choose 'Mark as Read': %v", err)
 		}
 		tt.Frame()
 
@@ -832,26 +852,26 @@ func TestRSSScenariosEndToEnd(t *testing.T) {
 		if !tt.HasText("2 unread") {
 			t.Errorf("header should show '2 unread', texts = %v", tt.Texts())
 		}
+		if a.SelectedRSSArticleID != "art-103" {
+			t.Fatalf("marking the open article read moved the selection to %q", a.SelectedRSSArticleID)
+		}
 
-		stored, err := a.Store.GetRSSArticle(ctx, "art-101")
+		stored, err := a.Store.GetRSSArticle(ctx, "art-103")
 		if err != nil || stored == nil {
-			t.Fatalf("failed to retrieve art-101 from sqlite store: %v", err)
+			t.Fatalf("failed to retrieve art-103 from sqlite store: %v", err)
 		}
 		if !stored.Read || stored.ReadAt == 0 {
 			t.Errorf("store did not persist Read=true and ReadAt > 0: %+v", stored)
 		}
 
-		if err := tt.RightClick("Next-Gen Quantum Processors Exceed 1000 Qubits with High Fidelity"); err != nil {
-			t.Fatalf("right-click article row: %v", err)
-		}
-		if err := tt.ChooseMenuItem("Mark as Unread"); err != nil {
-			t.Fatalf("choose 'Mark as Unread': %v", err)
+		if err := tt.Click("Mark as Unread (M)"); err != nil {
+			t.Fatalf("click the reader's read toggle: %v", err)
 		}
 		tt.Frame()
 
-		storedUnread, err := a.Store.GetRSSArticle(ctx, "art-101")
+		storedUnread, err := a.Store.GetRSSArticle(ctx, "art-103")
 		if err != nil || storedUnread == nil || storedUnread.Read {
-			t.Fatalf("store did not persist Read=false after context menu: %v %+v", err, storedUnread)
+			t.Fatalf("store did not persist Read=false after the toggle: %v %+v", err, storedUnread)
 		}
 		if !tt.HasText("3 unread") {
 			t.Errorf("header should restore '3 unread', texts = %v", tt.Texts())
@@ -886,8 +906,8 @@ func TestRSSScenariosEndToEnd(t *testing.T) {
 		if !tt.HasText("No Matching Articles") {
 			t.Fatalf("expected 'No Matching Articles' empty state headline, texts = %v", tt.Texts())
 		}
-		if !tt.HasText("Try clearing search terms or the unread filter.") {
-			t.Fatalf("expected empty state sentence")
+		if !tt.HasText("Try clearing the search term.") {
+			t.Fatalf("expected the no-match sentence to name the search alone")
 		}
 
 		saveEvidenceScreenshot(t, tt, "scenario5_workspace_isolation_and_empty_state.png")

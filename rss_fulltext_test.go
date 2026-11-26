@@ -104,14 +104,14 @@ func TestRSSFullTextFetchesWhenAnArticleOpens(t *testing.T) {
 		"Showing the feed's summary. Open the original article in your browser for the full text.",
 		"Couldn't fetch the full text. Showing the feed's summary.",
 		"Fetching the full text…",
-		"Retry full text",
+		"Retry Full Text",
 	} {
 		if tt.HasText(gone) {
 			t.Errorf("a fetched article still shows %q: %v", gone, tt.Texts())
 		}
 	}
-	if !tt.HasText("Refetch") {
-		t.Fatalf("the capture action is missing after the fetch: %v", tt.Texts())
+	if got := rssHeaderActionNames(t, tt); !slices.Contains(got, "Refetch") {
+		t.Fatalf("the capture action is missing after the fetch: %q", got)
 	}
 
 	// Clicking the article that now holds its text is served from the store.
@@ -154,8 +154,8 @@ func TestRSSFullTextPlaceholderReplacesTheBrowserNotice(t *testing.T) {
 	if !tt.HasText("Fetching the full text…") {
 		t.Fatalf("the fetching placeholder is missing: %v", tt.Texts())
 	}
-	if !tt.HasText("Fetching…") {
-		t.Fatalf("the capture action does not show progress: %v", tt.Texts())
+	if got := rssHeaderActionNames(t, tt); !slices.Contains(got, "Fetching…") {
+		t.Fatalf("the capture action does not show progress: %q", got)
 	}
 	if !tt.HasText("The feed carried only this sentence") {
 		t.Fatalf("the summary left the page while its full text is fetched: %v", tt.Texts())
@@ -163,7 +163,7 @@ func TestRSSFullTextPlaceholderReplacesTheBrowserNotice(t *testing.T) {
 	for _, gone := range []string{
 		"Showing the feed's summary. Open the original article in your browser for the full text.",
 		"当前展示摘要，可点击在浏览器中查看原网页",
-		"Retry full text",
+		"Retry Full Text",
 	} {
 		if tt.HasText(gone) {
 			t.Errorf("a fetch in progress still shows %q: %v", gone, tt.Texts())
@@ -216,8 +216,8 @@ func TestRSSFullTextFailureKeepsTheSummaryAndOffersRetry(t *testing.T) {
 	if !tt.HasText("Couldn't fetch the full text. Showing the feed's summary.") {
 		t.Fatalf("the failure state is missing: %v", tt.Texts())
 	}
-	if !tt.HasText("Retry full text") {
-		t.Fatalf("the capture action does not name the retry: %v", tt.Texts())
+	if _, ok := tt.AccessByRole(ui.RoleButton, "Retry Full Text"); !ok {
+		t.Fatalf("the body toggle does not name the retry: %v", rssHeaderActionNames(t, tt))
 	}
 	if !tt.HasText("The feed carried only this sentence") {
 		t.Fatalf("the summary left the page when the fetch failed: %v", tt.Texts())
@@ -233,25 +233,25 @@ func TestRSSFullTextFailureKeepsTheSummaryAndOffersRetry(t *testing.T) {
 	if got := callsNow(); got != 2 {
 		t.Fatalf("reopening a failed article fetched %d times, want one more attempt", got)
 	}
-	if !tt.HasText("Retry full text") {
-		t.Fatalf("reopening a failed article lost its retry: %v", tt.Texts())
+	if _, ok := tt.AccessByRole(ui.RoleButton, "Retry Full Text"); !ok {
+		t.Fatalf("reopening a failed article lost its retry: %v", rssHeaderActionNames(t, tt))
 	}
 
-	if err := tt.Click("Retry full text"); err != nil {
-		t.Fatalf("click the retry: %v", err)
-	}
-	tt.Frame()
+	clickRSSHeaderAction(t, tt, "Retry Full Text")
 	if got := callsNow(); got != 3 {
 		t.Fatalf("the retry fetched %d times, want the same path once more", got)
 	}
 	if !tt.HasText(rssFullTextTestBody) {
 		t.Fatalf("the retry's full text is not on the page: %v", tt.Texts())
 	}
-	if tt.HasText("Retry full text") || tt.HasText("Couldn't fetch the full text. Showing the feed's summary.") {
-		t.Fatalf("the failure state outlived the retry that cured it: %v", tt.Texts())
+	if _, ok := tt.AccessByRole(ui.RoleButton, "Retry Full Text"); ok {
+		t.Fatalf("the failure state outlived the retry that cured it: %v", rssHeaderActionNames(t, tt))
 	}
-	if !tt.HasText("Refetch") {
-		t.Fatalf("the capture action did not return to its ordinary label: %v", tt.Texts())
+	if tt.HasText("Couldn't fetch the full text. Showing the feed's summary.") {
+		t.Fatalf("the failure line outlived the retry that cured it: %v", tt.Texts())
+	}
+	if got := rssHeaderActionNames(t, tt); !slices.Contains(got, "Refetch") {
+		t.Fatalf("the capture action did not return to its ordinary label: %q", got)
 	}
 }
 
@@ -510,12 +510,12 @@ func TestRSSFeedFullTextToggleStopsAutomaticFetchAndPersists(t *testing.T) {
 	if !tt.HasText("Showing the feed's summary. Open the original article in your browser for the full text.") {
 		t.Fatalf("a feed with the setting off lost the browser notice: %v", tt.Texts())
 	}
-	if tt.HasText("Fetching the full text…") || tt.HasText("Retry full text") {
+	if tt.HasText("Fetching the full text…") {
 		t.Fatalf("a feed with the setting off showed a fetch state: %v", tt.Texts())
 	}
 	// The capture action stays available for a single article on request.
-	if !tt.HasText("Refetch") {
-		t.Fatalf("a feed with the setting off lost the capture action: %v", tt.Texts())
+	if got := rssHeaderActionNames(t, tt); !slices.Contains(got, "Fetch Full Text") || !slices.Contains(got, "Refetch") {
+		t.Fatalf("a feed with the setting off lost its full-text actions: %q", got)
 	}
 
 	// Turning the setting back on leaves the open article alone: the switch
@@ -536,8 +536,8 @@ func TestRSSFeedFullTextToggleStopsAutomaticFetchAndPersists(t *testing.T) {
 	if !tt.HasText("Showing the feed's summary. Open the original article in your browser for the full text.") {
 		t.Fatalf("the open article lost its summary when the setting came back on: %v", tt.Texts())
 	}
-	if !tt.HasText("Refetch") {
-		t.Fatalf("the open article lost its capture action: %v", tt.Texts())
+	if got := rssHeaderActionNames(t, tt); !slices.Contains(got, "Refetch") {
+		t.Fatalf("the open article lost its capture action: %q", got)
 	}
 
 	// The articles opened from now on follow the setting again.
@@ -549,8 +549,8 @@ func TestRSSFeedFullTextToggleStopsAutomaticFetchAndPersists(t *testing.T) {
 	if gotFetches != 1 {
 		t.Fatalf("opening an article after the setting came back on fetched %d times, want once", gotFetches)
 	}
-	if !tt.HasText("Retry full text") {
-		t.Fatalf("the failed fetch did not leave its retry: %v", tt.Texts())
+	if _, ok := tt.AccessByRole(ui.RoleButton, "Retry Full Text"); !ok {
+		t.Fatalf("the failed fetch did not leave its retry: %v", rssHeaderActionNames(t, tt))
 	}
 }
 
@@ -570,10 +570,16 @@ func TestRSSFullTextStatesReadInBothLanguages(t *testing.T) {
 
 	openRSSFullTextSummaryRow(t, tt)
 	tt.Frame()
-	for _, want := range []string{"正在抓取全文…", "抓取中…", "在浏览器中打开"} {
-		if !tt.HasText(want) {
-			t.Fatalf("the Chinese reader is missing %q: %v", want, tt.Texts())
-		}
+	if !tt.HasText("正在抓取全文…") {
+		t.Fatalf("the Chinese reader is missing the fetching line: %v", tt.Texts())
+	}
+	if got, want := rssHeaderActionNames(t, tt), []string{
+		"标记为已读 (M)", "标星 (S)", "抓取中…", "分享", "在浏览器中打开", "重新抓取",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("Chinese header actions mid-fetch = %q, want %q", got, want)
+	}
+	if got := rssHeaderAction(t, tt, "重新抓取").Description; got != "抓取中…" {
+		t.Fatalf("the Chinese refresh tooltip = %q, want the fetching state", got)
 	}
 	if tt.HasText("当前展示摘要，可点击在浏览器中查看原网页") {
 		t.Fatalf("the Chinese reader still sends the reader to the browser mid-fetch: %v", tt.Texts())
@@ -587,10 +593,11 @@ func TestRSSFullTextStatesReadInBothLanguages(t *testing.T) {
 		t.Fatal("the finished fetch never reached the window")
 	}
 	tt.Frame()
-	for _, want := range []string{"全文抓取失败，当前显示摘要。", "重试抓取"} {
-		if !tt.HasText(want) {
-			t.Fatalf("the Chinese reader is missing %q: %v", want, tt.Texts())
-		}
+	if !tt.HasText("全文抓取失败，当前显示摘要。") {
+		t.Fatalf("the Chinese reader is missing the failure line: %v", tt.Texts())
+	}
+	if _, ok := tt.AccessByRole(ui.RoleButton, "重试抓取"); !ok {
+		t.Fatalf("the Chinese reader is missing the retry: %v", rssHeaderActionNames(t, tt))
 	}
 	if tt.HasText("当前展示摘要，可点击在浏览器中查看原网页") {
 		t.Fatalf("a failed fetch still offers the browser's call to action: %v", tt.Texts())

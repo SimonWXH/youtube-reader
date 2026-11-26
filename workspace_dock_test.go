@@ -585,6 +585,11 @@ func TestRSSFilterStripFitsItsColumn(t *testing.T) {
 			}
 			tt := ui.NewTester(w.view, tc.width, 808)
 			tt.Frame()
+			// Starred keeps the Unread filter; All Unread forces it and hides it.
+			if err := tt.Click("Starred"); err != nil {
+				t.Fatalf("click Starred: %v", err)
+			}
+			tt.Frame()
 
 			if w.activeWorkspaceName() != WorkspaceRSS {
 				t.Fatalf("active workspace = %q, want %q", w.activeWorkspaceName(), WorkspaceRSS)
@@ -735,7 +740,7 @@ func TestRSSSidebarRowsSelectTheSmartFeed(t *testing.T) {
 		t.Fatalf("after clicking Starred, selection = %q, want starred", a.Selected)
 	}
 
-	if err := tt.Click("All articles"); err != nil {
+	if err := tt.Click("All Unread"); err != nil {
 		t.Fatalf("click All articles: %v", err)
 	}
 	tt.Frame()

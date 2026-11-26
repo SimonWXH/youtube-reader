@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -682,7 +683,8 @@ func rssReaderTestApp(t *testing.T) (*App, *Window) {
 		t.Fatalf("reload rss: %v", err)
 	}
 
-	w := &Window{app: a, selectedIndex: new(int), now: func() time.Time { return rssReaderTestNow }}
+	a.now = func() time.Time { return rssReaderTestNow }
+	w := &Window{app: a, selectedIndex: new(int)}
 	w.selectWorkspace(WorkspaceRSS)
 	return a, w
 }
@@ -690,6 +692,80 @@ func rssReaderTestApp(t *testing.T) (*App, *Window) {
 // rssReaderTestNow is the clock the reader tests run at, so the header's Today
 // and its year rule do not change with the day the suite runs.
 var rssReaderTestNow = time.Date(2026, time.December, 1, 9, 0, 0, 0, time.UTC)
+
+// rssHeaderActionsArea is the box the reading header's action group occupies,
+// found under either locale's name for it.
+func rssHeaderActionsArea(t *testing.T, tt *ui.Tester) ui.Rect {
+	t.Helper()
+	for _, label := range []string{rssHeaderActionsLabel(false), rssHeaderActionsLabel(true)} {
+		if group, ok := tt.AccessByRole(ui.RoleGroup, label); ok {
+			return group.Bounds
+		}
+	}
+	t.Fatalf("the reading header has no action group, names = %v", rssAccessNames(tt))
+	return ui.Rect{}
+}
+
+// rssHeaderActionRoles are the roles a control of the action group can carry:
+// a plain button, and a menu button for the one that opens the share menu.
+func rssHeaderActionRole(r ui.Role) bool {
+	return r == ui.RoleButton || r == ui.RoleMenuButton
+}
+
+// rssHeaderActionNames lists the header's action controls in the order they
+// draw, by the name each carries for the pointer and the accessibility tree.
+func rssHeaderActionNames(t *testing.T, tt *ui.Tester) []string {
+	t.Helper()
+	area := rssHeaderActionsArea(t, tt)
+	names := []string{}
+	for _, info := range tt.AccessAll() {
+		if !rssHeaderActionRole(info.Role) || !rssBoxHolds(area, info.Bounds) {
+			continue
+		}
+		names = append(names, info.Name)
+	}
+	return names
+}
+
+// rssHeaderAction finds one control of the header's action group by its name.
+func rssHeaderAction(t *testing.T, tt *ui.Tester, name string) ui.AccessInfo {
+	t.Helper()
+	area := rssHeaderActionsArea(t, tt)
+	for _, info := range tt.AccessAll() {
+		if rssHeaderActionRole(info.Role) && info.Name == name && rssBoxHolds(area, info.Bounds) {
+			return info
+		}
+	}
+	t.Fatalf("the reading header has no %q action, names = %v", name, rssHeaderActionNames(t, tt))
+	return ui.AccessInfo{}
+}
+
+// clickRSSHeaderAction presses one of the header's icon controls.
+func clickRSSHeaderAction(t *testing.T, tt *ui.Tester, name string) {
+	t.Helper()
+	box := rssHeaderAction(t, tt, name).Bounds
+	tt.ClickAt(box.X+box.W/2, box.Y+box.H/2)
+	tt.Frame()
+}
+
+// rssBoxHolds reports whether a box's centre falls inside area.
+func rssBoxHolds(area, box ui.Rect) bool {
+	cx, cy := box.X+box.W/2, box.Y+box.H/2
+	return cx >= area.X-0.5 && cx <= area.X+area.W+0.5 &&
+		cy >= area.Y-0.5 && cy <= area.Y+area.H+0.5
+}
+
+// rssAccessNames lists the accessible names the last frame gives, for failure
+// messages.
+func rssAccessNames(tt *ui.Tester) []string {
+	names := []string{}
+	for _, info := range tt.AccessAll() {
+		if info.Name != "" {
+			names = append(names, info.Name)
+		}
+	}
+	return names
+}
 
 // stubNetImages keeps picture blocks offline and deterministic: the frame
 // holds its place and never depends on a network fetch.
@@ -754,14 +830,12 @@ func TestRSSReaderViewRendersArticle(t *testing.T) {
 		"Ada Lovelace",  // author
 		rssReaderDate("2026-11-23T08:00:00Z", rssReaderTestNow), // the article's day
 		"The Quiet Return of the Open Feed",                     // title
-		"Open in Browser",
-		"Refetch",
-		"The quiet return of the open feed",           // heading block
-		"Why the old protocol still fits",             // sub-heading block
-		"A reader is a promise that the words arrive", // quote block
-		"type Feed struct",                            // code block
-		"Conditional requests cost nothing",           // list block
-		"Read the original article",                   // permanent way out
+		"The quiet return of the open feed",                     // heading block
+		"Why the old protocol still fits",                       // sub-heading block
+		"A reader is a promise that the words arrive",           // quote block
+		"type Feed struct",                                      // code block
+		"Conditional requests cost nothing",                     // list block
+		"Read the original article",                             // permanent way out
 		"feeds.example.com",
 	} {
 		if !tt.HasText(want) {
@@ -770,6 +844,17 @@ func TestRSSReaderViewRendersArticle(t *testing.T) {
 	}
 	if tt.HasText("Showing the feed's summary") {
 		t.Error("a full-text article must not show the summary notice")
+	}
+	// The action group is NetNewsWire's six icons, in its order: the read
+	// toggle, the star, the original/full-text toggle, share, open in browser,
+	// and the refresh.
+	if got, want := rssHeaderActionNames(t, tt), []string{
+		"Mark as Read (M)", "Star article (S)", "Show Original", "Share", "Open in Browser", "Refetch",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("header actions = %q, want %q", got, want)
+	}
+	if got := rssHeaderAction(t, tt, "Share").Bounds.W; got != 24 {
+		t.Fatalf("an action box is %v pt wide, want the reference's 24 pt box", got)
 	}
 	// The rail has one bar per block, and the first block is active at the top.
 	if got, want := len(w.rssReader.ticks), len(a.SelectedRSSArticle().Blocks); got != want {
@@ -798,8 +883,7 @@ func TestRSSReaderViewRendersArticle(t *testing.T) {
 	saveRSSReaderScreenshot(t, tt, "01-reader-full-text.png")
 
 	// Open in Browser hands the original URL to the system.
-	tt.Click("Open in Browser")
-	tt.Frame()
+	clickRSSHeaderAction(t, tt, "Open in Browser")
 	if urls := tt.OpenedURLs(); len(urls) != 1 || urls[0] != "https://feeds.example.com/quiet-open-feed" {
 		t.Fatalf("opened URLs = %v, want the article link", urls)
 	}
@@ -814,8 +898,7 @@ func TestRSSReaderViewRendersArticle(t *testing.T) {
 	tt.Frame()
 
 	// Refetch asks for the open article's full text.
-	tt.Click("Refetch")
-	tt.Frame()
+	clickRSSHeaderAction(t, tt, "Refetch")
 	select {
 	case id := <-refetched:
 		if id != "art-reader" {
@@ -855,8 +938,11 @@ func TestRSSReaderSummarizesWhenExtractionFails(t *testing.T) {
 	if tt.HasText("Showing the feed's summary. Open the original article in your browser for the full text.") {
 		t.Fatalf("a failed fetch still offers the browser's call to action, texts = %v", tt.Texts())
 	}
-	if !tt.HasText("Retry full text") {
-		t.Fatalf("the capture action is not a retry after a failure, texts = %v", tt.Texts())
+	if _, ok := tt.AccessByRole(ui.RoleButton, "Retry Full Text"); !ok {
+		t.Fatalf("the body toggle is not a retry after a failure, actions = %v", rssHeaderActionNames(t, tt))
+	}
+	if got := rssHeaderAction(t, tt, "Refetch").Description; got != "Retry Full Text" {
+		t.Fatalf("the refresh action's tooltip = %q, want the retry", got)
 	}
 	if !tt.HasText("Read the original article") {
 		t.Fatalf("original article link missing, texts = %v", tt.Texts())
@@ -921,10 +1007,7 @@ func TestRSSReaderTextSelectsAndCopies(t *testing.T) {
 	}
 	// The selectable page does not absorb its actions: a button keeps its
 	// own pointer cursor instead of turning the header into a text field.
-	action, ok := tt.Find("Open in Browser")
-	if !ok {
-		t.Fatal("the reader's Open in Browser action is missing")
-	}
+	action := rssHeaderAction(t, tt, "Open in Browser").Bounds
 	tt.Move(action.X+action.W/2, action.Y+action.H/2)
 	tt.Frame()
 	if got, want := tt.Cursor(), ui.CursorPointer; got != want {
@@ -1727,16 +1810,21 @@ func TestRSSReaderBilingualHeader(t *testing.T) {
 	}
 	tt.ClickAt(row.X+row.W/2, row.Y+row.H/2)
 	tt.Frame()
-	for _, want := range []string{"在浏览器中打开", "重新抓取", "阅读原文"} {
-		if !tt.HasText(want) {
-			t.Errorf("Chinese reader is missing %q, texts = %v", want, tt.Texts())
-		}
+	if !tt.HasText("阅读原文") {
+		t.Errorf("Chinese reader is missing the original link, texts = %v", tt.Texts())
+	}
+	if got, want := rssHeaderActionNames(t, tt), []string{
+		"标记为已读 (M)", "标星 (S)", "显示原文", "分享", "在浏览器中打开", "重新抓取",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("Chinese header actions = %q, want %q", got, want)
 	}
 	_ = w
 	tt.SetLocale("en")
 	tt.Frame()
-	if !tt.HasText("Open in Browser") || !tt.HasText("Refetch") {
-		t.Fatalf("reader did not return to English, texts = %v", tt.Texts())
+	if got, want := rssHeaderActionNames(t, tt), []string{
+		"Mark as Read (M)", "Star article (S)", "Show Original", "Share", "Open in Browser", "Refetch",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("reader did not return to English: actions = %q, want %q", got, want)
 	}
 }
 

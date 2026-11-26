@@ -550,18 +550,15 @@ func (w *Window) rssContent(c *ui.Context, t mui.Tokens) {
 
 // selectedRSSSourceTitle returns the human-readable title for the currently selected RSS source/folder.
 func (w *Window) selectedRSSSourceTitle(locale string) string {
-	zh := strings.HasPrefix(strings.ToLower(locale), "zh")
+	words := rssSmartFeedWords(locale)
 	if w.app == nil || w.app.Selected == "all" || w.app.Selected == "" {
-		if zh {
-			return "全部文章"
-		}
-		return "All Articles"
+		return words.all
+	}
+	if w.app.Selected == todayDestination {
+		return words.today
 	}
 	if w.app.Selected == "starred" {
-		if zh {
-			return "标星文章"
-		}
-		return "Starred"
+		return words.starred
 	}
 	if strings.HasPrefix(w.app.Selected, "feed:") {
 		fid := strings.TrimPrefix(w.app.Selected, "feed:")
@@ -590,6 +587,9 @@ func (w *Window) rssSelectionUnreadCount() int {
 	selected := w.app.Selected
 	if selected == "all" || selected == "" {
 		return w.app.RSSUnreadCount("")
+	}
+	if selected == todayDestination {
+		return w.app.RSSTodayUnreadCount()
 	}
 	if selected == "starred" {
 		cnt := 0
@@ -659,7 +659,9 @@ func (w *Window) rssColumnHeader(c *ui.Context, t mui.Tokens) {
 	})
 }
 
-// rssContentStrip renders the filter and search bar for RSS articles.
+// rssContentStrip renders the filter and search bar for RSS articles. The
+// Unread filter is left out at the All Unread destination, where the list is
+// already unread-only and the checkbox would have nothing to control.
 func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens, visibleCount int) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	searchLabel := "Search articles"
@@ -668,6 +670,7 @@ func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens, visibleCount int) 
 		searchLabel = "搜索文章"
 		unreadLabel = "未读"
 	}
+	unreadForced := w.app != nil && w.app.RSSUnreadForced()
 
 	var countText string
 	if visibleCount == 1 {
@@ -682,15 +685,22 @@ func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens, visibleCount int) 
 		}
 	}
 
-	labelWidth, _ := c.MeasureText(0, ui.Span{Text: unreadLabel, Size: mui.Control.Size, Weight: int(mui.Control.Weight)})
+	var checkboxWidth float32
+	if !unreadForced {
+		labelWidth, _ := c.MeasureText(0, ui.Span{Text: unreadLabel, Size: mui.Control.Size, Weight: int(mui.Control.Weight)})
+		checkboxWidth = mui.Space(4) + mui.Space(2) + labelWidth
+	}
 	countWidth, _ := c.MeasureText(0, ui.Span{Text: countText, Size: mui.Metadata.Size, Weight: int(mui.Metadata.Weight)})
-	checkboxWidth := mui.Space(4) + mui.Space(2) + labelWidth
 	available := w.contentWidth
 	if available <= 0 {
 		available = windowWidth(c)
 	}
+	gaps := 3
+	if unreadForced {
+		gaps = 2
+	}
 	_, searchWidth, gap, _ := fitFilterStrip(
-		max(0, available-2*mui.Space(4)), 0, checkboxWidth, 0, countWidth+2, 3,
+		max(0, available-2*mui.Space(4)), 0, checkboxWidth, 0, countWidth+2, gaps,
 	)
 
 	strip := ui.Row(c.Key("rss-filter-strip")).Height(contentStripHeight).Shrink(0).FillWidth().
@@ -705,8 +715,10 @@ func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens, visibleCount int) 
 			ui.SearchField(c.Key("rss-search"), &w.app.Search).
 				Width(searchWidth).MinWidth(searchWidth).MaxWidth(searchWidth).Shrink(0).
 				Height(toolbarControl).FontSize(mui.Control.Size).Label(searchLabel)
-			ui.Checkbox(c.Key("rss-unread"), &w.app.UnreadOnly, unreadLabel).
-				FontSize(mui.Control.Size).FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
+			if !unreadForced {
+				ui.Checkbox(c.Key("rss-unread"), &w.app.UnreadOnly, unreadLabel).
+					FontSize(mui.Control.Size).FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap)
+			}
 		}
 		ui.Spacer(c)
 		ui.Text(c, countText).FontSize(mui.Metadata.Size).TextColor(t.Muted).SingleLine().Shrink(0)
@@ -832,7 +844,11 @@ func (w *Window) rssArticleItemRow(c *ui.Context, t mui.Tokens, art core.RSSArti
 						})
 					}
 					ui.Spacer(c)
-					dateStr := FormatArticleDate(art.PublishedAt, time.Now())
+					now := time.Now()
+					if w.app != nil {
+						now = w.app.clockNow()
+					}
+					dateStr := FormatArticleDate(art.PublishedAt, now)
 					mui.Metadata.Apply(ui.Text(c, dateStr)).TextColor(t.Muted).SingleLine().Shrink(0)
 				})
 
@@ -979,12 +995,36 @@ func (w *Window) rssEmptyState(c *ui.Context, t mui.Tokens) {
 		sentence = "订阅源的文章将显示在此处。"
 	}
 
-	if w.app != nil && (w.app.Search != "" || w.app.UnreadOnly) {
-		title = "No Matching Articles"
-		sentence = "Try clearing search terms or the unread filter."
-		if zh {
-			title = "无匹配文章"
-			sentence = "尝试清除搜索词或未读过滤。"
+	if w.app != nil {
+		unreadForced := w.app.RSSUnreadForced()
+		hasFeeds := len(w.app.RSSFeeds) > 0
+		destinationArticles := w.app.RSSDestinationArticleCount()
+		searchActive := strings.TrimSpace(w.app.Search) != ""
+		unreadActive := w.app.UnreadOnly && !unreadForced
+		switch {
+		case destinationArticles > 0 && (searchActive || unreadActive):
+			title, sentence = rssNoMatchCopy(zh, searchActive, unreadActive)
+		case destinationArticles == 0 && unreadForced && hasFeeds:
+			title = "You are up to date"
+			sentence = "New articles will appear here when your feeds publish them."
+			if zh {
+				title = "已无未读"
+				sentence = "订阅源更新后，新文章会出现在这里。"
+			}
+		case destinationArticles == 0 && w.app.Selected == todayDestination && hasFeeds:
+			title = "No Articles in the Last 24 Hours"
+			sentence = "New articles will appear here as your feeds publish them."
+			if zh {
+				title = "最近 24 小时没有文章"
+				sentence = "订阅源更新后，新文章会出现在这里。"
+			}
+		case destinationArticles == 0 && w.app.Selected == "starred" && hasFeeds:
+			title = "No Starred Articles"
+			sentence = "Star an article and it will wait for you here."
+			if zh {
+				title = "没有标星文章"
+				sentence = "把文章标星，它就会出现在这里。"
+			}
 		}
 	}
 
@@ -996,6 +1036,27 @@ func (w *Window) rssEmptyState(c *ui.Context, t mui.Tokens) {
 			Sentence: sentence,
 		},
 	})
+}
+
+// rssNoMatchCopy words the empty column when nothing matches: it names exactly
+// the filters that are hiding the destination's articles.
+func rssNoMatchCopy(zh, searchActive, unreadActive bool) (string, string) {
+	switch {
+	case searchActive && unreadActive:
+		if zh {
+			return "无匹配文章", "尝试清除搜索词或未读过滤。"
+		}
+		return "No Matching Articles", "Try clearing search terms or the unread filter."
+	case unreadActive:
+		if zh {
+			return "无匹配文章", "尝试清除未读过滤。"
+		}
+		return "No Matching Articles", "Try clearing the unread filter."
+	}
+	if zh {
+		return "无匹配文章", "尝试清除搜索词。"
+	}
+	return "No Matching Articles", "Try clearing the search term."
 }
 
 // readLaterMainArea renders the bilingual empty state for Read Later.

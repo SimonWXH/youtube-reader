@@ -45,7 +45,7 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 		`CREATE TABLE IF NOT EXISTS notified (video_id TEXT PRIMARY KEY, notified_at INTEGER NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS rss_feeds (id TEXT PRIMARY KEY, feed_url TEXT NOT NULL, site_url TEXT, title TEXT, custom_title TEXT, group_ids TEXT, avatar_url TEXT, etag TEXT, last_modified TEXT, last_fetched_at INTEGER NOT NULL DEFAULT 0, failure_count INTEGER NOT NULL DEFAULT 0, last_error TEXT, last_error_at INTEGER NOT NULL DEFAULT 0, refresh_interval_mins INTEGER NOT NULL DEFAULT 30, updated_at INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER NOT NULL DEFAULT 0, fetch_full_text INTEGER)`,
 		`CREATE TABLE IF NOT EXISTS rss_groups (id TEXT PRIMARY KEY, name TEXT NOT NULL, feed_ids TEXT, sort_order INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER NOT NULL DEFAULT 0)`,
-		`CREATE TABLE IF NOT EXISTS rss_articles (id TEXT PRIMARY KEY, feed_id TEXT NOT NULL, title TEXT NOT NULL, link TEXT, guid TEXT, author TEXT, published_at TEXT, snippet TEXT, content_html TEXT, is_full_text INTEGER NOT NULL DEFAULT 0, hero_image TEXT, blocks_json TEXT, read INTEGER NOT NULL DEFAULT 0, read_at INTEGER NOT NULL DEFAULT 0, starred INTEGER NOT NULL DEFAULT 0, starred_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS rss_articles (id TEXT PRIMARY KEY, feed_id TEXT NOT NULL, title TEXT NOT NULL, link TEXT, guid TEXT, author TEXT, published_at TEXT, snippet TEXT, content_html TEXT, is_full_text INTEGER NOT NULL DEFAULT 0, hero_image TEXT, blocks_json TEXT, read INTEGER NOT NULL DEFAULT 0, read_at INTEGER NOT NULL DEFAULT 0, starred INTEGER NOT NULL DEFAULT 0, starred_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL, feed_content_html TEXT)`,
 		`CREATE INDEX IF NOT EXISTS idx_rss_articles_feed_id ON rss_articles(feed_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_rss_articles_published ON rss_articles(published_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_rss_articles_read ON rss_articles(read)`,
@@ -68,6 +68,11 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 		{"channels", "next_page_token", "next_page_token TEXT"},
 		{"videos", "is_backfilled", "is_backfilled INTEGER NOT NULL DEFAULT 0"},
 		{"rss_feeds", "fetch_full_text", "fetch_full_text INTEGER"},
+		// The feed's own body kept beside the extracted full text, for the
+		// reader's original/full-text toggle. Only ever added, and a store
+		// written before it holds rows whose column is NULL, which reads as
+		// an empty value and leaves those articles on their summary.
+		{"rss_articles", "feed_content_html", "feed_content_html TEXT"},
 	} {
 		if err := s.ensureColumn(ctx, column[0], column[1], column[2]); err != nil {
 			db.Close()

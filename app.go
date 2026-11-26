@@ -73,6 +73,11 @@ type App struct {
 	// reads. Nil means the shared client; a test replaces it so no article
 	// selection reaches the network.
 	rssHTTPClient *http.Client
+
+	// now is the app's clock: the wall clock, or the fixed moment a test sets
+	// so the Today destination and its count do not move with the suite's own
+	// runtime.
+	now func() time.Time
 }
 
 // GroupCollapsed reports whether a subscription group's channel list is
@@ -1687,30 +1692,132 @@ func (a *App) RSSUnreadCount(feedID string) int {
 	return a.RSSUnreadMap[feedID]
 }
 
-// VisibleRSSArticles returns the list of RSS articles filtered by current selection,
-// unread filter, and search query, ordered newest first (published_at DESC, id DESC).
-func (a *App) VisibleRSSArticles() []core.RSSArticle {
-	selected := a.Selected
-	var allowedFeeds map[string]bool
-	starredOnly := false
+// todayDestination is the smart feed that holds the articles published in the
+// last 24 hours, the first of the sidebar's three.
+const todayDestination = "today"
 
-	if selected == "starred" {
-		starredOnly = true
-	} else if strings.HasPrefix(selected, "feed:") {
-		fid := strings.TrimPrefix(selected, "feed:")
-		allowedFeeds = map[string]bool{fid: true}
-	} else if strings.HasPrefix(selected, "group:") {
+// rssTodayWindow is how far back Today reaches: the rolling 24 hours before the
+// reader's own clock, so the window follows the device's timezone rather than a
+// fixed calendar day and never counts an article by the moment it was imported.
+const rssTodayWindow = 24 * time.Hour
+
+// rssPublishedWithin reports whether an article's own publication stamp falls
+// in the 24 hours up to now. An article the feed gave no readable stamp for has
+// no place in Today: the window is about when the article was published.
+func rssPublishedWithin(art core.RSSArticle, now time.Time) bool {
+	published, ok := rssPublishedTime(art.PublishedAt)
+	if !ok {
+		return false
+	}
+	return !published.Before(now.Add(-rssTodayWindow)) && !published.After(now)
+}
+
+// rssPublishedTime reads an article's publication stamp. The parse keeps the
+// instant the feed named, which is what the 24-hour window compares, and an
+// unreadable stamp answers false so the article stays out of Today.
+func rssPublishedTime(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	published, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return published, true
+}
+
+// clockNow is the app's clock: the wall clock, or the moment a test fixed.
+func (a *App) clockNow() time.Time {
+	if a.now != nil {
+		return a.now()
+	}
+	return time.Now()
+}
+
+// rssDestinationArticles is the selected destination's own articles, before
+// the search and unread filters: the rows a destination holds in its own
+// right. The article list and the column's empty state share it, so a
+// destination's count and its list cannot disagree.
+type rssDestinationArticles struct {
+	starredOnly  bool
+	todayOnly    bool
+	todayCutoff  time.Time
+	unreadForced bool
+	allowedFeeds map[string]bool
+}
+
+// rssDestination returns the selected destination's own article filter.
+func (a *App) rssDestination() rssDestinationArticles {
+	d := rssDestinationArticles{}
+	selected := a.Selected
+	switch {
+	case selected == "starred":
+		d.starredOnly = true
+	case selected == todayDestination:
+		d.todayOnly = true
+	case selected == "all" || selected == "":
+		d.unreadForced = true
+	case strings.HasPrefix(selected, "feed:"):
+		d.allowedFeeds = map[string]bool{strings.TrimPrefix(selected, "feed:"): true}
+	case strings.HasPrefix(selected, "group:"):
+		d.allowedFeeds = map[string]bool{}
 		gid := strings.TrimPrefix(selected, "group:")
-		allowedFeeds = map[string]bool{}
 		for _, g := range a.RSSGroups {
 			if g.ID == gid {
 				for _, fid := range g.FeedIDs {
-					allowedFeeds[fid] = true
+					d.allowedFeeds[fid] = true
 				}
 				break
 			}
 		}
 	}
+	if d.todayOnly {
+		d.todayCutoff = a.clockNow()
+	}
+	return d
+}
+
+// owns reports whether art belongs to the destination before the filters.
+func (d rssDestinationArticles) owns(art core.RSSArticle) bool {
+	switch {
+	case d.starredOnly && !art.Starred:
+		return false
+	case d.todayOnly && !rssPublishedWithin(art, d.todayCutoff):
+		return false
+	case d.unreadForced && art.Read:
+		return false
+	case d.allowedFeeds != nil && !d.allowedFeeds[art.FeedID]:
+		return false
+	}
+	return true
+}
+
+// RSSUnreadForced reports whether the selected destination lists only unread
+// articles: the All Unread destination does, so its strip hides the Unread
+// filter and its empty state never blames it.
+func (a *App) RSSUnreadForced() bool {
+	return a.rssDestination().unreadForced
+}
+
+// RSSDestinationArticleCount is how many articles the selected destination
+// holds before the search and unread filters: zero tells an empty destination
+// apart from one the filters hide.
+func (a *App) RSSDestinationArticleCount() int {
+	destination := a.rssDestination()
+	count := 0
+	for _, art := range a.RSSArticles {
+		if destination.owns(art) {
+			count++
+		}
+	}
+	return count
+}
+
+// VisibleRSSArticles returns the list of RSS articles filtered by current selection,
+// unread filter, and search query, ordered newest first (published_at DESC, id DESC).
+func (a *App) VisibleRSSArticles() []core.RSSArticle {
+	destination := a.rssDestination()
 
 	q := strings.TrimSpace(strings.ToLower(a.Search))
 	var feedTitles map[string]string
@@ -1723,10 +1830,7 @@ func (a *App) VisibleRSSArticles() []core.RSSArticle {
 	out := make([]core.RSSArticle, 0, len(a.RSSArticles))
 
 	for _, art := range a.RSSArticles {
-		if starredOnly && !art.Starred {
-			continue
-		}
-		if allowedFeeds != nil && !allowedFeeds[art.FeedID] {
+		if !destination.owns(art) {
 			continue
 		}
 		if a.UnreadOnly && art.Read {

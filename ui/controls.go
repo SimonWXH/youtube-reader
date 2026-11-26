@@ -17,6 +17,11 @@ const SidebarChannelRowHeight float32 = 34
 // SidebarChannelAvatar is the channel avatar's diameter in a sidebar row.
 const SidebarChannelAvatar float32 = 24
 
+// SidebarFeedIcon is the icon a subscription feed's row carries: the compact
+// 16 pt favicon NetNewsWire's feed list shows, on the same 28 pt row the smart
+// feed rows use rather than the taller channel row.
+const SidebarFeedIcon float32 = 16
+
 // SidebarRenameFieldHeight is the height of the inline rename field in a fold
 // row. A 13 pt face lays out an 18 pt line, descenders included, so the field
 // keeps a 24 pt content box inside its 1 pt border: the whole glyph box shows,
@@ -28,16 +33,16 @@ const SidebarRenameFieldHeight float32 = 26
 // height. The sidebar, grid and detail panes share it.
 const ScrollBottomInset float32 = 20
 
-// SidebarRow is one row of the navigation sidebar. A navigation or fold row
-// is 28 pt tall; a channel row is 34 pt. Both have an 8 pt horizontal inset,
-// a 6 pt radius, and a 2 pt gap to the next row.
+// SidebarRow is one row of the navigation sidebar. A navigation, fold or feed
+// row is 28 pt tall; a channel row is 34 pt. Both have an 8 pt horizontal
+// inset, a 6 pt radius, and a 2 pt gap to the next row.
 //
-// A row shows one of three leads: a 16 pt accent glyph (Symbol), a 24 pt
-// channel avatar with a monogram fallback (Channel), or a 12 pt disclosure
-// chevron that folds the rows below it (Fold). A fold row separates chevron
-// toggle from row selection and supports inline renaming. The label is 13 pt
-// Regular, or 11 pt Semibold for a fold row, and Count is 11 pt Medium tabular
-// figures at the trailing edge.
+// A row shows one of four leads: a 16 pt accent glyph (Symbol), a 24 pt
+// channel avatar with a monogram fallback (Channel), a 16 pt feed icon in a
+// rounded square (Feed), or a 12 pt disclosure chevron that folds the rows
+// below it (Fold). A fold row separates chevron toggle from row selection and
+// supports inline renaming. The label is 13 pt Regular, or 11 pt Semibold for
+// a fold row, and Count is 11 pt Medium tabular figures at the trailing edge.
 //
 // Hover paints SurfaceAlt. A selected row paints the AccentSoft tint with
 // accent text; it never becomes a solid accent fill. MyGo's ButtonBase
@@ -53,7 +58,8 @@ type SidebarRow struct {
 	Count          string
 	Symbol         string // SF Symbol name for the leading navigation glyph
 	Channel        bool   // show a channel avatar instead of a glyph
-	Avatar         string // the channel's avatar URL; empty draws a monogram
+	Feed           bool   // show a subscription feed's compact icon instead of a glyph
+	Avatar         string // the channel's or feed's picture URL; empty draws a monogram
 	Fold           bool   // this row folds the rows below it
 	Expanded       bool   // the fold is open, so the chevron points down
 	Selected       bool
@@ -100,6 +106,8 @@ func (r SidebarRow) Build(c *ui.Context, tokens Tokens) ui.Element {
 	if r.Channel {
 		rowHeight = SidebarChannelRowHeight
 	}
+	// A feed row keeps the navigation row's height: NetNewsWire's feed list
+	// is as tight as its smart feeds, and its 16 pt icon fits that row.
 	countColor := tokens.Muted
 	if r.Selected {
 		countColor = face.Text
@@ -247,6 +255,8 @@ func (r SidebarRow) Build(c *ui.Context, tokens Tokens) ui.Element {
 			switch {
 			case r.Channel:
 				ChannelAvatar(c, tokens, r.Avatar, r.Label, SidebarChannelAvatar)
+			case r.Feed:
+				FeedIcon(c, tokens, r.Avatar, r.Label, SidebarFeedIcon)
 			case r.Symbol != "":
 				sfsymbols.Symbol(c, r.Symbol).Size(16).Color(tokens.Accent).Element.Role(ui.RoleNone)
 			}
@@ -298,6 +308,9 @@ func (r SidebarRow) Build(c *ui.Context, tokens Tokens) ui.Element {
 		switch {
 		case r.Channel:
 			ChannelAvatar(c, tokens, r.Avatar, r.Label, SidebarChannelAvatar)
+			Control.Apply(ui.Text(c, r.Label)).FontSize(13).SingleLine().Grow(1)
+		case r.Feed:
+			FeedIcon(c, tokens, r.Avatar, r.Label, SidebarFeedIcon)
 			Control.Apply(ui.Text(c, r.Label)).FontSize(13).SingleLine().Grow(1)
 		case r.Symbol != "":
 			sfsymbols.Symbol(c, r.Symbol).Size(16).Color(tokens.Accent).Element.Role(ui.RoleNone)
