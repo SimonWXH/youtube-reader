@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -11,6 +12,16 @@ import (
 	"github.com/simon/youtube-reader/core"
 	mui "github.com/simon/youtube-reader/ui"
 )
+
+// TestMain keeps the suite's full-text fetches inline: a fetch a test starts,
+// by opening an article or by the retry, has settled by the time the call that
+// started it returns, so it never races the frame the test asserts on. Queue
+// tests put the goroutine runner back to watch the pool work.
+func TestMain(m *testing.M) {
+	rssFullTextStart = func(job func()) { job() }
+	rssFullTextDeliver = func(deliver func()) { deliver() }
+	os.Exit(m.Run())
+}
 
 func TestRegisterNotificationClickRoutesChannelID(t *testing.T) {
 	dir := t.TempDir()

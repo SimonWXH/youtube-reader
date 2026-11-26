@@ -282,6 +282,13 @@ func (w *Window) restoreWorkspaceState(id string) {
 	}
 	if id == WorkspaceRSS {
 		w.rssReader = st.Reader
+		// A selection the window restores is an article the reader opens
+		// again, so it gets the same fetch a click would start.
+		if w.app != nil {
+			if art := w.app.SelectedRSSArticle(); art != nil {
+				w.openRSSFullText(*art)
+			}
+		}
 	} else {
 		w.rssReader = rssReaderState{}
 	}
@@ -939,13 +946,16 @@ func (w *Window) rssArticleItemRow(c *ui.Context, t mui.Tokens, art core.RSSArti
 }
 
 // selectRSSArticle selects the article by ID, updating app state and firing observer.
+// Opening an article also starts its full-text fetch when the feed asks for it.
 func (w *Window) selectRSSArticle(id string) {
 	if w.app == nil {
 		return
 	}
 	w.app.SelectRSSArticle(id)
-	if w.onRSSArticleSelected != nil {
-		if art := w.app.SelectedRSSArticle(); art != nil {
+	art := w.app.SelectedRSSArticle()
+	if art != nil {
+		w.openRSSFullText(*art)
+		if w.onRSSArticleSelected != nil {
 			w.onRSSArticleSelected(*art)
 		}
 	}

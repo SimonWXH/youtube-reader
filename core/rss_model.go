@@ -53,9 +53,19 @@ type RSSFeed struct {
 	LastError           string   `json:"lastError,omitempty"`           // Last error message
 	LastErrorAt         int64    `json:"lastErrorAt,omitempty"`         // Last error timestamp (msec)
 	RefreshIntervalMins int      `json:"refreshIntervalMins,omitempty"` // Refresh interval in minutes (default 30)
-	UpdatedAt           int64    `json:"updatedAt"`                     // Millisecond timestamp
-	Deleted             bool     `json:"deleted,omitempty"`             // Tombstone flag for deletion propagation
-	DeletedAt           int64    `json:"deletedAt,omitempty"`           // Deletion millisecond timestamp
+	// FetchFullText is the feed's answer to whether opening one of its
+	// articles fetches the whole article. Nil means no answer has been
+	// stored, which is the default: fetch it.
+	FetchFullText *bool `json:"fetchFullText,omitempty"`
+	UpdatedAt     int64 `json:"updatedAt"`           // Millisecond timestamp
+	Deleted       bool  `json:"deleted,omitempty"`   // Tombstone flag for deletion propagation
+	DeletedAt     int64 `json:"deletedAt,omitempty"` // Deletion millisecond timestamp
+}
+
+// AutoFetchFullText reports whether opening one of the feed's articles starts
+// its full-text fetch. Every feed starts that way until the reader turns it off.
+func (f RSSFeed) AutoFetchFullText() bool {
+	return f.FetchFullText == nil || *f.FetchFullText
 }
 
 // DisplayName returns the user-chosen title if available, falling back to feed title or URL.

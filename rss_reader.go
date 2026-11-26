@@ -1,13 +1,11 @@
 package main
 
 import (
-	"context"
 	htmlpkg "html"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/plugins/sfsymbols"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/netimage"
@@ -533,16 +531,19 @@ func (w *Window) rssReaderEmpty(c *ui.Context, t mui.Tokens) {
 
 // rssReaderHeader is the fixed article header: its source and date, its title,
 // its author, the star that toggles the article's star, the text size control,
-// and the two actions that leave the app's rendering.
+// and two actions on the article: Open in Browser, and a full-text fetch that
+// reads as Refetch, Fetching… or Retry full text as the fetch moves on.
 func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticle) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	openLabel := "Open in Browser"
 	refetchLabel := "Refetch"
 	refetchingLabel := "Fetching…"
+	retryLabel := "Retry full text"
 	if zh {
 		openLabel = "在浏览器中打开"
 		refetchLabel = "重新抓取"
 		refetchingLabel = "抓取中…"
+		retryLabel = "重试抓取"
 	}
 	feedName := art.FeedID
 	if w.app != nil {
@@ -558,11 +559,17 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 		now = w.now()
 	}
 	date := rssReaderDate(art.PublishedAt, now)
-	inline := rssHeaderRowWidth(c, feedName, date, openLabel, refetchLabel, refetchingLabel) <= content
-	busy := w.rssRefetchingID == art.ID
+	inline := rssHeaderRowWidth(c, feedName, date, openLabel, refetchLabel, retryLabel, refetchingLabel) <= content
+	phase := w.rssFullTextPhase(art.ID)
+	busy := phase == rssFullTextFetching
 	refetchText := refetchLabel
-	if busy {
+	switch phase {
+	case rssFullTextFetching:
 		refetchText = refetchingLabel
+	case rssFullTextFailed:
+		// This attempt gave up on the article, so the control names the one
+		// thing it can still do.
+		refetchText = retryLabel
 	}
 	actions := func() {
 		ui.Row(c).Shrink(0).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
@@ -688,10 +695,14 @@ func (w *Window) rssTextSizeControl(c *ui.Context, t mui.Tokens) {
 // inline: the date, the text size control, the star toggle, and both actions,
 // as their roles draw them, the row's own gaps, and the least room the feed
 // name and its separator keep. Below it the row stacks rather than shrinking
-// the feed name to a stub. The re-fetch action is measured at its wider label
-// so a re-fetch never flips the row to the stacked layout.
-func rssHeaderRowWidth(c *ui.Context, feedName, date, openLabel, refetchLabel, refetchingLabel string) float32 {
-	refetch := max(rssHeaderActionWidth(c, refetchLabel), rssHeaderActionWidth(c, refetchingLabel))
+// the feed name to a stub. The re-fetch action is measured at its widest label
+// across the phases it can wear, so the row never flips to the stacked layout
+// because the fetch moved on.
+func rssHeaderRowWidth(c *ui.Context, feedName, date, openLabel string, refetchLabels ...string) float32 {
+	var refetch float32
+	for _, label := range refetchLabels {
+		refetch = max(refetch, rssHeaderActionWidth(c, label))
+	}
 	actions := mui.Space(7) + rssHeaderActionWidth(c, openLabel) + refetch + 2*mui.Space(2)
 	width := rssTextSizeControlWidth(c) + actions
 	children := 4 // the feed name, the spacer, the size control, and the actions
@@ -815,48 +826,10 @@ func (w *Window) rssReaderStarAction(c *ui.Context, t mui.Tokens, art core.RSSAr
 	return el
 }
 
-// refetchRSSArticle re-extracts the open article's full text from its source
-// page in the background, then reloads the library so the body shows it.
-func (w *Window) refetchRSSArticle(c *ui.Context, art core.RSSArticle) {
-	if w.app == nil || art.Link == "" || w.rssRefetchingID == art.ID {
-		return
-	}
-	fetch := w.app.RefetchRSSArticleContent
-	if w.onRefetchRSSArticle != nil {
-		fetch = w.onRefetchRSSArticle
-	}
-	w.rssRefetchingID = art.ID
-	c.Invalidate()
-	go func(articleID string) {
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-		defer cancel()
-		updated, err := fetch(ctx, articleID)
-		mygo.RunOnMain(func() {
-			if w.rssRefetchingID == articleID {
-				w.rssRefetchingID = ""
-			}
-			if reloadErr := w.app.ReloadRSS(); reloadErr != nil {
-				w.toast(nil, "Couldn't reload articles", true)
-				w.invalidateMainWindow()
-				return
-			}
-			switch {
-			case err != nil:
-				w.toast(nil, "Couldn't fetch the full article", true)
-			case updated.IsFullText:
-				w.toast(nil, "Full text updated", false)
-			default:
-				w.toast(nil, "Still showing the feed's summary", false)
-			}
-			w.invalidateMainWindow()
-		})
-	}(art.ID)
-}
-
 // rssReaderBody is the scrolling article body: the reading column of blocks,
-// the summary notice when only the feed's own text is available, and the
-// original article link. blocks are the body the pane parsed once for this
-// frame, which the paragraph rail maps.
+// the line above them that follows the full-text fetch whenever only the
+// feed's own text is available, and the original article link. blocks are the
+// body the pane parsed once for this frame, which the paragraph rail maps.
 func (w *Window) rssReaderBody(c *ui.Context, t mui.Tokens, art core.RSSArticle, blocks []core.ArticleBlock) {
 	st := &w.rssReader
 	scale := w.readingType()
@@ -872,7 +845,18 @@ func (w *Window) rssReaderBody(c *ui.Context, t mui.Tokens, art core.RSSArticle,
 	body.Children(func() {
 		ui.Column(c.Key("rss-reader-content:" + art.ID)).FillWidth().Gap(scale.BlockGap).Children(func() {
 			if degraded {
-				w.rssDegradedNotice(c, t, art)
+				// The line above the body follows the fetch: a quiet placeholder
+				// while the text is on its way, a compact failure state when it
+				// did not arrive, and the browser's call to action only once
+				// there is nothing left to try.
+				switch w.rssFullTextPhase(art.ID) {
+				case rssFullTextFetching:
+					w.rssFetchingPlaceholder(c, t)
+				case rssFullTextFailed:
+					w.rssFetchFailedNotice(c, t)
+				default:
+					w.rssDegradedNotice(c, t, art)
+				}
 			}
 			if art.HeroImage != "" && !rssBlocksHoldImage(blocks, art.HeroImage) {
 				w.rssImageBlock(c, t, art.ID+":hero", core.ArticleBlock{Type: core.BlockImage, URL: art.HeroImage}, w.rssLayout.readerWidth, true)
@@ -961,6 +945,42 @@ func rssReaderDate(raw string, now time.Time) string {
 		return "Today"
 	}
 	return formatArticleDay(published, today)
+}
+
+// rssFetchingPlaceholder is the reader's line above the feed's own text while
+// the full-text fetch runs: the summary stays readable and the page says what
+// is happening in one quiet line, so nothing sends the reader to the browser
+// for text that is already on its way.
+func (w *Window) rssFetchingPlaceholder(c *ui.Context, t mui.Tokens) {
+	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
+	sentence := "Fetching the full text…"
+	if zh {
+		sentence = "正在抓取全文…"
+	}
+	row := ui.Row(c.Key("rss-reader-fetching")).FillWidth().Gap(mui.Space(2)).
+		Padding(mui.Space(1), 0).AlignItems(ui.Center)
+	row.Children(func() {
+		sfsymbols.Symbol(c, "arrow.triangle.2.circlepath").Size(mui.Space(3.5)).Color(t.Faint).Element.Role(ui.RoleNone)
+		mui.Secondary.Apply(ui.Text(c, sentence)).TextColor(t.Faint).Wrap().Grow(1)
+	})
+}
+
+// rssFetchFailedNotice is the reader's line above the feed's own text when the
+// full-text fetch did not arrive: the summary stays, the line says why, and
+// the header's retry is the way to try again, so the browser's call to action
+// does not open over text the reader asked the app to fetch.
+func (w *Window) rssFetchFailedNotice(c *ui.Context, t mui.Tokens) {
+	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
+	sentence := "Couldn't fetch the full text. Showing the feed's summary."
+	if zh {
+		sentence = "全文抓取失败，当前显示摘要。"
+	}
+	row := ui.Row(c.Key("rss-reader-fetch-failed")).FillWidth().Gap(mui.Space(2)).
+		Padding(mui.Space(1), 0).AlignItems(ui.Center)
+	row.Children(func() {
+		sfsymbols.Symbol(c, "exclamationmark.triangle").Size(mui.Space(3.5)).Color(t.Warning).Element.Role(ui.RoleNone)
+		mui.Secondary.Apply(ui.Text(c, sentence)).TextColor(t.Muted).Wrap().Grow(1)
+	})
 }
 
 // rssDegradedNotice tells the reader the body is the feed's own text and the

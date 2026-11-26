@@ -584,6 +584,14 @@ func (w *Window) renderRSSFeedRow(c *ui.Context, t mui.Tokens, f core.RSSFeed, g
 						})
 					}()
 				}
+				// The feed's own preferences sit in a group between the
+				// actions on the source and the one that leaves it, so a
+				// further setting has one clear place to join them.
+				m.Separator()
+				if m.Item(rssFeedFullTextMenuLabel(c.Locale())).Checked(f.AutoFetchFullText()).Chosen() {
+					w.toggleRSSFeedFullText(c, f)
+				}
+				m.Separator()
 				unsubText := unsubscribeMenuLabel(c.Locale())
 				if m.Item(unsubText).Chosen() {
 					w.confirmUnsubscribeRSSFeed(c, f)
@@ -615,6 +623,33 @@ func (w *Window) renderRSSFeedRow(c *ui.Context, t mui.Tokens, f core.RSSFeed, g
 			feedBlock.Border(1.5, t.Accent)
 		}
 	})
+}
+
+// rssFeedFullTextMenuLabel names the feed menu's automatic full-text entry,
+// which reads as a setting and carries its own check mark.
+func rssFeedFullTextMenuLabel(locale string) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return "默认全文抓取"
+	}
+	return "Fetch Full Text by Default"
+}
+
+// toggleRSSFeedFullText turns one feed's automatic full-text fetching over,
+// saves it, and refreshes the row that carries the setting.
+func (w *Window) toggleRSSFeedFullText(c *ui.Context, f core.RSSFeed) {
+	if w.app == nil {
+		return
+	}
+	on := !f.AutoFetchFullText()
+	if err := w.app.SetRSSFeedAutoFullText(f.ID, on); err != nil {
+		saved := "Couldn't save the feed setting"
+		if strings.HasPrefix(strings.ToLower(c.Locale()), "zh") {
+			saved = "无法保存该订阅源的设置"
+		}
+		w.toast(c, saved, true)
+		return
+	}
+	c.Invalidate()
 }
 
 func (w *Window) reorderRSSFeedNear(c *ui.Context, srcFeedID, srcGroupID, targetFeedID, targetGroupID string) {

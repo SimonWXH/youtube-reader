@@ -589,6 +589,15 @@ func (a *App) FetchAllRSSFeeds(ctx context.Context, force bool) ([]core.FetchFee
 
 var sharedRSSHTTPClient = &http.Client{Timeout: core.DefaultRSSTimeout}
 
+// rssArticleClient is the client the reader's full-text fetch reads article
+// pages with.
+func (a *App) rssArticleClient() *http.Client {
+	if a.rssHTTPClient != nil {
+		return a.rssHTTPClient
+	}
+	return sharedRSSHTTPClient
+}
+
 // RefetchRSSArticleContent re-extracts one article's full text from its
 // original page, keeping the feed's own content as the fallback when the
 // extraction fails, and saves it back without touching read or starred state.
@@ -607,7 +616,7 @@ func (a *App) RefetchRSSArticleContent(ctx context.Context, articleID string) (c
 		return *art, errors.New("article has no link to fetch")
 	}
 
-	contentHTML, blocks, isFullText, hero, _ := core.ExtractFullText(ctx, sharedRSSHTTPClient, art.Link, art.ContentHTML, art.Snippet)
+	contentHTML, blocks, isFullText, hero, _ := core.ExtractFullText(ctx, a.rssArticleClient(), art.Link, art.ContentHTML, art.Snippet)
 	if strings.TrimSpace(contentHTML) == "" {
 		return *art, errors.New("the article page returned no content")
 	}
@@ -629,6 +638,29 @@ func (a *App) RefetchRSSArticleContent(ctx context.Context, articleID string) (c
 		return *stored, nil
 	}
 	return *art, nil
+}
+
+// SetRSSFeedAutoFullText turns one feed's automatic full-text fetching on or
+// off and saves it beside the feed's other preferences. A feed that has never
+// had the choice stored fetches its articles' text, which is the default.
+func (a *App) SetRSSFeedAutoFullText(feedID string, fetch bool) error {
+	if a.Store == nil {
+		return errors.New("store not initialized")
+	}
+	ctx := context.Background()
+	feed, err := a.Store.GetRSSFeed(ctx, feedID)
+	if err != nil {
+		return err
+	}
+	if feed == nil {
+		return fmt.Errorf("feed %q not found", feedID)
+	}
+	feed.FetchFullText = &fetch
+	feed.UpdatedAt = time.Now().UnixMilli()
+	if err := a.Store.SaveRSSFeed(ctx, *feed); err != nil {
+		return err
+	}
+	return a.ReloadRSS()
 }
 
 // RSSOPMLImportResult summarizes the outcome of importing one or more OPML files.

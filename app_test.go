@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -43,6 +44,14 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+// offlineArticlePages keeps tests off the network: the reader's full-text
+// fetch fails at once instead of reaching a real article page.
+func offlineArticlePages() *http.Client {
+	return &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("offline in tests")
+	})}
+}
+
 func newTestApp(t *testing.T, dir string) *App {
 	t.Helper()
 	ctx := context.Background()
@@ -66,6 +75,10 @@ func newTestApp(t *testing.T, dir string) *App {
 			Favorites:     map[string]core.FavoriteRecord{},
 			Groups:        map[string]core.ChannelGroup{},
 		},
+		// Opening an article starts its full-text fetch, so a test app answers
+		// article pages offline: no test reaches the network, and a summary
+		// article settles into the reader's failure state at once.
+		rssHTTPClient: offlineArticlePages(),
 	}
 	return a
 }

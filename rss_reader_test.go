@@ -827,7 +827,8 @@ func TestRSSReaderViewRendersArticle(t *testing.T) {
 }
 
 // TestRSSReaderSummarizesWhenExtractionFails covers the graceful fallback: the
-// feed's summary reads as prose, the notice names why, and the original page
+// feed's summary reads as prose, the fetch that gave up says so in one compact
+// line, the retry replaces the ordinary capture action, and the original page
 // stays one click away.
 func TestRSSReaderSummarizesWhenExtractionFails(t *testing.T) {
 	a, w, tt := rssReaderTestWindow(t)
@@ -848,16 +849,22 @@ func TestRSSReaderSummarizesWhenExtractionFails(t *testing.T) {
 	if !tt.HasText("The feed carried only this sentence") {
 		t.Fatalf("summary body missing, texts = %v", tt.Texts())
 	}
-	if !tt.HasText("Showing the feed's summary. Open the original article in your browser for the full text.") {
-		t.Fatalf("summary notice missing, texts = %v", tt.Texts())
+	if !tt.HasText("Couldn't fetch the full text. Showing the feed's summary.") {
+		t.Fatalf("failure notice missing, texts = %v", tt.Texts())
+	}
+	if tt.HasText("Showing the feed's summary. Open the original article in your browser for the full text.") {
+		t.Fatalf("a failed fetch still offers the browser's call to action, texts = %v", tt.Texts())
+	}
+	if !tt.HasText("Retry full text") {
+		t.Fatalf("the capture action is not a retry after a failure, texts = %v", tt.Texts())
 	}
 	if !tt.HasText("Read the original article") {
 		t.Fatalf("original article link missing, texts = %v", tt.Texts())
 	}
-	if got := len(a.SelectedRSSArticle().Blocks); got != 0 {
-		t.Fatalf("fixture changed: summary article carries %d blocks", got)
+	if a.SelectedRSSArticle().IsFullText {
+		t.Fatal("a fetch that gave up marked the article as full text")
 	}
-	// The snippet still becomes a body block, so the rail maps it.
+	// The snippet is the body, so the rail maps it.
 	if want := len(rssArticleBlocks(*a.SelectedRSSArticle())); want == 0 || len(w.rssReader.ticks) != want {
 		t.Fatalf("rail ticks = %d, want the %d snippet blocks", len(w.rssReader.ticks), want)
 	}
@@ -1838,7 +1845,12 @@ func TestRSSReadingColumnStaysNarrowOnAWideWindow(t *testing.T) {
 // TestRSSReaderDegradedNoticeClickAndBilingual verifies that when viewing a degraded
 // summary-only article, the banner shows bilingual text and clicking it opens the original link.
 func TestRSSReaderDegradedNoticeClickAndBilingual(t *testing.T) {
-	_, _, tt := rssReaderTestWindow(t)
+	a, _, tt := rssReaderTestWindow(t)
+	// The notice is the settled state of a feed that does not fetch its
+	// articles' text, so the summary is what the reader opens on.
+	if err := a.SetRSSFeedAutoFullText("feed-reader", false); err != nil {
+		t.Fatalf("turn the feed's full-text fetch off: %v", err)
+	}
 
 	row, ok := tt.Find("A Summary Only Post")
 	if !ok {

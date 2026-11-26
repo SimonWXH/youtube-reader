@@ -178,10 +178,11 @@ type Window struct {
 	// rssType is the reading view's type scale, the body size control's
 	// choice restored from local settings.
 	rssType rssTypeState
-	// rssRefetchingID is the article whose full-text re-fetch is in flight,
-	// empty when none is: the reader's Refetch action shows progress and
-	// refuses a second request while it is set.
-	rssRefetchingID string
+	// rssFullText is the phase the reader shows for the open article's
+	// full-text fetch, and rssFullTextFetcher the queue every automatic fetch
+	// and every retry goes through.
+	rssFullText        rssFullTextStatus
+	rssFullTextFetcher *rssFullTextFetcher
 	// now is the window's clock, the wall clock in the app and a fixed moment
 	// in tests, for header copy that depends on today's date.
 	now func() time.Time
@@ -211,9 +212,10 @@ type Window struct {
 	// onRSSArticleSelected, when set, is invoked when an RSS article is selected.
 	// The app leaves it nil; tests or observers record selection dispatches.
 	onRSSArticleSelected func(article core.RSSArticle)
-	// onRefetchRSSArticle, when set, takes the reader's Refetch action instead
-	// of the app's background fetch. The app leaves it nil; tests record the
-	// request without touching the network.
+	// onRefetchRSSArticle, when set, takes every full-text fetch the reader
+	// starts, from opening an article to the retry, instead of the app's
+	// background extraction. The app leaves it nil; tests record the request,
+	// or answer it, without touching the network.
 	onRefetchRSSArticle func(ctx context.Context, articleID string) (core.RSSArticle, error)
 
 	// RSS inline renaming state:

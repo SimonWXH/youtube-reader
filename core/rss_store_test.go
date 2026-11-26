@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/egoist/mygo/plugins/sqlite"
 )
 
 func openTestStore(t *testing.T) *Store {
@@ -998,5 +1000,135 @@ func TestRSSStoreListSummariesOmitsBodiesAndCapsFingerprints(t *testing.T) {
 	}
 	if len(fps) != 2 || !fps["art-with-snippet"].HasBody {
 		t.Fatalf("unexpected fingerprints: %+v", fps)
+	}
+}
+
+// TestRSSFeedFullTextChoice pins the per-feed full-text setting's storage: a
+// feed saved without an opinion keeps the default of fetching its articles'
+// text, a feed whose reader turned it off keeps that answer across a reload and
+// a later save that carries none, and a row an older build wrote - a NULL
+// column - reads as the default too.
+func TestRSSFeedFullTextChoice(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	now := time.Now().UnixMilli()
+
+	feed := RSSFeed{ID: "feed:text", FeedURL: "https://example.com/rss.xml", Title: "Text", UpdatedAt: now}
+	if err := store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatalf("SaveRSSFeed failed: %v", err)
+	}
+	stored, err := store.GetRSSFeed(ctx, feed.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("GetRSSFeed failed: %v", err)
+	}
+	if stored.FetchFullText != nil {
+		t.Fatalf("a feed saved with no choice stored one: %v", *stored.FetchFullText)
+	}
+	if !stored.AutoFetchFullText() {
+		t.Fatal("a feed with no stored choice must fetch its articles' full text")
+	}
+
+	off := false
+	feed.FetchFullText = &off
+	feed.UpdatedAt = now + 1
+	if err := store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatalf("SaveRSSFeed with the setting off failed: %v", err)
+	}
+	stored, err = store.GetRSSFeed(ctx, feed.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("GetRSSFeed after saving the setting failed: %v", err)
+	}
+	if stored.FetchFullText == nil || stored.AutoFetchFullText() {
+		t.Fatalf("the feed's choice did not survive: %+v", stored.FetchFullText)
+	}
+
+	// A writer that carries no opinion, as a feed refresh's own save does, must
+	// not put the reader's choice back to the default.
+	opinionless := RSSFeed{ID: feed.ID, FeedURL: feed.FeedURL, Title: "Text renamed", UpdatedAt: now + 2}
+	if err := store.SaveRSSFeed(ctx, opinionless); err != nil {
+		t.Fatalf("SaveRSSFeed without the setting failed: %v", err)
+	}
+	stored, err = store.GetRSSFeed(ctx, feed.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("GetRSSFeed after the opinionless save failed: %v", err)
+	}
+	if stored.AutoFetchFullText() {
+		t.Fatal("a save carrying no choice reset the feed's setting to the default")
+	}
+	if stored.Title != "Text renamed" {
+		t.Fatalf("the opinionless save did not apply its other fields: %q", stored.Title)
+	}
+
+	// Rows an earlier build wrote have no value in the column at all.
+	if _, err := store.db.Execute(ctx, `UPDATE rss_feeds SET fetch_full_text = NULL WHERE id = ?`, feed.ID); err != nil {
+		t.Fatalf("clearing the stored choice failed: %v", err)
+	}
+	stored, err = store.GetRSSFeed(ctx, feed.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("GetRSSFeed after clearing the column failed: %v", err)
+	}
+	if stored.FetchFullText != nil || !stored.AutoFetchFullText() {
+		t.Fatalf("a NULL column must read as the default: %+v", stored.FetchFullText)
+	}
+
+	feeds, err := store.ListRSSFeeds(ctx, false)
+	if err != nil {
+		t.Fatalf("ListRSSFeeds failed: %v", err)
+	}
+	if len(feeds) != 1 || !feeds[0].AutoFetchFullText() {
+		t.Fatalf("listed feeds lost the default: %+v", feeds)
+	}
+}
+
+// TestStoreAddsTheFullTextChoiceToAnOlderFeedTable is the setting's upgrade
+// path: a store whose rss_feeds table predates the column gains it when the app
+// opens it, its rows keep the values they held, and the missing answer reads as
+// the default of fetching the articles' text.
+func TestStoreAddsTheFullTextChoiceToAnOlderFeedTable(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "old-feeds.sqlite")
+	db, err := sqlite.Open(ctx, path, sqlite.OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ddl := range []string{
+		`CREATE TABLE rss_feeds (id TEXT PRIMARY KEY, feed_url TEXT NOT NULL, site_url TEXT, title TEXT, custom_title TEXT, group_ids TEXT, avatar_url TEXT, etag TEXT, last_modified TEXT, last_fetched_at INTEGER NOT NULL DEFAULT 0, failure_count INTEGER NOT NULL DEFAULT 0, last_error TEXT, last_error_at INTEGER NOT NULL DEFAULT 0, refresh_interval_mins INTEGER NOT NULL DEFAULT 30, updated_at INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER NOT NULL DEFAULT 0)`,
+		`INSERT INTO rss_feeds(id,feed_url,title,updated_at) VALUES('feed:old','https://example.com/rss.xml','Old Feed',7)`,
+	} {
+		if _, err := db.Execute(ctx, ddl); err != nil {
+			t.Fatalf("%s: %v", ddl, err)
+		}
+	}
+	db.Close()
+
+	store, err := OpenStore(ctx, path)
+	if err != nil {
+		t.Fatalf("open the older store: %v", err)
+	}
+	defer store.Close()
+
+	feed, err := store.GetRSSFeed(ctx, "feed:old")
+	if err != nil || feed == nil {
+		t.Fatalf("read the older store's feed: %v", err)
+	}
+	if feed.Title != "Old Feed" || feed.FeedURL != "https://example.com/rss.xml" {
+		t.Fatalf("the upgrade lost the feed's fields: %+v", feed)
+	}
+	if !feed.AutoFetchFullText() {
+		t.Fatal("a feed written before the setting must fetch its articles' text")
+	}
+
+	off := false
+	feed.FetchFullText = &off
+	feed.UpdatedAt = time.Now().UnixMilli()
+	if err := store.SaveRSSFeed(ctx, *feed); err != nil {
+		t.Fatalf("save the new setting to the upgraded store: %v", err)
+	}
+	feed, err = store.GetRSSFeed(ctx, "feed:old")
+	if err != nil || feed == nil {
+		t.Fatalf("read the upgraded store's feed back: %v", err)
+	}
+	if feed.AutoFetchFullText() {
+		t.Fatal("the upgraded store did not keep the setting")
 	}
 }
