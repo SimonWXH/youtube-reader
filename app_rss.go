@@ -102,9 +102,9 @@ func (a *App) ReloadRSS() error {
 	return nil
 }
 
-// reloadRSSCounts reloads the unread and starred totals the RSS sidebar and
-// dock badge show. Every writer of an article's read or starred state calls it
-// so those counts never disagree with the article column.
+// reloadRSSCounts reloads the unread and starred totals the RSS sidebar shows.
+// Every writer of an article's read or starred state calls it so those counts
+// never disagree with the article column.
 func (a *App) reloadRSSCounts() {
 	if a.Store == nil {
 		return

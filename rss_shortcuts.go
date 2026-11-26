@@ -44,8 +44,8 @@ func (w *Window) rssStepSelection(c *ui.Context, delta int) {
 }
 
 // rssToggleOpenArticleRead flips the open article between read and unread. The
-// column header, the sidebar counts and the dock badge follow through the
-// app's own count reload.
+// column header and the sidebar counts follow through the app's own count
+// reload.
 func (w *Window) rssToggleOpenArticleRead(c *ui.Context) {
 	if !w.rssSingleKeyReady(c) || c.ShortcutRepeated() {
 		return
