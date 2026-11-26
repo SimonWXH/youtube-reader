@@ -26,7 +26,7 @@ func TestArticleTypeLadder(t *testing.T) {
 		{
 			name:  "default",
 			body:  TextStyle{Size: 15, LineHeight: 24, Weight: Regular},
-			title: TextStyle{Size: 24, LineHeight: 30, Weight: Semibold, Tracking: -0.2},
+			title: TextStyle{Size: 21, LineHeight: 27, Weight: Semibold, Tracking: -0.2},
 			h2:    TextStyle{Size: 20, LineHeight: 28, Weight: Semibold, Tracking: -0.1},
 			h3:    TextStyle{Size: 18, LineHeight: 25, Weight: Semibold, Tracking: -0.1},
 			h4:    TextStyle{Size: 16, LineHeight: 22, Weight: Semibold, Tracking: -0.1},

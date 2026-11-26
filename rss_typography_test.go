@@ -490,7 +490,7 @@ func TestRSSHeadingLevelsRenderDistinctly(t *testing.T) {
 		lineHigh [6]float32 // level 1, 2, 3, 4, 5, and the paragraph
 	}{
 		{"small", 13, [6]float32{27, 28, 25, 22, 22, 21}},
-		{"default", 15, [6]float32{30, 28, 25, 22, 22, 24}},
+		{"default", 15, [6]float32{27, 28, 25, 22, 22, 24}},
 		{"large", 17, [6]float32{34, 28, 25, 22, 22, 27}},
 	}
 	var h2Widths []float32

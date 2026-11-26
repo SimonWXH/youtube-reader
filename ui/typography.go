@@ -90,7 +90,7 @@ var (
 	EmptyBody = TextStyle{Size: 13, LineHeight: 18, Weight: Regular}
 	// ArticleTitle is the reading view's article headline, at the middle
 	// body step; ArticleTypeForSize gives the headline of either other step.
-	ArticleTitle = TextStyle{Size: 24, LineHeight: 30, Weight: Semibold, Tracking: -0.2}
+	ArticleTitle = TextStyle{Size: 21, LineHeight: 27, Weight: Semibold, Tracking: -0.2}
 	// ArticleHeading2 is a second-level heading inside a reading view's body,
 	// at the middle body step, and the largest of the three section levels.
 	ArticleHeading2 = TextStyle{Size: 20, LineHeight: 28, Weight: Semibold, Tracking: -0.1}
@@ -162,8 +162,9 @@ func (a ArticleType) HeadingFor(level int) TextStyle {
 // body: the chosen sizes are exact (20/28, 18/25, 16/22 at the default step)
 // and each rung keeps a fixed 2 pt step between them, so a heading level never
 // drifts into its neighbour as the body size changes. The headline stays
-// outside that ladder: every rung keeps the headline size it already had, so
-// the article's own title is never one of the three steps.
+// outside that ladder: it is the page's own 21 pt on the small and default
+// steps and 27 pt on the large one, so the article's title is never one of the
+// three section steps.
 var articleTypes = [...]ArticleType{
 	{
 		Title:      TextStyle{Size: 21, LineHeight: 27, Weight: Semibold, Tracking: -0.2},
