@@ -289,8 +289,8 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 			if len(segments) != 3 {
 				t.Fatalf("%d pt: the size control has %d segments, want the three steps", width, len(segments))
 			}
-			if got := rssHeaderAction(t, tt, "Fetching…").Bounds; got.W != rssHeaderActionSize {
-				t.Fatalf("%d pt: the fetching action is %v pt wide, want the %v pt box", width, got.W, rssHeaderActionSize)
+			if got := rssHeaderAction(t, tt, "Fetching…").Bounds; got.W != 24 {
+				t.Fatalf("%d pt: the fetching action is %v pt wide, want the reference's 24 pt box", width, got.W)
 			}
 			actions := rssHeaderActionsArea(t, tt)
 			if box := segments[0].Bounds; box.Y+box.H > actions.Y && box.Y < actions.Y+actions.H {

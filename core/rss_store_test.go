@@ -289,6 +289,7 @@ func TestRSSStoreRetentionNeverPurgesUnreadOrStarred(t *testing.T) {
 	feedID := "feed:test-retention"
 	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	body := "<p>body</p>"
+	feedBody := "<p>feed body</p>"
 
 	articles := []RSSArticle{
 		{
@@ -338,6 +339,14 @@ func TestRSSStoreRetentionNeverPurgesUnreadOrStarred(t *testing.T) {
 		t.Fatalf("SaveRSSArticles failed: %v", err)
 	}
 
+	// Every article keeps the feed's own body beside its extracted one.
+	for i := range articles {
+		articles[i].FeedContentHTML = feedBody
+	}
+	if err := store.SaveRSSArticles(ctx, articles); err != nil {
+		t.Fatalf("SaveRSSArticles with the feed bodies failed: %v", err)
+	}
+
 	// Over the read cap by one: only the oldest read, unstarred article may be purged.
 	purgedCount, err := store.CleanOldRSSArticles(ctx, feedID, 1, 30*24*time.Hour, now)
 	if err != nil {
@@ -355,13 +364,16 @@ func TestRSSStoreRetentionNeverPurgesUnreadOrStarred(t *testing.T) {
 		if a.ContentHTML != body {
 			t.Fatalf("protected article %q lost its content, got %q", id, a.ContentHTML)
 		}
+		if a.FeedContentHTML != feedBody {
+			t.Fatalf("protected article %q lost the feed's own body, got %q", id, a.FeedContentHTML)
+		}
 	}
 
 	old, err := store.GetRSSArticle(ctx, "art-read-old")
 	if err != nil || old == nil {
 		t.Fatalf("purged article metadata must survive, got %+v (err %v)", old, err)
 	}
-	if old.ContentHTML != "" || len(old.Blocks) != 0 || old.IsFullText {
+	if old.ContentHTML != "" || old.FeedContentHTML != "" || len(old.Blocks) != 0 || old.IsFullText {
 		t.Fatalf("purged article body should be cleared, got %+v", old)
 	}
 	if !old.Read {

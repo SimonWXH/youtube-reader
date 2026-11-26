@@ -8,7 +8,6 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/simon/youtube-reader/core"
-	mui "github.com/simon/youtube-reader/ui"
 )
 
 // rssTodayClock is the fixed clock the Today tests run at, in the device's own
@@ -270,8 +269,8 @@ func TestRSSSmartFeedRowMetrics(t *testing.T) {
 		if !ok {
 			t.Fatalf("the %q row carries no accessible name", label)
 		}
-		if row.Bounds.H != mui.SidebarRowHeight {
-			t.Fatalf("%q's row is %v pt tall, want %v", label, row.Bounds.H, mui.SidebarRowHeight)
+		if row.Bounds.H != 28 {
+			t.Fatalf("%q's row is %v pt tall, want the reference's 28 pt row", label, row.Bounds.H)
 		}
 		if box.X < row.Bounds.X || box.X+box.W > row.Bounds.X+row.Bounds.W {
 			t.Fatalf("%q's label at %v leaves its row %v", label, box, row.Bounds)

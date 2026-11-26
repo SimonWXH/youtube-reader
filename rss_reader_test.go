@@ -852,8 +852,8 @@ func TestRSSReaderViewRendersArticle(t *testing.T) {
 	}; !slices.Equal(got, want) {
 		t.Fatalf("header actions = %q, want %q", got, want)
 	}
-	if got := rssHeaderAction(t, tt, "Share").Bounds.W; got != rssHeaderActionSize {
-		t.Fatalf("an action box is %v pt wide, want the %v pt box", got, rssHeaderActionSize)
+	if got := rssHeaderAction(t, tt, "Share").Bounds.W; got != 24 {
+		t.Fatalf("an action box is %v pt wide, want the reference's 24 pt box", got)
 	}
 	// The rail has one bar per block, and the first block is active at the top.
 	if got, want := len(w.rssReader.ticks), len(a.SelectedRSSArticle().Blocks); got != want {

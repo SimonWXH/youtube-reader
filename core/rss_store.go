@@ -548,7 +548,7 @@ func (s *Store) RSSStarredCount(ctx context.Context) (int, error) {
 
 // retentionUnpurged matches article rows whose body is still cached. Purged rows keep
 // their metadata and read state, so they must not be counted or purged again.
-const retentionUnpurged = `(COALESCE(content_html, '') != '' OR COALESCE(blocks_json, '') != '')`
+const retentionUnpurged = `(COALESCE(content_html, '') != '' OR COALESCE(blocks_json, '') != '' OR COALESCE(feed_content_html, '') != '')`
 
 // CleanOldRSSArticles purges the bodies of old read articles for a feed once the feed
 // exceeds its read-article cap.
@@ -575,7 +575,7 @@ func (s *Store) CleanOldRSSArticles(ctx context.Context, feedID string, maxReadA
 
 	cutoffDate := now.Add(-olderThan).UTC().Format(time.RFC3339)
 	purgeQuery := fmt.Sprintf(`UPDATE rss_articles
-	SET content_html = '', blocks_json = '', is_full_text = 0
+	SET content_html = '', feed_content_html = '', blocks_json = '', is_full_text = 0
 	WHERE id IN (
 		SELECT id FROM rss_articles
 		WHERE feed_id = ? AND read = 1 AND starred = 0 AND published_at < ? AND %s

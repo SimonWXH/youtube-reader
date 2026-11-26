@@ -44,12 +44,12 @@ func TestRSSReaderActionGroupIsSixIcons(t *testing.T) {
 	var last ui.Rect
 	for i, name := range want {
 		box := rssHeaderAction(t, tt, name).Bounds
-		if box.W != rssHeaderActionSize || box.H != rssHeaderActionSize {
-			t.Fatalf("%s is %vx%v pt, want the %v pt box", name, box.W, box.H, rssHeaderActionSize)
+		if box.W != 24 || box.H != 24 {
+			t.Fatalf("%s is %vx%v pt, want the reference's 24 pt box", name, box.W, box.H)
 		}
 		if i > 0 {
-			if gap := box.X - (last.X + last.W); gap != rssHeaderActionGap {
-				t.Fatalf("%s starts %v pt after %s, want the %v pt optical gap", name, gap, want[i-1], rssHeaderActionGap)
+			if gap := box.X - (last.X + last.W); gap != 1.5 {
+				t.Fatalf("%s starts %v pt after %s, want the reference's 1.5 pt optical gap", name, gap, want[i-1])
 			}
 		}
 		last = box
@@ -100,6 +100,43 @@ func TestRSSReaderActionGroupIsSixIcons(t *testing.T) {
 	}
 	if got := rssHeaderAction(t, tt, "分享").Description; got != "这篇文章没有链接" {
 		t.Fatalf("Chinese share tooltip = %q, want the reason it cannot act", got)
+	}
+}
+
+// TestRSSReaderOriginalResolvesTheFeedsRelativePictures covers a feed body
+// stored as the feed delivered it: its relative picture references resolve
+// against the article's link, so the original shows the picture the reader
+// would otherwise report as unloadable.
+func TestRSSReaderOriginalResolvesTheFeedsRelativePictures(t *testing.T) {
+	a, _, tt := rssReaderTestWindow(t)
+
+	art := rssReaderTestArticle()
+	art.ContentHTML = "<p>the extracted full text</p>"
+	art.Blocks = []core.ArticleBlock{{Type: core.BlockParagraph, Text: "the extracted full text"}}
+	art.FeedContentHTML = `<p>the feed's own version</p><p><img src="/images/a.png" alt="A reading room"></p>`
+	if err := a.Store.SaveRSSArticles(context.Background(), []core.RSSArticle{art}); err != nil {
+		t.Fatalf("save the article's two bodies: %v", err)
+	}
+	if err := a.ReloadRSS(); err != nil {
+		t.Fatalf("reload rss: %v", err)
+	}
+	openRSSReaderFullTextArticle(t, tt)
+	clickRSSHeaderAction(t, tt, "Show Original")
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		img, ok := tt.AccessByRole(ui.RoleLink, "A reading room")
+		if ok && img.Bounds.H > 0 {
+			if want := "https://feeds.example.com/images/a.png"; img.Description != want {
+				t.Fatalf("the original's picture points at %q, want %q", img.Description, want)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("picture block = %+v, %v; want a laid-out named frame", img, ok)
+		}
+		tt.Frame()
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

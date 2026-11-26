@@ -11,26 +11,7 @@ import (
 // feed list draws favicons, and the same deterministic monogram in every other
 // state so the slot never shows a blank square.
 func FeedIcon(c *ui.Context, tokens Tokens, url, title string, size float32) {
-	if url != "" {
-		opts := netimage.Options{MaxSide: int(size * 2)}
-		if src, _ := netimage.Load(c, url, opts); src != nil {
-			netimage.Image(c, url, opts).Size(size, size).Radius(size / 4)
-			return
-		}
-	}
-	initial := "?"
-	if title != "" {
-		initial = string([]rune(title)[0])
-	}
-	palette := []ui.Color{tokens.Accent, tokens.Success, tokens.Warning, tokens.Danger, tokens.Muted}
-	index := 0
-	for _, r := range title {
-		index += int(r)
-	}
-	bg := palette[index%len(palette)].Alpha(0.18)
-	ui.Row(c).Size(size, size).Radius(size/4).Background(bg).Border(Hairline, tokens.BorderSoft).Center().Children(func() {
-		Metadata.Apply(ui.Text(c, initial)).TextColor(tokens.Text)
-	})
+	mediaTile(c, tokens, url, title, size, size/4)
 }
 
 // ChannelAvatar renders a real channel avatar once its picture has loaded and
@@ -38,10 +19,16 @@ func FeedIcon(c *ui.Context, tokens Tokens, url, title string, size float32) {
 // fails, and when no URL is supplied. Callers pass the row's avatar size, so
 // the reserved circular slot stays fixed and never shows a blank disc.
 func ChannelAvatar(c *ui.Context, tokens Tokens, url, title string, size float32) {
+	mediaTile(c, tokens, url, title, size, size/2)
+}
+
+// mediaTile draws url's picture in a size square once it loads, and the same
+// deterministic monogram in every other state, both rounded to radius.
+func mediaTile(c *ui.Context, tokens Tokens, url, title string, size, radius float32) {
 	if url != "" {
 		opts := netimage.Options{MaxSide: int(size * 2)}
 		if src, _ := netimage.Load(c, url, opts); src != nil {
-			netimage.Image(c, url, opts).Size(size, size).Radius(size / 2)
+			netimage.Image(c, url, opts).Size(size, size).Radius(radius)
 			return
 		}
 	}
@@ -55,7 +42,7 @@ func ChannelAvatar(c *ui.Context, tokens Tokens, url, title string, size float32
 		index += int(r)
 	}
 	bg := palette[index%len(palette)].Alpha(0.18)
-	ui.Row(c).Size(size, size).Radius(size/2).Background(bg).Border(Hairline, tokens.BorderSoft).Center().Children(func() {
+	ui.Row(c).Size(size, size).Radius(radius).Background(bg).Border(Hairline, tokens.BorderSoft).Center().Children(func() {
 		Metadata.Apply(ui.Text(c, initial)).TextColor(tokens.Text)
 	})
 }

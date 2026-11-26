@@ -1203,7 +1203,7 @@ func (w *Window) rssFeedViewBlocks(art core.RSSArticle) []core.ArticleBlock {
 	}
 	var blocks []core.ArticleBlock
 	if body := strings.TrimSpace(art.FeedContentHTML); body != "" {
-		blocks = core.ParseHTMLBlocks(body)
+		blocks = core.ParseHTMLBlocksWithBase(body, art.Link)
 	}
 	if len(blocks) == 0 {
 		if snippet := strings.TrimSpace(art.Snippet); snippet != "" {
@@ -1226,7 +1226,7 @@ func rssArticleBlocks(art core.RSSArticle) []core.ArticleBlock {
 	if len(art.Blocks) > 0 {
 		return art.Blocks
 	}
-	if blocks := core.ParseHTMLBlocks(art.ContentHTML); len(blocks) > 0 {
+	if blocks := core.ParseHTMLBlocksWithBase(art.ContentHTML, art.Link); len(blocks) > 0 {
 		return blocks
 	}
 	snippet := strings.TrimSpace(art.Snippet)

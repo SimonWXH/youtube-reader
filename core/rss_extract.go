@@ -195,6 +195,24 @@ func ParseHTMLBlocks(htmlContent string) []ArticleBlock {
 	return blocks
 }
 
+// ParseHTMLBlocksWithBase parses HTML into blocks and resolves each picture's
+// relative reference against base, so a body stored as the feed delivered it
+// renders the pictures it refers to.
+func ParseHTMLBlocksWithBase(htmlContent, base string) []ArticleBlock {
+	blocks := ParseHTMLBlocks(htmlContent)
+	resolveBlockAssets(blocks, base)
+	return blocks
+}
+
+// resolveBlockAssets resolves every picture block's URL against base.
+func resolveBlockAssets(blocks []ArticleBlock, base string) {
+	for i := range blocks {
+		if blocks[i].Type == BlockImage {
+			blocks[i].URL = resolveAssetURL(base, blocks[i].URL)
+		}
+	}
+}
+
 func collectBlocks(sel *goquery.Selection, blocks *[]ArticleBlock) {
 	sel.Children().Each(func(i int, child *goquery.Selection) {
 		tag := strings.ToLower(goquery.NodeName(child))

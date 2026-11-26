@@ -339,11 +339,7 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 		}
 
 		heroImage = resolveAssetURL(articleBase, heroImage)
-		for i := range blocks {
-			if blocks[i].Type == BlockImage {
-				blocks[i].URL = resolveAssetURL(articleBase, blocks[i].URL)
-			}
-		}
+		resolveBlockAssets(blocks, articleBase)
 		// An extracted article keeps the feed's own version beside the full
 		// text; one read from the feed's own text needs no second copy.
 		if isFullText {
