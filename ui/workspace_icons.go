@@ -69,7 +69,7 @@ func WorkspaceIconSVG(kind WorkspaceIconKind) *ui.SVG {
 
 // WorkspaceIconColor returns the token that colours kind in the dock. The
 // glyph keeps its own colour in every interaction state, so selection shows in
-// the slot's background instead of tinting the glyph.
+// the slot's outline and edge bar instead of tinting the glyph.
 func (t Tokens) WorkspaceIconColor(kind WorkspaceIconKind) ui.Color {
 	switch kind {
 	case WorkspaceIconVideos:

@@ -389,6 +389,11 @@ func TestWorkspaceDockStateCues(t *testing.T) {
 				return false
 			}
 
+			hoverOutline := tok.WorkspaceDockHoverOutline
+			if ratio := dockContrast(hoverOutline, tok.Sidebar); ratio < 1.5 {
+				t.Fatalf("hover outline on the sidebar = %.2f:1, want at least 1.5:1", ratio)
+			}
+
 			// The slot interior just above the glyph: the background each
 			// brand glyph sits on in that state.
 			img := tt.Image()
@@ -396,18 +401,19 @@ func TestWorkspaceDockStateCues(t *testing.T) {
 			if idleBG != want(tok.Sidebar) {
 				t.Fatalf("idle slot background = %v, want the dock background %v", idleBG, tok.Sidebar)
 			}
-			if got := pixel(img, active, active.W/2, 4); got != idleBG {
-				t.Fatalf("active slot background = %v, want the dock background %v: the active cue paints no plate", got, idleBG)
+			activeBG := pixel(img, active, active.W/2, 4)
+			if activeBG != idleBG {
+				t.Fatalf("active slot background = %v, want the dock background %v: no state paints behind the ink", activeBG, idleBG)
 			}
 			if got := pixel(img, active, 1, active.H/2); got != want(tok.Accent) {
 				t.Fatalf("active slot edge bar = %v, want the accent %v", got, tok.Accent)
 			}
-			if has(img, active, 2, tok.BorderSoft) {
-				t.Fatal("the active slot draws a hover outline: the bar alone is the active cue")
+			if has(img, active, 2, hoverOutline) {
+				t.Fatal("the active slot draws a hover outline while idle: the bar alone is the active cue")
 			}
 			for _, icon := range dockIcons {
 				ink := dockIconColour(icon.kind, appearance.dark)
-				if got, want := dockContrast(ink, asColor(idleBG)), dockContrast(ink, tok.Sidebar); got < want-0.001 {
+				if got, want := dockContrast(ink, asColor(activeBG)), dockContrast(ink, asColor(idleBG)); got < want-0.001 {
 					t.Fatalf("%s glyph contrast on the active slot = %.2f:1, want at least its idle %.2f:1", icon.name, got, want)
 				}
 			}
@@ -418,8 +424,8 @@ func TestWorkspaceDockStateCues(t *testing.T) {
 			if got := pixel(img, idle, idle.W/2, 4); got != idleBG {
 				t.Fatalf("hovered slot background = %v, want the dock background %v: hover paints no plate", got, idleBG)
 			}
-			if !has(img, idle, 2, tok.BorderSoft) {
-				t.Fatalf("the hovered slot draws no BorderSoft %v outline", tok.BorderSoft)
+			if !has(img, idle, 2, hoverOutline) {
+				t.Fatalf("the hovered slot draws no %v outline", hoverOutline)
 			}
 			if got := pixel(img, idle, 3, idle.H/2); got != idleBG {
 				t.Fatalf("hovered slot edge = %v, want the dock background %v: the bar marks the active tab alone", got, idleBG)
@@ -431,11 +437,53 @@ func TestWorkspaceDockStateCues(t *testing.T) {
 			if !has(img, idle, 2, tok.Accent) {
 				t.Fatalf("the pressed slot draws no accent %v outline", tok.Accent)
 			}
-			if has(img, idle, 2, tok.BorderSoft) {
-				t.Fatalf("the pressed slot keeps the hover outline %v", tok.BorderSoft)
+			if has(img, idle, 2, hoverOutline) {
+				t.Fatalf("the pressed slot keeps the hover outline %v", hoverOutline)
 			}
-			if ratio := dockContrast(tok.Accent, tok.BorderSoft); ratio < 3 {
+			if ratio := dockContrast(tok.Accent, hoverOutline); ratio < 3 {
 				t.Fatalf("pressed outline against the hovered outline = %.2f:1, want at least 3:1", ratio)
+			}
+			tt.CancelPress()
+			tt.Move(1, 1)
+			tt.Frame()
+
+			// The active tab still shows its own hover and pressed states
+			// beside the selection bar.
+			tt.Move(active.X+active.W/2, active.Y+active.H/2)
+			tt.Frame()
+			img = tt.Image()
+			if !has(img, active, 2, hoverOutline) {
+				t.Fatal("hovering the active slot draws no hover outline")
+			}
+			if got := pixel(img, active, 1, active.H/2); got != want(tok.Accent) {
+				t.Fatalf("active slot edge bar while hovered = %v, want the accent %v", got, tok.Accent)
+			}
+			tt.Press(active.X+active.W/2, active.Y+active.H/2)
+			tt.Frame()
+			img = tt.Image()
+			if !has(img, active, 2, tok.Accent) {
+				t.Fatal("pressing the active slot draws no press outline")
+			}
+			if got := pixel(img, active, 1, active.H/2); got != want(tok.Accent) {
+				t.Fatalf("active slot edge bar while pressed = %v, want the accent %v", got, tok.Accent)
+			}
+			tt.CancelPress()
+			tt.Move(1, 1)
+			tt.Frame()
+
+			// The insert caret runs the slot's full height, so dropping on
+			// the active slot still shows above and below the shorter
+			// selection bar.
+			tt.Press(idle.X+idle.W/2, idle.Y+idle.H/2)
+			tt.Move(idle.X+idle.W/2, idle.Y+idle.H/2-5)
+			tt.Move(active.X+active.W/4, active.Y+active.H/2)
+			tt.Frame()
+			img = tt.Image()
+			if got := pixel(img, active, 1, 3); got != want(tok.Accent) {
+				t.Fatalf("drop caret above the selection bar = %v, want the accent %v", got, tok.Accent)
+			}
+			if got := pixel(img, active, 1, active.H-3); got != want(tok.Accent) {
+				t.Fatalf("drop caret below the selection bar = %v, want the accent %v", got, tok.Accent)
 			}
 			tt.CancelPress()
 			tt.Move(1, 1)
@@ -478,7 +526,7 @@ func TestWorkspaceDockReportsActiveTab(t *testing.T) {
 
 // dockInkOf returns the device-pixel box of the pixels inside the slot that
 // differ from its background, and how many they are. The slot's rounded
-// corners are skipped: they show the dock behind the selection fill.
+// corners and its edge cue are skipped: no glyph comes that close.
 func dockInkOf(img *image.RGBA, r ui.Rect, scale float32) (image.Rectangle, int) {
 	// A slot's edge carries its state cue, the accent bar or the hover and
 	// press outlines, so the scan keeps 4 dp clear of it; no glyph comes

@@ -392,13 +392,14 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 			iconColor := t.WorkspaceIconColor(meta.Icon)
 
 			slot.Draw(func(p *ui.Painter, r ui.Rect) {
-				switch {
-				case selected:
+				if selected {
 					p.Fill(ui.Rect{X: r.X, Y: r.Y + 4, W: 2, H: r.H - 8}, t.Accent, 1)
+				}
+				switch {
 				case slot.Pressed():
 					p.Stroke(r, t.Accent, mui.RadiusControl, 1)
 				case slot.Hovered():
-					p.Stroke(r, t.BorderSoft, mui.RadiusControl, 1)
+					p.Stroke(r, t.WorkspaceDockHoverOutline, mui.RadiusControl, 1)
 				}
 
 				if over && dragged.ID != "" && dragged.ID != id {
@@ -406,7 +407,7 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 					if insertAfter {
 						indX = r.X + r.W - 2
 					}
-					p.Fill(ui.Rect{X: indX, Y: r.Y + 4, W: 2, H: r.H - 8}, t.Accent, 1)
+					p.Fill(ui.Rect{X: indX, Y: r.Y, W: 2, H: r.H}, t.Accent, 1)
 				}
 
 				mui.WorkspaceIconDraw(p, r, meta.Icon, iconColor)

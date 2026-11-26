@@ -83,13 +83,16 @@ type Tokens struct {
 	ModalShadow ui.Color
 	// The workspace dock's four glyphs keep their own colours instead of
 	// following the interaction states, so selection shows in the slot's
-	// background and the brand reads at a glance. Dark mode lifts the warm
-	// inks and turns RSS from black to near-white, because a black glyph
-	// would disappear on the dark sidebar.
+	// outline and edge bar and the brand reads at a glance. Dark mode lifts
+	// the warm inks and turns RSS from black to near-white, because a black
+	// glyph would disappear on the dark sidebar.
 	WorkspaceVideo     ui.Color // WorkspaceVideo is the Video dock glyph.
 	WorkspaceRSS       ui.Color // WorkspaceRSS is the RSS dock glyph.
 	WorkspaceReadLater ui.Color // WorkspaceReadLater is the 稍后读 dock glyph.
 	WorkspaceWeChat    ui.Color // WorkspaceWeChat is the 微信读书 dock glyph.
+	// WorkspaceDockHoverOutline marks the dock slot under the pointer: a
+	// 1 pt outline that reads on the sidebar without tinting any ink.
+	WorkspaceDockHoverOutline ui.Color
 }
 
 // NewTokens derives a palette from the system theme. Dark mode uses its own
@@ -117,10 +120,11 @@ func NewTokens(base *ui.Theme, prefersDark bool) Tokens {
 			ModalScrim:  ui.RGBA(0, 0, 0, 0.44),
 			ModalShadow: ui.RGBA(0, 0, 0, 0.72),
 
-			WorkspaceVideo:     ui.Hex("#ff5b74"),
-			WorkspaceRSS:       ui.Hex("#f2f2f3"),
-			WorkspaceReadLater: ui.Hex("#ff8b52"),
-			WorkspaceWeChat:    ui.Hex("#6cc3ff"),
+			WorkspaceVideo:            ui.Hex("#ff5b74"),
+			WorkspaceRSS:              ui.Hex("#f2f2f3"),
+			WorkspaceReadLater:        ui.Hex("#ff8b52"),
+			WorkspaceWeChat:           ui.Hex("#6cc3ff"),
+			WorkspaceDockHoverOutline: ui.Hex("#3f4249"),
 		}
 	}
 	return Tokens{
@@ -144,10 +148,11 @@ func NewTokens(base *ui.Theme, prefersDark bool) Tokens {
 		ModalScrim:  ui.RGBA(0, 0, 0, 0.32),
 		ModalShadow: ui.RGBA(24, 26, 28, 0.34),
 
-		WorkspaceVideo:     ui.Hex("#ff0033"),
-		WorkspaceRSS:       ui.Hex("#000000"),
-		WorkspaceReadLater: ui.Hex("#f46b26"),
-		WorkspaceWeChat:    ui.Hex("#35a8ff"),
+		WorkspaceVideo:            ui.Hex("#ff0033"),
+		WorkspaceRSS:              ui.Hex("#000000"),
+		WorkspaceReadLater:        ui.Hex("#f46b26"),
+		WorkspaceWeChat:           ui.Hex("#35a8ff"),
+		WorkspaceDockHoverOutline: ui.Hex("#c2c2bc"),
 	}
 }
 
