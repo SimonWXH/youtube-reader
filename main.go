@@ -183,6 +183,9 @@ type Window struct {
 	// and every retry goes through.
 	rssFullText        rssFullTextStatus
 	rssFullTextFetcher *rssFullTextFetcher
+	// rssShareMenuOpen is the reader header's share menu's open flag, which the
+	// button owns so its pressed face stays painted while the menu shows.
+	rssShareMenuOpen bool
 	// now is the window's clock, the wall clock in the app and a fixed moment
 	// in tests, for header copy that depends on today's date.
 	now func() time.Time

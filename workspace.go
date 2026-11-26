@@ -557,6 +557,12 @@ func (w *Window) selectedRSSSourceTitle(locale string) string {
 		}
 		return "All Articles"
 	}
+	if w.app.Selected == todayDestination {
+		if zh {
+			return "今天"
+		}
+		return "Today"
+	}
 	if w.app.Selected == "starred" {
 		if zh {
 			return "标星文章"
@@ -590,6 +596,9 @@ func (w *Window) rssSelectionUnreadCount() int {
 	selected := w.app.Selected
 	if selected == "all" || selected == "" {
 		return w.app.RSSUnreadCount("")
+	}
+	if selected == todayDestination {
+		return w.app.RSSTodayUnread
 	}
 	if selected == "starred" {
 		cnt := 0

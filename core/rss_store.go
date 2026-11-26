@@ -269,9 +269,9 @@ func (s *Store) SaveRSSArticles(ctx context.Context, articles []RSSArticle) erro
 	stmts := make([]sqlite.Statement, 0, len(articles))
 	upsertSQL := `INSERT INTO rss_articles(
 		id, feed_id, title, link, guid, author, published_at, snippet,
-		content_html, is_full_text, hero_image, blocks_json,
+		content_html, feed_content_html, is_full_text, hero_image, blocks_json,
 		read, read_at, starred, starred_at, updated_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	ON CONFLICT(id) DO UPDATE SET
 		feed_id=excluded.feed_id,
 		title=excluded.title,
@@ -284,6 +284,7 @@ func (s *Store) SaveRSSArticles(ctx context.Context, articles []RSSArticle) erro
 			WHEN rss_articles.is_full_text = 1 AND excluded.is_full_text = 0 THEN rss_articles.content_html
 			ELSE COALESCE(NULLIF(excluded.content_html, ''), rss_articles.content_html)
 		END,
+		feed_content_html=COALESCE(NULLIF(excluded.feed_content_html, ''), rss_articles.feed_content_html),
 		is_full_text=MAX(rss_articles.is_full_text, excluded.is_full_text),
 		hero_image=COALESCE(NULLIF(excluded.hero_image, ''), rss_articles.hero_image),
 		blocks_json=CASE
@@ -298,7 +299,7 @@ func (s *Store) SaveRSSArticles(ctx context.Context, articles []RSSArticle) erro
 			SQL: upsertSQL,
 			Args: []any{
 				a.ID, a.FeedID, a.Title, a.Link, a.GUID, a.Author, a.PublishedAt, a.Snippet,
-				a.ContentHTML, boolInt(a.IsFullText), a.HeroImage, blocksJSON,
+				a.ContentHTML, a.FeedContentHTML, boolInt(a.IsFullText), a.HeroImage, blocksJSON,
 				boolInt(a.Read), a.ReadAt, boolInt(a.Starred), a.StarredAt, a.UpdatedAt,
 			},
 		})
@@ -308,12 +309,14 @@ func (s *Store) SaveRSSArticles(ctx context.Context, articles []RSSArticle) erro
 	return err
 }
 
-// GetRSSArticle returns an article by its ID.
+// GetRSSArticle returns an article by its ID, its feed's own body included:
+// the reader's original/full-text toggle needs both bodies for the one article
+// it shows, and the list queries leave the feed's body in the store.
 func (s *Store) GetRSSArticle(ctx context.Context, id string) (*RSSArticle, error) {
 	rows, err := s.db.Query(ctx, `SELECT
 		id, feed_id, title, link, guid, author, published_at, snippet,
 		content_html, is_full_text, hero_image, blocks_json,
-		read, read_at, starred, starred_at, updated_at
+		read, read_at, starred, starred_at, updated_at, feed_content_html
 	FROM rss_articles WHERE id = ?`, id)
 	if err != nil {
 		return nil, err
@@ -607,6 +610,12 @@ func rowToArticle(r []any) RSSArticle {
 	a.Starred = intFromAnyBool(r[14])
 	a.StarredAt, _ = int64FromAny(r[15])
 	a.UpdatedAt, _ = int64FromAny(r[16])
+	// Only the single-article read selects the feed's own body: the list
+	// queries stop at the row's summary fields, so a row without it is a
+	// listed article rather than one that never had a body.
+	if len(r) > 17 {
+		a.FeedContentHTML, _ = r[17].(string)
+	}
 	return a
 }
 

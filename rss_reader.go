@@ -101,6 +101,15 @@ type rssReaderState struct {
 	parsedBlocksArticleID string
 	parsedBlocksUpdatedAt int64
 	parsedBlocks          []core.ArticleBlock
+	// viewFeed asks for the article's original, the version the feed delivered,
+	// instead of its extracted full text. It belongs to one article: a new
+	// selection starts on the full text again.
+	viewFeed bool
+	// feedViewBlocks caches the blocks parsed from the open article's feed body
+	// while the toggle shows them, keyed the way parsedBlocks is.
+	feedViewArticleID string
+	feedViewUpdatedAt int64
+	feedViewBlocks    []core.ArticleBlock
 }
 
 // newRSSReaderState starts an article's reader at its top, with no bar under
@@ -490,7 +499,10 @@ func (w *Window) rssReaderPane(c *ui.Context, t mui.Tokens) {
 	if w.rssReader.articleID != art.ID {
 		w.rssReader = newRSSReaderState(art.ID)
 	}
-	blocks := w.rssReaderBlocks(*art)
+	// The header's toggle decides which body the reader shows: the extracted
+	// full text, or the version the feed itself delivered.
+	feedView := w.rssReader.viewFeed && art.IsFullText
+	blocks := w.rssReaderBlocks(*art, feedView)
 
 	ui.Row(c.Key("rss-reader-pane")).Fill().Background(t.App).AlignItems(ui.Stretch).Children(func() {
 		// The reading page is one selectable scope: its headline, metadata and
@@ -500,7 +512,7 @@ func (w *Window) rssReaderPane(c *ui.Context, t mui.Tokens) {
 			w.rssReaderHeader(c, t, *art)
 			ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
 				ui.Column(c).Grow(1).MinWidth(0).MinHeight(0).Children(func() {
-					w.rssReaderBody(c, t, *art, blocks)
+					w.rssReaderBody(c, t, *art, blocks, feedView)
 				})
 				w.rssTickRail(c, t, blocks)
 			})
@@ -529,22 +541,31 @@ func (w *Window) rssReaderEmpty(c *ui.Context, t mui.Tokens) {
 	})
 }
 
-// rssReaderHeader is the fixed article header: its source and date, its title,
-// its author, the star that toggles the article's star, the text size control,
-// and two actions on the article: Open in Browser, and a full-text fetch that
-// reads as Refetch, Fetching… or Retry full text as the fetch moves on.
-func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticle) {
-	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
-	openLabel := "Open in Browser"
-	refetchLabel := "Refetch"
-	refetchingLabel := "Fetching…"
-	retryLabel := "Retry full text"
+// The reading header's action group, as NetNewsWire's: six borderless icon
+// controls in one row at the header's trailing edge. Each box is 24 pt with a
+// 16 pt glyph, and the boxes keep 1.5 pt of optical space between them so the
+// six read as one group rather than six buttons.
+const (
+	rssHeaderActionSize  float32 = 24
+	rssHeaderActionGap   float32 = 1.5
+	rssHeaderActionGlyph float32 = 16
+	rssHeaderActions     int     = 6
+)
+
+// rssHeaderActionsLabel names the action group for the accessibility tree.
+func rssHeaderActionsLabel(zh bool) string {
 	if zh {
-		openLabel = "在浏览器中打开"
-		refetchLabel = "重新抓取"
-		refetchingLabel = "抓取中…"
-		retryLabel = "重试抓取"
+		return "文章操作"
 	}
+	return "Article actions"
+}
+
+// rssReaderHeader is the fixed article header: its source and date, its title,
+// its author, the text size control, and the action group - the read toggle,
+// the star, the original/full-text toggle, share, open in browser, and the
+// full-text fetch that reads as Refetch, Fetching… or Retry full text as the
+// fetch moves on.
+func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticle) {
 	feedName := art.FeedID
 	if w.app != nil {
 		if title := w.app.FeedTitle(art.FeedID); title != "" {
@@ -559,30 +580,9 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 		now = w.now()
 	}
 	date := rssReaderDate(art.PublishedAt, now)
-	inline := rssHeaderRowWidth(c, feedName, date, openLabel, refetchLabel, retryLabel, refetchingLabel) <= content
-	phase := w.rssFullTextPhase(art.ID)
-	busy := phase == rssFullTextFetching
-	refetchText := refetchLabel
-	switch phase {
-	case rssFullTextFetching:
-		refetchText = refetchingLabel
-	case rssFullTextFailed:
-		// This attempt gave up on the article, so the control names the one
-		// thing it can still do.
-		refetchText = retryLabel
-	}
+	inline := rssHeaderRowWidth(c, feedName, date) <= content
 	actions := func() {
-		ui.Row(c).Shrink(0).Gap(mui.Space(2)).AlignItems(ui.Center).Children(func() {
-			w.rssReaderStarAction(c, t, art)
-			w.rssReaderAction(c, t, "rss-reader-open", openLabel, false, func() {
-				if art.Link != "" {
-					c.OpenURL(art.Link)
-				}
-			})
-			w.rssReaderAction(c, t, "rss-reader-refetch", refetchText, busy, func() {
-				w.refetchRSSArticle(c, art)
-			})
-		})
+		w.rssHeaderActions(c, t, art)
 	}
 
 	head := ui.Column(c.Key("rss-reader-header")).Shrink(0).FillWidth().
@@ -692,19 +692,13 @@ func (w *Window) rssTextSizeControl(c *ui.Context, t mui.Tokens) {
 }
 
 // rssHeaderRowWidth is the width the header's metadata row needs to stay
-// inline: the date, the text size control, the star toggle, and both actions,
-// as their roles draw them, the row's own gaps, and the least room the feed
-// name and its separator keep. Below it the row stacks rather than shrinking
-// the feed name to a stub. The re-fetch action is measured at its widest label
-// across the phases it can wear, so the row never flips to the stacked layout
-// because the fetch moved on.
-func rssHeaderRowWidth(c *ui.Context, feedName, date, openLabel string, refetchLabels ...string) float32 {
-	var refetch float32
-	for _, label := range refetchLabels {
-		refetch = max(refetch, rssHeaderActionWidth(c, label))
-	}
-	actions := mui.Space(7) + rssHeaderActionWidth(c, openLabel) + refetch + 2*mui.Space(2)
-	width := rssTextSizeControlWidth(c) + actions
+// inline: the date, the text size control, and the action group, as their
+// roles draw them, the row's own gaps, and the least room the feed name and
+// its separator keep. Below it the row stacks rather than shrinking the feed
+// name to a stub. The group is measured at its full six icons, so the row never
+// flips to the stacked layout because a fetch moved on.
+func rssHeaderRowWidth(c *ui.Context, feedName, date string) float32 {
+	width := rssTextSizeControlWidth(c) + rssHeaderActionsWidth()
 	children := 4 // the feed name, the spacer, the size control, and the actions
 	if feedName != "" {
 		width += rssHeaderFeedMin
@@ -720,6 +714,12 @@ func rssHeaderRowWidth(c *ui.Context, feedName, date, openLabel string, refetchL
 	return width + float32(children-1)*mui.Space(2)
 }
 
+// rssHeaderActionsWidth is the action group's own width: six 24 pt boxes and
+// the 1.5 pt optical space between them.
+func rssHeaderActionsWidth() float32 {
+	return float32(rssHeaderActions)*rssHeaderActionSize + float32(rssHeaderActions-1)*rssHeaderActionGap
+}
+
 // rssTextWidth measures one run in the given role, the width it draws at.
 func rssTextWidth(c *ui.Context, style mui.TextStyle, text string) float32 {
 	span := ui.Span{Text: text, Font: style.Family, Size: style.Size, Weight: int(style.Weight), LetterSpacing: style.Tracking}
@@ -728,12 +728,6 @@ func rssTextWidth(c *ui.Context, style mui.TextStyle, text string) float32 {
 	}
 	width, _ := c.MeasureText(0, span)
 	return width
-}
-
-// rssHeaderActionWidth is one header action's width: its label plus the
-// button's padding and hairline border.
-func rssHeaderActionWidth(c *ui.Context, label string) float32 {
-	return rssTextWidth(c, mui.Control, label) + 2*mui.Space(3) + 2*mui.Hairline
 }
 
 // rssTextSizeGlyph is the A one size segment draws, its line box the chip's
@@ -753,28 +747,81 @@ func rssTextSizeControlWidth(c *ui.Context) float32 {
 	return width
 }
 
-// rssReaderAction is a 28 pt quiet action in the reader header, sized to its
-// label. The disabled state covers a re-fetch already in flight.
-func (w *Window) rssReaderAction(c *ui.Context, t mui.Tokens, key, label string, busy bool, onClick func()) ui.Element {
-	el := ui.ButtonBase(c).Key(key).Height(mui.Space(7)).
-		Padding(0, mui.Space(3)).Radius(mui.RadiusControl).Border(mui.Hairline, t.Border).
-		Background(t.Surface).TextColor(t.Text).Cursor(ui.CursorPointer).
-		Transition(mui.Fade).FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
-		Role(ui.RoleButton).Label(label).Tooltip(label)
-	if busy {
-		el.TextColor(t.Muted).Cursor(ui.CursorDefault)
+// rssHeaderActionSpec is one control of the reader header's action group: a
+// 24 pt box drawing a glyph, a spinner while it works, and a dimmed glyph with
+// its tooltip while it cannot act.
+type rssHeaderActionSpec struct {
+	key      string
+	label    string   // the control's name, for the pointer, the tooltip and the accessibility tree
+	glyph    string   // SF Symbol name; a busy control draws a spinner instead
+	color    ui.Color // the glyph's colour; the zero colour asks for the muted face
+	busy     bool     // work is in flight: the control shows a spinner and takes no input
+	disabled bool     // the control cannot act right now
+	on       bool     // the control's own menu is showing: drawn on the accent tint
+	tooltip  string   // the pointer's words when they differ from the label
+	onClick  func()
+}
+
+// rssHeaderAction is one borderless icon control of the reader header's action
+// group: a 24 pt box with a 16 pt glyph, the quiet accent face under the
+// pointer, and the shared focus ring. The label is what the pointer's tooltip
+// and the accessibility tree read.
+func (w *Window) rssHeaderAction(c *ui.Context, t mui.Tokens, spec rssHeaderActionSpec) ui.Element {
+	color := spec.color
+	switch {
+	case spec.busy || spec.disabled:
+		color = t.Faint
+	case spec.on:
+		color = t.Accent
+	case color == (ui.Color{}):
+		color = t.Muted
+	}
+	idle := !spec.busy && !spec.disabled
+	tooltip := spec.tooltip
+	if tooltip == "" {
+		tooltip = spec.label
+	}
+	var face ui.Color
+	if spec.on {
+		face = t.AccentSoft
+	}
+	el := ui.ButtonBase(c).Key(spec.key).Size(rssHeaderActionSize, rssHeaderActionSize).
+		Padding(0).Radius(mui.RadiusControl).Background(face).Cursor(ui.CursorPointer).Transition(mui.Fade).
+		FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
+		Role(ui.RoleButton).Label(spec.label).Tooltip(tooltip)
+	if !idle {
+		el = el.Cursor(ui.CursorDefault).Disabled(true)
 	}
 	el.Children(func() {
-		text := mui.Control.Apply(ui.Text(c, label)).SingleLine()
-		if busy {
-			text.TextColor(t.Muted)
+		if spec.busy {
+			ui.Spinner(c).Size(mui.Space(4), mui.Space(4)).TextColor(t.Muted).Label(spec.label)
+			return
 		}
+		sfsymbols.Symbol(c, spec.glyph).Size(rssHeaderActionGlyph).Color(color).Element.Role(ui.RoleNone)
 	})
-	if !busy {
+	if idle {
 		el.Draw(rssActionFace(el, t))
-		el.OnClick(onClick)
+		if spec.onClick != nil {
+			el.OnClick(spec.onClick)
+		}
 	}
 	return el
+}
+
+// rssHeaderActions is the reading header's action group, in NetNewsWire's
+// order: the read toggle, the star, the original/full-text toggle, share, open
+// in browser, and the full-text fetch that doubles as the refresh.
+func (w *Window) rssHeaderActions(c *ui.Context, t mui.Tokens, art core.RSSArticle) {
+	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
+	ui.Row(c).Key("rss-reader-actions").Shrink(0).Gap(rssHeaderActionGap).
+		AlignItems(ui.Center).Role(ui.RoleGroup).Label(rssHeaderActionsLabel(zh)).Children(func() {
+		w.rssReadAction(c, t, art)
+		w.rssStarAction(c, t, art)
+		w.rssBodyToggleAction(c, t, art)
+		w.rssShareAction(c, t, art)
+		w.rssOpenAction(c, t, art)
+		w.rssRefreshAction(c, t, art)
+	})
 }
 
 // rssActionFace is the hover and press fill the reader header's actions share:
@@ -792,10 +839,31 @@ func rssActionFace(el ui.Element, t mui.Tokens) func(p *ui.Painter, r ui.Rect) {
 	}
 }
 
-// rssReaderStarAction is the header's star toggle: one 28 pt icon that fills
-// and takes the accent while the article is starred, so both the state and the
-// way to change it sit in the header beside the ways out of the app.
-func (w *Window) rssReaderStarAction(c *ui.Context, t mui.Tokens, art core.RSSArticle) ui.Element {
+// rssReadAction toggles the open article's read state. A filled circle marks an
+// article already read and a hollow one an unread article, the pair
+// NetNewsWire's list uses, so the control shows the state and changes it.
+func (w *Window) rssReadAction(c *ui.Context, t mui.Tokens, art core.RSSArticle) ui.Element {
+	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
+	label, glyph := "Mark as Read (M)", "circle"
+	if zh {
+		label = "标记为已读 (M)"
+	}
+	color := t.Muted
+	if art.Read {
+		label, glyph, color = "Mark as Unread (M)", "largecircle.fill.circle", t.Accent
+		if zh {
+			label = "标记为未读 (M)"
+		}
+	}
+	return w.rssHeaderAction(c, t, rssHeaderActionSpec{
+		key: "rss-reader-read", label: label, glyph: glyph, color: color,
+		onClick: func() { w.toggleRSSArticleRead(c, art) },
+	})
+}
+
+// rssStarAction is the header's star toggle: it fills and takes the accent while
+// the article is starred, so the state and the way to change it share one box.
+func (w *Window) rssStarAction(c *ui.Context, t mui.Tokens, art core.RSSArticle) ui.Element {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	label := "Star article (S)"
 	if art.Starred {
@@ -811,29 +879,246 @@ func (w *Window) rssReaderStarAction(c *ui.Context, t mui.Tokens, art core.RSSAr
 	if art.Starred {
 		glyph, color = "star.fill", t.Accent
 	}
-	el := ui.ButtonBase(c).Key("rss-reader-star").Size(mui.Space(7), mui.Space(7)).
-		Padding(0).Radius(mui.RadiusControl).Border(mui.Hairline, t.Border).
-		Background(t.Surface).Cursor(ui.CursorPointer).Transition(mui.Fade).
-		FocusRingColor(t.Focus).FocusRingOffset(mui.FocusRingGap).
-		Role(ui.RoleButton).Label(label).Tooltip(label)
-	el.Children(func() {
-		sfsymbols.Symbol(c, glyph).Size(mui.Space(4)).Color(color).Element.Role(ui.RoleNone)
+	return w.rssHeaderAction(c, t, rssHeaderActionSpec{
+		key: "rss-reader-star", label: label, glyph: glyph, color: color,
+		onClick: func() { w.toggleRSSArticleStar(c, art) },
 	})
-	el.Draw(rssActionFace(el, t))
-	el.OnClick(func() {
-		w.toggleRSSArticleStar(c, art)
+}
+
+// rssBodyToggleAction switches the open article between the feed's own version
+// and its extracted full text. Until an article holds full text the box starts
+// the fetch that gets it, and a fetch that gave up offers the same retry the
+// reader's own line beside the body does.
+func (w *Window) rssBodyToggleAction(c *ui.Context, t mui.Tokens, art core.RSSArticle) ui.Element {
+	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
+	label := "Show Original"
+	glyph, color := "doc.text", t.Muted
+	switch {
+	case w.rssFullTextPhase(art.ID) == rssFullTextFetching:
+		label := "Fetching…"
+		if zh {
+			label = "抓取中…"
+		}
+		return w.rssHeaderAction(c, t, rssHeaderActionSpec{
+			key: "rss-reader-body-toggle", label: label, glyph: glyph, busy: true,
+		})
+	case w.rssFullTextPhase(art.ID) == rssFullTextFailed && !art.IsFullText:
+		// This attempt gave up on the article, so the control names the one
+		// thing it can still do, and keeps its own glyph: it is still the way
+		// to the article's text.
+		label, color = "Retry Full Text", t.Warning
+		if zh {
+			label = "重试抓取"
+		}
+	case !art.IsFullText:
+		label = "Fetch Full Text"
+		if zh {
+			label = "抓取全文"
+		}
+	case w.rssReader.viewFeed:
+		label, glyph = "Show Full Text", "doc.plaintext"
+		if zh {
+			label = "显示全文"
+		}
+	default:
+		if zh {
+			label = "显示原文"
+		}
+	}
+	return w.rssHeaderAction(c, t, rssHeaderActionSpec{
+		key: "rss-reader-body-toggle", label: label, glyph: glyph, color: color,
+		onClick: func() { w.toggleRSSBodyView(c, art) },
+	})
+}
+
+// rssOpenAction opens the article's original page in the default browser.
+func (w *Window) rssOpenAction(c *ui.Context, t mui.Tokens, art core.RSSArticle) ui.Element {
+	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
+	label := "Open in Browser"
+	if zh {
+		label = "在浏览器中打开"
+	}
+	return w.rssHeaderAction(c, t, rssHeaderActionSpec{
+		key: "rss-reader-open", label: label, glyph: "safari",
+		onClick: func() {
+			if art.Link != "" {
+				c.OpenURL(art.Link)
+			}
+		},
+	})
+}
+
+// rssRefreshAction is the header's re-fetch: idle as Refetch, a spinner while
+// the fetch runs, and the warning face once an attempt gave up. Its name stays
+// the control's own, and the tooltip carries the phase, so the accessible name
+// of the box never changes under the pointer while the body toggle already
+// names the fetch itself.
+func (w *Window) rssRefreshAction(c *ui.Context, t mui.Tokens, art core.RSSArticle) ui.Element {
+	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
+	label, tooltip, color := "Refetch", "", t.Muted
+	if zh {
+		label = "重新抓取"
+	}
+	spec := rssHeaderActionSpec{key: "rss-reader-refetch", label: label, glyph: "arrow.clockwise", color: color}
+	switch w.rssFullTextPhase(art.ID) {
+	case rssFullTextFetching:
+		spec.busy = true
+		tooltip = "Fetching…"
+		if zh {
+			tooltip = "抓取中…"
+		}
+	case rssFullTextFailed:
+		// This attempt gave up on the article, so the tooltip names the one
+		// thing the control can still do.
+		tooltip, spec.color = "Retry Full Text", t.Warning
+		if zh {
+			tooltip = "重试抓取"
+		}
+	}
+	if tooltip != "" {
+		spec.tooltip = tooltip
+	}
+	spec.onClick = func() { w.refetchRSSArticle(c, art) }
+	return w.rssHeaderAction(c, t, spec)
+}
+
+// rssShareMenuWidth is the share menu's panel width, wide enough for its two
+// commands and the pointer's room beside them.
+const rssShareMenuWidth float32 = 196
+
+// rssShareCopyWords are the share menu's two commands, the sentences that
+// confirm them, and the one the control says when the article has no link.
+type rssShareCopyWords struct {
+	action     string
+	copyLink   string
+	copyBoth   string
+	copiedLink string
+	copiedBoth string
+	noLink     string
+}
+
+// rssShareWords returns the share menu's words in the reader's language.
+func rssShareWords(locale string) rssShareCopyWords {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return rssShareCopyWords{
+			action:     "分享",
+			copyLink:   "复制链接",
+			copyBoth:   "复制标题与链接",
+			copiedLink: "已复制链接",
+			copiedBoth: "已复制标题与链接",
+			noLink:     "这篇文章没有链接",
+		}
+	}
+	return rssShareCopyWords{
+		action:     "Share",
+		copyLink:   "Copy Link",
+		copyBoth:   "Copy Title and Link",
+		copiedLink: "Link copied",
+		copiedBoth: "Title and link copied",
+		noLink:     "This article has no link",
+	}
+}
+
+// rssShareAction is the header's share control: a two-item menu that puts the
+// article's link, or its title and link, on the clipboard. There is no system
+// share sheet behind it, and an article without a link cannot be shared.
+func (w *Window) rssShareAction(c *ui.Context, t mui.Tokens, art core.RSSArticle) ui.Element {
+	words := rssShareWords(c.Locale())
+	link := strings.TrimSpace(art.Link)
+	spec := rssHeaderActionSpec{
+		key: "rss-reader-share", label: words.action, glyph: "square.and.arrow.up",
+		disabled: link == "", on: w.rssShareMenuOpen && link != "",
+	}
+	if link == "" {
+		// Nothing to share, and the control says why.
+		spec.tooltip = words.noLink
+		return w.rssHeaderAction(c, t, spec)
+	}
+	el := w.rssHeaderAction(c, t, spec)
+	el.PopoverMenuButton(func(m *ui.Menu) {
+		if m.Item(words.copyLink).Chosen() {
+			w.copyRSSArticleText(c, words.copiedLink, link)
+		}
+		if m.Item(words.copyBoth).Chosen() {
+			w.copyRSSArticleText(c, words.copiedBoth, rssShareTitleAndLink(art))
+		}
+	}, ui.PopoverMenuButtonOptions{
+		At: ui.AnchorBottomEnd, Self: ui.AnchorTopEnd, Open: &w.rssShareMenuOpen,
+		Panel: func(panel ui.Element) {
+			panel.MinWidth(rssShareMenuWidth).Radius(mui.RadiusNotice).
+				Border(mui.Hairline/2, t.Border).
+				Shadow(0, mui.ElevationOffsetY, mui.ElevationBlur, mui.ElevationSpread, t.Shadow)
+		},
 	})
 	return el
+}
+
+// rssShareTitleAndLink is what the share menu's second command puts on the
+// clipboard: the article's title, then its link on the next line, so a paste
+// into a note or a message keeps both.
+func rssShareTitleAndLink(art core.RSSArticle) string {
+	title, link := strings.TrimSpace(art.Title), strings.TrimSpace(art.Link)
+	if title == "" {
+		return link
+	}
+	return title + "\n" + link
+}
+
+// copyRSSArticleText puts text on the clipboard and confirms it, or says the
+// copy failed when the system refused it. The confirmation rides the frame the
+// clipboard's answer arrives on rather than the frame the menu opened in, whose
+// context the menu itself has outlived.
+func (w *Window) copyRSSArticleText(c *ui.Context, copied, text string) {
+	locale := c.Locale()
+	c.WriteClipboardThen(text, func(err error) {
+		if err != nil {
+			w.toast(nil, rssCopyFailed(locale), true)
+			return
+		}
+		w.toast(nil, copied, false)
+	})
+}
+
+// rssCopyFailed is the sentence a clipboard write that never landed shows.
+func rssCopyFailed(locale string) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return "无法复制到剪贴板"
+	}
+	return "Couldn't copy to the clipboard"
+}
+
+// toggleRSSBodyView switches the open article between its extracted full text
+// and the feed's own version. An article that holds no full text yet has
+// nothing to switch to, so the same control asks for the text instead, through
+// the fetch every other part of the reader uses.
+func (w *Window) toggleRSSBodyView(c *ui.Context, art core.RSSArticle) {
+	if w.rssFullTextPhase(art.ID) == rssFullTextFetching {
+		return
+	}
+	if !art.IsFullText {
+		w.refetchRSSArticle(c, art)
+		return
+	}
+	w.rssReader.viewFeed = !w.rssReader.viewFeed
+	if c != nil {
+		c.Invalidate()
+	}
 }
 
 // rssReaderBody is the scrolling article body: the reading column of blocks,
 // the line above them that follows the full-text fetch whenever only the
 // feed's own text is available, and the original article link. blocks are the
-// body the pane parsed once for this frame, which the paragraph rail maps.
-func (w *Window) rssReaderBody(c *ui.Context, t mui.Tokens, art core.RSSArticle, blocks []core.ArticleBlock) {
+// body the pane parsed once for this frame, which the paragraph rail maps, and
+// feedView says those blocks are the feed's version rather than the extracted
+// text.
+func (w *Window) rssReaderBody(c *ui.Context, t mui.Tokens, art core.RSSArticle, blocks []core.ArticleBlock, feedView bool) {
 	st := &w.rssReader
 	scale := w.readingType()
-	degraded := !art.IsFullText || len(blocks) == 0
+	// An article the reader asked to see from its feed is showing the original,
+	// not a fallback, so it carries no fetch line; one whose feed body was never
+	// kept falls back to its summary and says so.
+	missingFeedBody := feedView && strings.TrimSpace(art.FeedContentHTML) == ""
+	degraded := !art.IsFullText || missingFeedBody || len(blocks) == 0
 	gutter := rssReaderPadding(w.rssLayout.readerWidth - rssTickRailWidth)
 
 	body := ui.Scroll(c.Key("rss-reader-body:"+art.ID)).Grow(1).MinHeight(0).Clip().
@@ -885,7 +1170,13 @@ func (w *Window) rssReaderBody(c *ui.Context, t mui.Tokens, art core.RSSArticle,
 	}
 }
 
-func (w *Window) rssReaderBlocks(art core.RSSArticle) []core.ArticleBlock {
+// rssReaderBlocks is the body the reader draws for an article: its parsed
+// blocks, or the feed's own version while the header's toggle asks for the
+// original. feedView is the toggle's choice for this article.
+func (w *Window) rssReaderBlocks(art core.RSSArticle, feedView bool) []core.ArticleBlock {
+	if feedView {
+		return w.rssFeedViewBlocks(art)
+	}
 	if len(art.Blocks) > 0 {
 		return art.Blocks
 	}
@@ -897,6 +1188,34 @@ func (w *Window) rssReaderBlocks(art core.RSSArticle) []core.ArticleBlock {
 	st.parsedBlocksArticleID = art.ID
 	st.parsedBlocksUpdatedAt = art.UpdatedAt
 	st.parsedBlocks = blocks
+	return blocks
+}
+
+// rssFeedViewBlocks is the body the reader shows for an article's original: the
+// version the feed itself delivered, parsed once per article so the rail and
+// the scroll frame do not re-parse it, and the summary the article carries when
+// a row written before that version was kept has none, so the pane is never
+// blank.
+func (w *Window) rssFeedViewBlocks(art core.RSSArticle) []core.ArticleBlock {
+	st := &w.rssReader
+	if st.feedViewArticleID == art.ID && st.feedViewUpdatedAt == art.UpdatedAt && st.feedViewBlocks != nil {
+		return st.feedViewBlocks
+	}
+	var blocks []core.ArticleBlock
+	if body := strings.TrimSpace(art.FeedContentHTML); body != "" {
+		blocks = core.ParseHTMLBlocks(body)
+	}
+	if len(blocks) == 0 {
+		if snippet := strings.TrimSpace(art.Snippet); snippet != "" {
+			blocks = core.ParseHTMLBlocks("<p>" + htmlpkg.EscapeString(snippet) + "</p>")
+		}
+	}
+	if blocks == nil {
+		blocks = []core.ArticleBlock{}
+	}
+	st.feedViewArticleID = art.ID
+	st.feedViewUpdatedAt = art.UpdatedAt
+	st.feedViewBlocks = blocks
 	return blocks
 }
 

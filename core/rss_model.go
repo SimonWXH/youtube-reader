@@ -100,23 +100,29 @@ type RSSGroup struct {
 // local to each device. Cross-platform clients (e.g. Android) fetch content
 // directly from the feed source and store it in their own local SQLite databases.
 type RSSArticle struct {
-	ID          string         `json:"id"`                  // Stable global ID: "art:" + feedID + ":" + sha256(dedupKey)[:16]
-	FeedID      string         `json:"feedId"`              // Associated feed ID
-	Title       string         `json:"title"`               // Article title
-	Link        string         `json:"link"`                // Web link
-	GUID        string         `json:"guid,omitempty"`      // Item GUID / ID from feed
-	Author      string         `json:"author,omitempty"`    // Author name
-	PublishedAt string         `json:"publishedAt"`         // ISO8601 published date
-	Snippet     string         `json:"snippet"`             // 2-line plain-text snippet for list views
-	ContentHTML string         `json:"contentHtml"`         // Full HTML content (local SQLite only)
-	IsFullText  bool           `json:"isFullText"`          // True if full text was extracted; false if degraded to summary
-	HeroImage   string         `json:"heroImage,omitempty"` // Hero/lead image URL
-	Blocks      []ArticleBlock `json:"blocks,omitempty"`    // Structured blocks for native reading view
-	Read        bool           `json:"read"`                // Local read state
-	ReadAt      int64          `json:"readAt,omitempty"`    // Timestamp when marked read (msec)
-	Starred     bool           `json:"starred"`             // Local star / favorite state
-	StarredAt   int64          `json:"starredAt,omitempty"` // Timestamp when starred (msec)
-	UpdatedAt   int64          `json:"updatedAt"`           // Millisecond timestamp
+	ID          string `json:"id"`               // Stable global ID: "art:" + feedID + ":" + sha256(dedupKey)[:16]
+	FeedID      string `json:"feedId"`           // Associated feed ID
+	Title       string `json:"title"`            // Article title
+	Link        string `json:"link"`             // Web link
+	GUID        string `json:"guid,omitempty"`   // Item GUID / ID from feed
+	Author      string `json:"author,omitempty"` // Author name
+	PublishedAt string `json:"publishedAt"`      // ISO8601 published date
+	Snippet     string `json:"snippet"`          // 2-line plain-text snippet for list views
+	ContentHTML string `json:"contentHtml"`      // Full HTML content (local SQLite only)
+	// FeedContentHTML is the body the feed itself delivered, kept beside the
+	// extracted full text so the reader can show either. It is empty for an
+	// article the feed never supplied a body for, and for rows written before
+	// this was kept: the reader falls back to the summary there. Local SQLite
+	// only, and never loaded by the list queries.
+	FeedContentHTML string         `json:"feedContentHtml,omitempty"`
+	IsFullText      bool           `json:"isFullText"`          // True if full text was extracted; false if degraded to summary
+	HeroImage       string         `json:"heroImage,omitempty"` // Hero/lead image URL
+	Blocks          []ArticleBlock `json:"blocks,omitempty"`    // Structured blocks for native reading view
+	Read            bool           `json:"read"`                // Local read state
+	ReadAt          int64          `json:"readAt,omitempty"`    // Timestamp when marked read (msec)
+	Starred         bool           `json:"starred"`             // Local star / favorite state
+	StarredAt       int64          `json:"starredAt,omitempty"` // Timestamp when starred (msec)
+	UpdatedAt       int64          `json:"updatedAt"`           // Millisecond timestamp
 }
 
 // RSSReadRecord holds cross-device read status for an article.

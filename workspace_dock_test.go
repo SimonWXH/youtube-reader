@@ -735,7 +735,7 @@ func TestRSSSidebarRowsSelectTheSmartFeed(t *testing.T) {
 		t.Fatalf("after clicking Starred, selection = %q, want starred", a.Selected)
 	}
 
-	if err := tt.Click("All articles"); err != nil {
+	if err := tt.Click("All Unread"); err != nil {
 		t.Fatalf("click All articles: %v", err)
 	}
 	tt.Frame()

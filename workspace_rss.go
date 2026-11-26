@@ -226,21 +226,35 @@ func (w *Window) confirmUnsubscribeRSSFeed(c *ui.Context, feed core.RSSFeed) {
 	w.invalidateMainWindow()
 }
 
+// rssSmartFeedCopy is the sidebar's smart feed section: its header and the
+// three lists it offers, in the reference's order - the articles published in
+// the last 24 hours, every unread article, and the starred ones.
+type rssSmartFeedCopy struct {
+	header  string
+	today   string
+	all     string
+	starred string
+}
+
+// rssSmartFeedWords returns the smart feed section's words in the reader's
+// language.
+func rssSmartFeedWords(locale string) rssSmartFeedCopy {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return rssSmartFeedCopy{header: "智能订阅", today: "今天", all: "全部未读", starred: "标星"}
+	}
+	return rssSmartFeedCopy{header: "Smart Feeds", today: "Today", all: "All Unread", starred: "Starred"}
+}
+
 // rssSidebar renders the RSS workspace's sources and smart feeds in the sidebar.
 func (w *Window) rssSidebar(c *ui.Context, t mui.Tokens, sidebar ui.Element) {
 	nav := &sidebarNav{w: w, focus: w.sidebarFocus, actions: map[string]func(){}}
 	w.sidebarFocus = ""
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
-	feedsHeader := "Feeds"
-	allArticlesLabel := "All articles"
-	starredLabel := "Starred"
+	words := rssSmartFeedWords(c.Locale())
 	noFeedsTitle := "No RSS feeds yet"
 	noFeedsDesc := "Articles will appear here once feeds are subscribed."
 	addFeedBtn := "Add RSS Feed"
 	if zh {
-		feedsHeader = "订阅源"
-		allArticlesLabel = "全部文章"
-		starredLabel = "标星文章"
 		noFeedsTitle = "暂无 RSS 订阅"
 		noFeedsDesc = "添加订阅源后，文章将显示在此处。"
 		addFeedBtn = "添加订阅源"
@@ -249,21 +263,34 @@ func (w *Window) rssSidebar(c *ui.Context, t mui.Tokens, sidebar ui.Element) {
 	var drag rssGroupDragFrame
 	var fDrag rssFeedDragFrame
 
-	totalUnreadCount := 0
-	starredCount := 0
+	var totalUnreadCount, starredCount, todayUnreadCount int
+	selected := ""
 	if w.app != nil {
 		totalUnreadCount = w.app.RSSTotalUnread
 		starredCount = w.app.RSSStarredTotal
+		todayUnreadCount = w.app.RSSTodayUnread
+		selected = w.app.Selected
 	}
 
 	ui.Scroll(c.Key("rss-sidebar-scroll")).Grow(1).MinHeight(0).Clip().
 		TrackScroll(w.workspaceSidebarScroll(WorkspaceRSS)).
 		Padding(0, mui.Space(2), mui.Space(2)+mui.ScrollBottomInset).Children(func() {
-		// 1. Smart Feeds section
-		sectionHeader(c, t, feedsHeader)
+		// 1. Smart Feeds: Today, All Unread and Starred, each an icon and a
+		// right-aligned unread count on the shared 28 pt row.
+		sectionHeader(c, t, words.header)
 		nav.row(c, t, mui.SidebarRow{
-			Key: "rss-all", Label: allArticlesLabel, Symbol: "newspaper", Count: fmt.Sprintf("%d", totalUnreadCount),
-			Selected: w.app != nil && w.app.Selected == "all",
+			Key: "rss-today", Label: words.today, Symbol: "sun.max", Count: fmt.Sprintf("%d", todayUnreadCount),
+			Selected: selected == todayDestination,
+			OnClick: func() {
+				w.commitActiveRSSRenames()
+				if w.app != nil {
+					w.app.SelectDestination(todayDestination)
+				}
+			},
+		})
+		nav.row(c, t, mui.SidebarRow{
+			Key: "rss-all", Label: words.all, Symbol: "circle.fill", Count: fmt.Sprintf("%d", totalUnreadCount),
+			Selected: selected == "all",
 			OnClick: func() {
 				w.commitActiveRSSRenames()
 				if w.app != nil {
@@ -272,8 +299,8 @@ func (w *Window) rssSidebar(c *ui.Context, t mui.Tokens, sidebar ui.Element) {
 			},
 		})
 		nav.row(c, t, mui.SidebarRow{
-			Key: "rss-starred", Label: starredLabel, Symbol: "star", Count: fmt.Sprintf("%d", starredCount),
-			Selected: w.app != nil && w.app.Selected == "starred",
+			Key: "rss-starred", Label: words.starred, Symbol: "star.fill", Count: fmt.Sprintf("%d", starredCount),
+			Selected: selected == "starred",
 			OnClick: func() {
 				w.commitActiveRSSRenames()
 				if w.app != nil {
@@ -524,7 +551,7 @@ func (w *Window) renderRSSFeedRow(c *ui.Context, t mui.Tokens, f core.RSSFeed, g
 		row := nav.row(c, t, mui.SidebarRow{
 			Key:          fmt.Sprintf("rss-feed:%s:%s", groupID, f.ID),
 			Label:        f.DisplayName(),
-			Channel:      true,
+			Feed:         true,
 			Avatar:       f.AvatarURL,
 			Count:        countStr,
 			Selected:     w.app != nil && w.app.Selected == "feed:"+f.ID,

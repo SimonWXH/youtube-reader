@@ -1132,3 +1132,129 @@ func TestStoreAddsTheFullTextChoiceToAnOlderFeedTable(t *testing.T) {
 		t.Fatal("the upgraded store did not keep the setting")
 	}
 }
+
+// TestStoreKeepsTheFeedsOwnBodyBesideTheFullText covers what the reader's
+// original/full-text toggle reads: the body the feed delivered is kept when
+// extraction replaces it, a later refresh never drops it, and the list queries
+// leave it in the store so no article list carries every feed's HTML.
+func TestStoreKeepsTheFeedsOwnBodyBesideTheFullText(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	now := time.Now().UnixMilli()
+	feed := RSSFeed{ID: "feed:original", FeedURL: "https://example.com/rss", Title: "A Feed", UpdatedAt: now}
+	if err := store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatal(err)
+	}
+
+	// The feed delivered its own body.
+	article := RSSArticle{
+		ID: "art:original:1", FeedID: feed.ID, Title: "A Post", Link: "https://example.com/a",
+		PublishedAt: "2026-11-23T08:00:00Z", Snippet: "the feed's opening words",
+		ContentHTML: "<p>the feed's own body</p>", UpdatedAt: now,
+	}
+	if err := store.SaveRSSArticles(ctx, []RSSArticle{article}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Extraction replaced the body and kept the feed's own beside it.
+	article.ContentHTML = "<p>the extracted full text</p>"
+	article.FeedContentHTML = "<p>the feed's own body</p>"
+	article.IsFullText = true
+	if err := store.SaveRSSArticles(ctx, []RSSArticle{article}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.GetRSSArticle(ctx, article.ID)
+	if err != nil || got == nil {
+		t.Fatalf("read the article back: %v %v", got, err)
+	}
+	if got.ContentHTML != "<p>the extracted full text</p>" {
+		t.Fatalf("the article's body = %q, want the extracted text", got.ContentHTML)
+	}
+	if got.FeedContentHTML != "<p>the feed's own body</p>" {
+		t.Fatalf("the feed's own body = %q, want it kept beside the full text", got.FeedContentHTML)
+	}
+
+	// A later refresh writes the article without a feed body and must not lose
+	// the one the store already holds.
+	article.FeedContentHTML = ""
+	article.UpdatedAt = now + 1
+	if err := store.SaveRSSArticles(ctx, []RSSArticle{article}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = store.GetRSSArticle(ctx, article.ID); err != nil || got == nil {
+		t.Fatalf("read the article back after a refresh: %v %v", got, err)
+	}
+	if got.FeedContentHTML != "<p>the feed's own body</p>" {
+		t.Fatalf("a refresh dropped the feed's own body: %q", got.FeedContentHTML)
+	}
+
+	// The list queries stay lean: the article list never carries the body, so
+	// the reader loads the one version it shows on demand.
+	summaries, err := store.ListRSSArticleSummaries(ctx, RSSArticleFilter{})
+	if err != nil || len(summaries) != 1 {
+		t.Fatalf("list the summaries: %v %v", summaries, err)
+	}
+	if summaries[0].FeedContentHTML != "" {
+		t.Fatalf("the summary list carried the feed's own body: %q", summaries[0].FeedContentHTML)
+	}
+	articles, err := store.ListRSSArticles(ctx, RSSArticleFilter{})
+	if err != nil || len(articles) != 1 {
+		t.Fatalf("list the articles: %v %v", articles, err)
+	}
+	if articles[0].FeedContentHTML != "" {
+		t.Fatalf("the article list carried the feed's own body: %q", articles[0].FeedContentHTML)
+	}
+}
+
+// TestStoreAddsTheFeedsOwnBodyToAnOlderArticleTable is the column's upgrade
+// path: articles a store wrote before it existed keep every field they held,
+// read with no original body, and gain one the next time they are saved.
+func TestStoreAddsTheFeedsOwnBodyToAnOlderArticleTable(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "old-articles.sqlite")
+	db, err := sqlite.Open(ctx, path, sqlite.OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ddl := range []string{
+		`CREATE TABLE rss_feeds (id TEXT PRIMARY KEY, feed_url TEXT NOT NULL, site_url TEXT, title TEXT, custom_title TEXT, group_ids TEXT, avatar_url TEXT, etag TEXT, last_modified TEXT, last_fetched_at INTEGER NOT NULL DEFAULT 0, failure_count INTEGER NOT NULL DEFAULT 0, last_error TEXT, last_error_at INTEGER NOT NULL DEFAULT 0, refresh_interval_mins INTEGER NOT NULL DEFAULT 30, updated_at INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE TABLE rss_articles (id TEXT PRIMARY KEY, feed_id TEXT NOT NULL, title TEXT NOT NULL, link TEXT, guid TEXT, author TEXT, published_at TEXT, snippet TEXT, content_html TEXT, is_full_text INTEGER NOT NULL DEFAULT 0, hero_image TEXT, blocks_json TEXT, read INTEGER NOT NULL DEFAULT 0, read_at INTEGER NOT NULL DEFAULT 0, starred INTEGER NOT NULL DEFAULT 0, starred_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)`,
+		`INSERT INTO rss_feeds(id,feed_url,title,updated_at) VALUES('feed:old','https://example.com/rss.xml','Old Feed',7)`,
+		`INSERT INTO rss_articles(id,feed_id,title,link,published_at,snippet,content_html,is_full_text,read,updated_at) VALUES('art:old','feed:old','An Old Post','https://example.com/old','2026-11-23T08:00:00Z','an old summary','<p>an old body</p>',1,1,7)`,
+	} {
+		if _, err := db.Execute(ctx, ddl); err != nil {
+			t.Fatalf("%s: %v", ddl, err)
+		}
+	}
+	db.Close()
+
+	store, err := OpenStore(ctx, path)
+	if err != nil {
+		t.Fatalf("open an older store: %v", err)
+	}
+	defer store.Close()
+
+	got, err := store.GetRSSArticle(ctx, "art:old")
+	if err != nil || got == nil {
+		t.Fatalf("read the older article: %v %v", got, err)
+	}
+	if got.Title != "An Old Post" || got.ContentHTML != "<p>an old body</p>" || !got.IsFullText || !got.Read {
+		t.Fatalf("the upgrade lost the article's fields: %+v", got)
+	}
+	if got.FeedContentHTML != "" {
+		t.Fatalf("an article written before the column reads %q as its original, want none", got.FeedContentHTML)
+	}
+
+	// The next save writes the original body the article gains.
+	got.FeedContentHTML = "<p>the feed's own body</p>"
+	got.UpdatedAt = time.Now().UnixMilli()
+	if err := store.SaveRSSArticles(ctx, []RSSArticle{*got}); err != nil {
+		t.Fatalf("save the upgraded article: %v", err)
+	}
+	if again, err := store.GetRSSArticle(ctx, "art:old"); err != nil || again == nil {
+		t.Fatalf("read the upgraded article back: %v %v", again, err)
+	} else if again.FeedContentHTML != "<p>the feed's own body</p>" {
+		t.Fatalf("the upgraded store did not keep the original body: %q", again.FeedContentHTML)
+	}
+}

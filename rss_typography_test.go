@@ -217,7 +217,7 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 	}{
 		{name: "default window", width: 1280, sidebar: defaultSidebarWidth, list: defaultRSSListWidth, reader: 618, inline: true},
 		{name: "widest reader", width: 1280, sidebar: minSidebarWidth, list: minRSSListWidth, reader: 798, inline: true},
-		{name: "band under an inline row", width: 1200, sidebar: maxSidebarWidth, list: defaultRSSListWidth, reader: 478, inline: false},
+		{name: "band under an inline row", width: 1200, sidebar: maxSidebarWidth, list: maxRSSListWidth, reader: 398, inline: false},
 		{name: "minimum window", width: 960, sidebar: maxSidebarWidth, list: maxRSSListWidth, reader: rssReaderMinWidth, inline: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -246,10 +246,7 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 			if track.H != 28 {
 				t.Fatalf("the size control's track is %v tall, want the header's 28 pt control height", track.H)
 			}
-			action, ok := tt.Find("Open in Browser")
-			if !ok {
-				t.Fatal("the reader's Open in Browser action is missing")
-			}
+			actions := rssHeaderActionsArea(t, tt)
 			for i, segment := range segments {
 				box := segment.Bounds
 				if box.X < header.Bounds.X || box.X+box.W > header.Bounds.X+header.Bounds.W {
@@ -262,13 +259,13 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 				if box.Y < header.Bounds.Y || box.Y+box.H > header.Bounds.Y+header.Bounds.H {
 					t.Fatalf("segment %d at %v leaves the header %v", i, box, header.Bounds)
 				}
-				sharesRow := box.Y+box.H > action.Y && box.Y < action.Y+action.H
+				sharesRow := box.Y+box.H > actions.Y && box.Y < actions.Y+actions.H
 				if sharesRow != tc.inline {
 					t.Fatalf("segment %d at %v shares the actions' row = %v, want %v", i, box, sharesRow, tc.inline)
 				}
 			}
-			if action.X+action.W > header.Bounds.X+header.Bounds.W {
-				t.Fatalf("the actions run outside the header: %v in %v", action, header.Bounds)
+			if actions.X+actions.W > header.Bounds.X+header.Bounds.W {
+				t.Fatalf("the actions run outside the header: %v in %v", actions, header.Bounds)
 			}
 			rssHeaderFeedBox(t, tt, header.Bounds)
 		})
@@ -279,7 +276,7 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 		// Hold the header in its fetching face for every width.
 		w.rssFullText = rssFullTextStatus{articleID: "art-reader", phase: rssFullTextFetching}
 		inlineRows, widths := 0, 0
-		for width := 1200; width <= 1300; width += 2 {
+		for width := 1100; width <= 1200; width += 2 {
 			tt := ui.NewTester(w.view, width, 808)
 			tt.Frame()
 			openRSSReaderTickArticle(t, tt)
@@ -292,11 +289,11 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 			if len(segments) != 3 {
 				t.Fatalf("%d pt: the size control has %d segments, want the three steps", width, len(segments))
 			}
-			action, ok := tt.Find("Fetching…")
-			if !ok {
-				t.Fatalf("%d pt: the re-fetch action is missing while fetching", width)
+			if got := rssHeaderAction(t, tt, "Fetching…").Bounds; got.W != rssHeaderActionSize {
+				t.Fatalf("%d pt: the fetching action is %v pt wide, want the %v pt box", width, got.W, rssHeaderActionSize)
 			}
-			if box := segments[0].Bounds; box.Y+box.H > action.Y && box.Y < action.Y+action.H {
+			actions := rssHeaderActionsArea(t, tt)
+			if box := segments[0].Bounds; box.Y+box.H > actions.Y && box.Y < actions.Y+actions.H {
 				inlineRows++
 			}
 			rssHeaderFeedBox(t, tt, header.Bounds)

@@ -117,6 +117,19 @@ func (a *App) reloadRSSCounts() {
 	a.RSSUnreadMap = unreadMap
 	a.RSSTotalUnread, _ = a.Store.RSSTotalUnreadCount(ctx)
 	a.RSSStarredTotal, _ = a.Store.RSSStarredCount(ctx)
+	a.RSSTodayUnread = rssTodayUnread(a.RSSArticles, a.clockNow())
+}
+
+// rssTodayUnread counts the unread articles the Today destination holds: the
+// summaries it filters, so the row's count is never wider than its list.
+func rssTodayUnread(articles []core.RSSArticle, now time.Time) int {
+	count := 0
+	for _, art := range articles {
+		if !art.Read && rssPublishedWithin(art, now) {
+			count++
+		}
+	}
+	return count
 }
 
 // RSSGroupCollapsed reports whether an RSS group is folded in the sidebar.
@@ -616,12 +629,22 @@ func (a *App) RefetchRSSArticleContent(ctx context.Context, articleID string) (c
 		return *art, errors.New("article has no link to fetch")
 	}
 
+	// What the store holds before this extraction is the feed's own body, so it
+	// is kept as the article's original even when the new text replaces it.
+	feedOriginal := art.FeedContentHTML
+	if feedOriginal == "" && !art.IsFullText {
+		feedOriginal = art.ContentHTML
+	}
+
 	contentHTML, blocks, isFullText, hero, _ := core.ExtractFullText(ctx, a.rssArticleClient(), art.Link, art.ContentHTML, art.Snippet)
 	if strings.TrimSpace(contentHTML) == "" {
 		return *art, errors.New("the article page returned no content")
 	}
 
 	art.ContentHTML = contentHTML
+	if isFullText && art.FeedContentHTML == "" {
+		art.FeedContentHTML = feedOriginal
+	}
 	art.Blocks = blocks
 	art.IsFullText = isFullText
 	if art.HeroImage == "" && hero != "" {

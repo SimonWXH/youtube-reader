@@ -37,6 +37,10 @@ type App struct {
 	RSSUnreadMap    map[string]int
 	RSSTotalUnread  int
 	RSSStarredTotal int
+	// RSSTodayUnread is how many unread articles the Today destination holds:
+	// published in the last 24 hours and not yet read. It is taken from the
+	// same summaries the article list filters, so the row and the list agree.
+	RSSTodayUnread int
 
 	// RSSArticles holds article summaries in memory; full article bodies are paged on demand via SelectedRSSArticle.
 	RSSArticles          []core.RSSArticle
@@ -73,6 +77,11 @@ type App struct {
 	// reads. Nil means the shared client; a test replaces it so no article
 	// selection reaches the network.
 	rssHTTPClient *http.Client
+
+	// now is the app's clock: the wall clock, or the fixed moment a test sets
+	// so the Today destination and its count do not move with the suite's own
+	// runtime.
+	now func() time.Time
 }
 
 // GroupCollapsed reports whether a subscription group's channel list is
@@ -1687,19 +1696,66 @@ func (a *App) RSSUnreadCount(feedID string) int {
 	return a.RSSUnreadMap[feedID]
 }
 
+// todayDestination is the smart feed that holds the articles published in the
+// last 24 hours, the first of the sidebar's three.
+const todayDestination = "today"
+
+// rssTodayWindow is how far back Today reaches: the rolling 24 hours before the
+// reader's own clock, so the window follows the device's timezone rather than a
+// fixed calendar day and never counts an article by the moment it was imported.
+const rssTodayWindow = 24 * time.Hour
+
+// rssPublishedWithin reports whether an article's own publication stamp falls
+// in the 24 hours up to now. An article the feed gave no readable stamp for has
+// no place in Today: the window is about when the article was published.
+func rssPublishedWithin(art core.RSSArticle, now time.Time) bool {
+	published, ok := rssPublishedTime(art.PublishedAt)
+	if !ok {
+		return false
+	}
+	return !published.Before(now.Add(-rssTodayWindow)) && !published.After(now)
+}
+
+// rssPublishedTime reads an article's publication stamp. The parse keeps the
+// instant the feed named, which is what the 24-hour window compares, and an
+// unreadable stamp answers false so the article stays out of Today.
+func rssPublishedTime(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	published, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return published, true
+}
+
+// clockNow is the app's clock: the wall clock, or the moment a test fixed.
+func (a *App) clockNow() time.Time {
+	if a.now != nil {
+		return a.now()
+	}
+	return time.Now()
+}
+
 // VisibleRSSArticles returns the list of RSS articles filtered by current selection,
 // unread filter, and search query, ordered newest first (published_at DESC, id DESC).
 func (a *App) VisibleRSSArticles() []core.RSSArticle {
 	selected := a.Selected
 	var allowedFeeds map[string]bool
 	starredOnly := false
+	todayOnly := false
 
-	if selected == "starred" {
+	switch {
+	case selected == "starred":
 		starredOnly = true
-	} else if strings.HasPrefix(selected, "feed:") {
+	case selected == todayDestination:
+		todayOnly = true
+	case strings.HasPrefix(selected, "feed:"):
 		fid := strings.TrimPrefix(selected, "feed:")
 		allowedFeeds = map[string]bool{fid: true}
-	} else if strings.HasPrefix(selected, "group:") {
+	case strings.HasPrefix(selected, "group:"):
 		gid := strings.TrimPrefix(selected, "group:")
 		allowedFeeds = map[string]bool{}
 		for _, g := range a.RSSGroups {
@@ -1710,6 +1766,10 @@ func (a *App) VisibleRSSArticles() []core.RSSArticle {
 				break
 			}
 		}
+	}
+	var todayCutoff time.Time
+	if todayOnly {
+		todayCutoff = a.clockNow()
 	}
 
 	q := strings.TrimSpace(strings.ToLower(a.Search))
@@ -1724,6 +1784,9 @@ func (a *App) VisibleRSSArticles() []core.RSSArticle {
 
 	for _, art := range a.RSSArticles {
 		if starredOnly && !art.Starred {
+			continue
+		}
+		if todayOnly && !rssPublishedWithin(art, todayCutoff) {
 			continue
 		}
 		if allowedFeeds != nil && !allowedFeeds[art.FeedID] {

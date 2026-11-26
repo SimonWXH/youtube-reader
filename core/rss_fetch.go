@@ -311,6 +311,9 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 		var contentHTML string
 		var blocks []ArticleBlock
 		var isFullText bool
+		// feedBody is the body the feed itself delivered, kept when extraction
+		// replaces it so the reader can show either version.
+		var feedBody string
 
 		if f.extractFullText && articleLink != "" {
 			extractedHTML, parsedBlocks, fullTextOK, extractedHero, _ := ExtractFullText(ctx, f.client, articleLink, feedContent, snippet)
@@ -341,6 +344,11 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 				blocks[i].URL = resolveAssetURL(articleBase, blocks[i].URL)
 			}
 		}
+		// An extracted article keeps the feed's own version beside the full
+		// text; one read from the feed's own text needs no second copy.
+		if isFullText {
+			feedBody = feedContent
+		}
 
 		articles = append(articles, RSSArticle{
 			ID:          artID,
@@ -352,12 +360,14 @@ func (f *RSSFetcher) FetchFeed(ctx context.Context, feed RSSFeed) (*FetchFeedRes
 			PublishedAt: publishedAt,
 			Snippet:     snippet,
 			ContentHTML: contentHTML,
-			IsFullText:  isFullText,
-			HeroImage:   heroImage,
-			Blocks:      blocks,
-			Read:        false, // Will not overwrite if already read in DB
-			Starred:     false, // Will not overwrite if already starred in DB
-			UpdatedAt:   now,
+			// The feed's own body, empty when the feed carried none.
+			FeedContentHTML: feedBody,
+			IsFullText:      isFullText,
+			HeroImage:       heroImage,
+			Blocks:          blocks,
+			Read:            false, // Will not overwrite if already read in DB
+			Starred:         false, // Will not overwrite if already starred in DB
+			UpdatedAt:       now,
 		})
 	}
 

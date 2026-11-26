@@ -755,3 +755,68 @@ func TestFetchFeedSkipsUnchangedExistingArticles(t *testing.T) {
 		t.Fatalf("second fetch got fetched=%d saved=%d, want fetched=1 saved=0", second.ItemsFetched, second.ItemsSaved)
 	}
 }
+
+// TestFetchKeepsTheFeedsOwnBodyWhenItExtractsTheFullText is the fetch path the
+// reader's toggle depends on: extraction replaces the article's body with the
+// page's text, and the body the feed delivered is kept beside it, while the
+// article list still carries neither.
+func TestFetchKeepsTheFeedsOwnBodyWhenItExtractsTheFullText(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	const feedXML = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Beside The Text</title><link>https://example.com/</link><description>Feed</description>
+<item><title>One Post</title><link>https://example.com/one-post</link><description>The feed's own opening words.</description>
+<content:encoded xmlns:content="http://purl.org/rss/1.0/modules/content/"><![CDATA[<p>The feed's own body, as the subscription delivered it.</p>]]></content:encoded>
+</item></channel></rss>`
+	const page = `<!doctype html><html><head><title>One Post</title></head><body><article>
+<h1>One Post</h1>
+<p>The page itself carries the whole argument, which is what extraction reads when the reader asks for the article rather than the feed's version of it.</p>
+<p>A second paragraph gives the extractor enough prose to treat this page as the article rather than a teaser the feed already supplied.</p>
+</article></body></html>`
+
+	feed := RSSFeed{ID: "feed:beside", FeedURL: "https://example.com/rss.xml", UpdatedAt: time.Now().UnixMilli()}
+	if err := store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: &mockTransport{roundTripFunc: func(req *http.Request) (*http.Response, error) {
+		body := page
+		if strings.HasSuffix(req.URL.Path, "/rss.xml") {
+			body = feedXML
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	}}}
+
+	if _, err := NewRSSFetcher(store, WithHTTPClient(client), WithExtractFullText(true)).FetchFeed(ctx, feed); err != nil {
+		t.Fatalf("fetch the feed: %v", err)
+	}
+
+	articles, err := store.ListRSSArticles(ctx, RSSArticleFilter{FeedID: feed.ID})
+	if err != nil || len(articles) != 1 {
+		t.Fatalf("list the fetched articles: %v %v", articles, err)
+	}
+	stored, err := store.GetRSSArticle(ctx, articles[0].ID)
+	if err != nil || stored == nil {
+		t.Fatalf("read the fetched article: %v %v", stored, err)
+	}
+	if !stored.IsFullText || !strings.Contains(stored.ContentHTML, "carries the whole argument") {
+		t.Fatalf("the article's body is not the page's text: %+v", stored)
+	}
+	if !strings.Contains(stored.FeedContentHTML, "as the subscription delivered it") {
+		t.Fatalf("the feed's own body = %q, want it kept beside the extracted text", stored.FeedContentHTML)
+	}
+
+	// The article list the reader scrolls holds summaries only: the feed's own
+	// body is read one article at a time, as the full text is.
+	summaries, err := store.ListRSSArticleSummaries(ctx, RSSArticleFilter{})
+	if err != nil || len(summaries) != 1 {
+		t.Fatalf("list the summaries: %v %v", summaries, err)
+	}
+	if summaries[0].FeedContentHTML != "" || summaries[0].ContentHTML != "" {
+		t.Fatalf("the article list carried a body: %+v", summaries[0])
+	}
+}
