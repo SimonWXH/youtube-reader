@@ -237,6 +237,39 @@ func TestRSSReaderLinklessArticleActions(t *testing.T) {
 		})
 	}
 
+	t.Run("a linkless article that already holds its text keeps the toggle", func(t *testing.T) {
+		a, w, tt := rssReaderTestWindow(t)
+		art := rssReaderTestArticle()
+		art.ID, art.Link = "art-linkless-full", ""
+		art.ContentHTML = "<p>the extracted full text</p>"
+		art.Blocks = []core.ArticleBlock{{Type: core.BlockParagraph, Text: "the extracted full text"}}
+		art.FeedContentHTML = "<p>the feed's own version</p>"
+		art.IsFullText = true
+		if err := a.Store.SaveRSSArticles(context.Background(), []core.RSSArticle{art}); err != nil {
+			t.Fatalf("save the linkless full-text article: %v", err)
+		}
+		if err := a.ReloadRSS(); err != nil {
+			t.Fatalf("reload rss: %v", err)
+		}
+		a.SelectedRSSArticleID = art.ID
+		tt.Frame()
+
+		if toggle := rssHeaderAction(t, tt, "Show Original"); toggle.Disabled {
+			t.Fatal("the original/full-text toggle is disabled on a linkless article that holds both bodies")
+		}
+		clickRSSHeaderAction(t, tt, "Show Original")
+		if !w.rssReader.viewFeed {
+			t.Fatal("the toggle did not show the article's original body")
+		}
+		if !tt.HasText("the feed's own version") {
+			t.Fatalf("the original body is not drawn: %v", tt.Texts())
+		}
+		clickRSSHeaderAction(t, tt, "Show Full Text")
+		if !tt.HasText("the extracted full text") {
+			t.Fatalf("the toggle did not return to the extracted text: %v", tt.Texts())
+		}
+	})
+
 	t.Run("linked summary keeps every action and the browser way out", func(t *testing.T) {
 		a, _, tt := rssReaderTestWindow(t)
 		if err := a.SetRSSFeedAutoFullText("feed-reader", false); err != nil {

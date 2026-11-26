@@ -588,8 +588,8 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 	sizeWidth := rssTextSizeControlWidth(c)
 	sourceWidth := rssHeaderSourceWidth(c, feedName, date)
 	sizeOnFirstRow := pillWidth+2*rowGap+sizeWidth <= content
-	sourceOnFirstRow := sourceWidth > 0 && pillWidth+rowGap+sourceWidth <= content &&
-		(!sizeOnFirstRow || pillWidth+rowGap+sourceWidth+rowGap+sizeWidth <= content)
+	sourceOnFirstRow := sourceWidth > 0 && pillWidth+2*rowGap+sourceWidth <= content &&
+		(!sizeOnFirstRow || pillWidth+3*rowGap+sourceWidth+sizeWidth <= content)
 	actions := func() {
 		w.rssHeaderActions(c, t, art)
 	}
@@ -954,7 +954,7 @@ func (w *Window) rssBodyToggleAction(c *ui.Context, t mui.Tokens, art core.RSSAr
 		key: "rss-reader-body-toggle", label: label, glyph: glyph, color: color,
 		onClick: func() { w.toggleRSSBodyView(c, art) },
 	}
-	if strings.TrimSpace(art.Link) == "" {
+	if strings.TrimSpace(art.Link) == "" && !art.IsFullText {
 		spec.disabled = true
 		spec.tooltip = rssNoLinkReason(c.Locale())
 	}

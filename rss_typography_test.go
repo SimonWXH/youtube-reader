@@ -318,6 +318,24 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 			if feed.Y < actions.Y+actions.H {
 				inlineRows++
 			}
+			gutter := rssReaderPadding(w.rssLayout.readerWidth - rssTickRailWidth)
+			contentLeft := header.Bounds.X + gutter
+			contentRight := header.Bounds.X + header.Bounds.W - rssTickRailWidth - gutter
+			track, ok := rssHeaderNode(t, tt, header.Bounds, "Text Size")
+			if !ok {
+				t.Fatalf("%d pt: the header draws no text size control", width)
+			}
+			for _, box := range []ui.Rect{actions, track} {
+				if box.X < contentLeft || box.X+box.W > contentRight {
+					t.Fatalf("%d pt: %v overhangs the header's content box %v..%v", width, box, contentLeft, contentRight)
+				}
+			}
+			for i, segment := range segments {
+				if box := segment.Bounds; box.X < contentLeft || box.X+box.W > contentRight {
+					t.Fatalf("%d pt: segment %d at %v overhangs the header's content box %v..%v",
+						width, i, box, contentLeft, contentRight)
+				}
+			}
 			rssHeaderFeedBox(t, tt, header.Bounds)
 			widths++
 		}
