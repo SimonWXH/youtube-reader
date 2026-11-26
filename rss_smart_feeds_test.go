@@ -423,18 +423,23 @@ func TestRSSAllUnreadStripDescribesItsList(t *testing.T) {
 func TestRSSAllUnreadEmptyStateSaysUpToDate(t *testing.T) {
 	for _, tc := range []struct {
 		locale, row, title, sentence, count, genericTitle, searchLabel, searchTitle string
+		searchSentence, unreadClause, feedSearchSentence                            string
 	}{
 		{
 			locale: "en", row: "All Unread", title: "You are up to date",
 			sentence: "New articles will appear here when your feeds publish them.",
 			count:    "0 articles", genericTitle: "No Articles",
 			searchLabel: "Search articles", searchTitle: "No Matching Articles",
+			searchSentence: "Try clearing the search term.", unreadClause: "unread filter",
+			feedSearchSentence: "Try clearing search terms or the unread filter.",
 		},
 		{
 			locale: "zh", row: "全部未读", title: "已无未读",
 			sentence: "订阅源更新后，新文章会出现在这里。",
 			count:    "0 篇文章", genericTitle: "暂无文章",
 			searchLabel: "搜索文章", searchTitle: "无匹配文章",
+			searchSentence: "尝试清除搜索词。", unreadClause: "未读过滤",
+			feedSearchSentence: "尝试清除搜索词或未读过滤。",
 		},
 	} {
 		t.Run(tc.locale, func(t *testing.T) {
@@ -481,7 +486,47 @@ func TestRSSAllUnreadEmptyStateSaysUpToDate(t *testing.T) {
 			if tt.HasText(tc.title) {
 				t.Fatalf("the up-to-date state outranked the search's no-match state")
 			}
+			if !tt.HasText(tc.searchSentence) {
+				t.Fatalf("the no-match copy does not name the search alone: %v", tt.Texts())
+			}
+			if tt.HasText(tc.unreadClause) {
+				t.Fatalf("the no-match copy names the Unread filter All Unread does not draw: %v", tt.Texts())
+			}
+
+			a.Selected = "feed:feed-today"
+			tt.Frame()
+			if !tt.HasText(tc.feedSearchSentence) {
+				t.Fatalf("the feed's no-match copy stopped naming its Unread filter: %v", tt.Texts())
+			}
 		})
+	}
+}
+
+// TestRSSStarredChineseSurfaceNamesOneDestination covers the Starred smart
+// feed's Chinese name: the sidebar row and the column header above its list
+// read the same word.
+func TestRSSStarredChineseSurfaceNamesOneDestination(t *testing.T) {
+	_, _, tt := rssTodayTestApp(t)
+	tt.SetLocale("zh")
+	tt.Frame()
+	if err := tt.Click("标星"); err != nil {
+		t.Fatalf("click the Starred row: %v", err)
+	}
+	tt.Frame()
+
+	row, ok := tt.AccessByRole(ui.RoleButton, "标星")
+	if !ok {
+		t.Fatalf("the sidebar has no 标星 row: %v", tt.Texts())
+	}
+	label, ok := tt.Find("标星")
+	if !ok || label.X < row.Bounds.X || label.X+label.W > row.Bounds.X+row.Bounds.W {
+		t.Fatalf("the sidebar row's own label is %v, want it inside %v", label, row.Bounds)
+	}
+	if !rssColumnHeaderHas(t, tt, "标星") {
+		t.Fatalf("the Starred column header does not read 标星: %v", tt.Texts())
+	}
+	if rssColumnHeaderHas(t, tt, "标星文章") {
+		t.Fatalf("the Starred column header keeps the sidebar row's old name: %v", tt.Texts())
 	}
 }
 

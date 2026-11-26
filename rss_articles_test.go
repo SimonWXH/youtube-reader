@@ -906,8 +906,8 @@ func TestRSSScenariosEndToEnd(t *testing.T) {
 		if !tt.HasText("No Matching Articles") {
 			t.Fatalf("expected 'No Matching Articles' empty state headline, texts = %v", tt.Texts())
 		}
-		if !tt.HasText("Try clearing search terms or the unread filter.") {
-			t.Fatalf("expected empty state sentence")
+		if !tt.HasText("Try clearing the search term.") {
+			t.Fatalf("expected the no-match sentence to name the search alone")
 		}
 
 		saveEvidenceScreenshot(t, tt, "scenario5_workspace_isolation_and_empty_state.png")

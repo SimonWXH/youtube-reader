@@ -565,7 +565,7 @@ func (w *Window) selectedRSSSourceTitle(locale string) string {
 	}
 	if w.app.Selected == "starred" {
 		if zh {
-			return "标星文章"
+			return "标星"
 		}
 		return "Starred"
 	}
@@ -1000,27 +1000,19 @@ func (w *Window) rssEmptyState(c *ui.Context, t mui.Tokens) {
 		sentence = "订阅源的文章将显示在此处。"
 	}
 
-	if w.app != nil && w.app.Search != "" {
-		title = "No Matching Articles"
-		sentence = "Try clearing search terms or the unread filter."
-		if zh {
-			title = "无匹配文章"
-			sentence = "尝试清除搜索词或未读过滤。"
-		}
-	} else if w.app != nil && (w.app.Selected == "all" || w.app.Selected == "") {
+	unreadForced := w.app != nil && (w.app.Selected == "all" || w.app.Selected == "")
+	switch {
+	case w.app != nil && w.app.Search != "":
+		title, sentence = rssNoMatchCopy(zh, unreadForced)
+	case unreadForced:
 		title = "You are up to date"
 		sentence = "New articles will appear here when your feeds publish them."
 		if zh {
 			title = "已无未读"
 			sentence = "订阅源更新后，新文章会出现在这里。"
 		}
-	} else if w.app != nil && w.app.UnreadOnly {
-		title = "No Matching Articles"
-		sentence = "Try clearing search terms or the unread filter."
-		if zh {
-			title = "无匹配文章"
-			sentence = "尝试清除搜索词或未读过滤。"
-		}
+	case w.app != nil && w.app.UnreadOnly:
+		title, sentence = rssNoMatchCopy(zh, unreadForced)
 	}
 
 	mui.EmptyPane(c, t, mui.EmptySpec{
@@ -1031,6 +1023,21 @@ func (w *Window) rssEmptyState(c *ui.Context, t mui.Tokens) {
 			Sentence: sentence,
 		},
 	})
+}
+
+// rssNoMatchCopy words the empty column when nothing matches: it names the
+// unread filter only at the destinations that still draw one.
+func rssNoMatchCopy(zh, unreadForced bool) (string, string) {
+	if zh {
+		if unreadForced {
+			return "无匹配文章", "尝试清除搜索词。"
+		}
+		return "无匹配文章", "尝试清除搜索词或未读过滤。"
+	}
+	if unreadForced {
+		return "No Matching Articles", "Try clearing the search term."
+	}
+	return "No Matching Articles", "Try clearing search terms or the unread filter."
 }
 
 // readLaterMainArea renders the bilingual empty state for Read Later.
