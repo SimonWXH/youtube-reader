@@ -81,6 +81,15 @@ type Tokens struct {
 	// ModalShadow is the L2 panel's shadow ink, drawn with the
 	// ElevationModal geometry below.
 	ModalShadow ui.Color
+	// The workspace dock's four glyphs keep their own colours instead of
+	// following the interaction states, so selection shows in the slot's
+	// background and the brand reads at a glance. Dark mode lifts the warm
+	// inks and turns RSS from black to near-white, because a black glyph
+	// would disappear on the dark sidebar.
+	WorkspaceVideo     ui.Color // WorkspaceVideo is the Video dock glyph.
+	WorkspaceRSS       ui.Color // WorkspaceRSS is the RSS dock glyph.
+	WorkspaceReadLater ui.Color // WorkspaceReadLater is the 稍后读 dock glyph.
+	WorkspaceWeChat    ui.Color // WorkspaceWeChat is the 微信读书 dock glyph.
 }
 
 // NewTokens derives a palette from the system theme. Dark mode uses its own
@@ -107,6 +116,11 @@ func NewTokens(base *ui.Theme, prefersDark bool) Tokens {
 			Shadow:      ui.RGBA(0, 0, 0, 0.36),
 			ModalScrim:  ui.RGBA(0, 0, 0, 0.44),
 			ModalShadow: ui.RGBA(0, 0, 0, 0.72),
+
+			WorkspaceVideo:     ui.Hex("#ff5b74"),
+			WorkspaceRSS:       ui.Hex("#f2f2f3"),
+			WorkspaceReadLater: ui.Hex("#ff8b52"),
+			WorkspaceWeChat:    ui.Hex("#6cc3ff"),
 		}
 	}
 	return Tokens{
@@ -129,6 +143,11 @@ func NewTokens(base *ui.Theme, prefersDark bool) Tokens {
 		Shadow:      ui.RGBA(28, 30, 33, 0.12),
 		ModalScrim:  ui.RGBA(0, 0, 0, 0.32),
 		ModalShadow: ui.RGBA(24, 26, 28, 0.34),
+
+		WorkspaceVideo:     ui.Hex("#ff0033"),
+		WorkspaceRSS:       ui.Hex("#000000"),
+		WorkspaceReadLater: ui.Hex("#f46b26"),
+		WorkspaceWeChat:    ui.Hex("#35a8ff"),
 	}
 }
 

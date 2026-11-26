@@ -295,101 +295,44 @@ func (w *Window) restoreWorkspaceState(id string) {
 	w.selectedIndex = st.SelectedIndex
 }
 
-// unwatchedVideoCount counts how many videos in the library are unwatched.
-func (w *Window) unwatchedVideoCount() int {
-	if w.app == nil {
-		return 0
-	}
-	showShorts := w.app.settingsSnapshot().ShowShorts
-	unwatched := 0
-	for _, v := range w.app.Videos {
-		if !w.app.videoVisible(v, nil, showShorts) {
-			continue
-		}
-		if !w.app.Sync.IsRead(v.ID) {
-			unwatched++
-		}
-	}
-	return unwatched
-}
-
 type dockItemMeta struct {
-	ID          string
-	Symbol      string
-	Title       string
-	Count       string
-	Tooltip     string
-	Placeholder bool
+	ID    string
+	Icon  mui.WorkspaceIconKind
+	Title string
 }
 
+// dockMeta names one dock entrance. Its title is the workspace's name in the
+// active locale and is also all its tooltip says: the dock carries no unread
+// count, so no tooltip adds one.
 func (w *Window) dockMeta(locale, id string) dockItemMeta {
 	zh := strings.HasPrefix(strings.ToLower(locale), "zh")
 	switch id {
 	case WorkspaceVideos:
-		count := w.unwatchedVideoCount()
 		title := "Videos"
-		tooltip := fmt.Sprintf("Videos (%d unwatched)", count)
 		if zh {
 			title = "视频"
-			tooltip = fmt.Sprintf("视频 (%d 未看)", count)
 		}
-		return dockItemMeta{
-			ID:      WorkspaceVideos,
-			Symbol:  "play.rectangle.fill",
-			Title:   title,
-			Count:   fmt.Sprintf("%d", count),
-			Tooltip: tooltip,
-		}
+		return dockItemMeta{ID: WorkspaceVideos, Icon: mui.WorkspaceIconVideos, Title: title}
 	case WorkspaceRSS:
-		count := 0
-		if w.app != nil {
-			count = w.app.RSSTotalUnread
-		}
 		title := "RSS"
-		tooltip := fmt.Sprintf("RSS Articles (%d unread)", count)
 		if zh {
 			title = "RSS 文章"
-			tooltip = fmt.Sprintf("RSS 文章 (%d 未读)", count)
 		}
-		return dockItemMeta{
-			ID:      WorkspaceRSS,
-			Symbol:  "newspaper.fill",
-			Title:   title,
-			Count:   fmt.Sprintf("%d", count),
-			Tooltip: tooltip,
-		}
+		return dockItemMeta{ID: WorkspaceRSS, Icon: mui.WorkspaceIconRSS, Title: title}
 	case WorkspaceReadLater:
 		title := "Read Later"
-		tooltip := "Read Later (Coming soon)"
 		if zh {
 			title = "稍后读"
-			tooltip = "稍后读（后续提供）"
 		}
-		return dockItemMeta{
-			ID:          WorkspaceReadLater,
-			Symbol:      "bookmark.fill",
-			Title:       title,
-			Count:       "0",
-			Tooltip:     tooltip,
-			Placeholder: true,
-		}
+		return dockItemMeta{ID: WorkspaceReadLater, Icon: mui.WorkspaceIconReadLater, Title: title}
 	case WorkspaceWeChatNotes:
 		title := "WeChat Notes"
-		tooltip := "WeChat Notes (Coming soon)"
 		if zh {
 			title = "微信读书笔记"
-			tooltip = "微信读书笔记（后续提供）"
 		}
-		return dockItemMeta{
-			ID:          WorkspaceWeChatNotes,
-			Symbol:      "book.closed.fill",
-			Title:       title,
-			Count:       "0",
-			Tooltip:     tooltip,
-			Placeholder: true,
-		}
+		return dockItemMeta{ID: WorkspaceWeChatNotes, Icon: mui.WorkspaceIconWeChatNotes, Title: title}
 	}
-	return dockItemMeta{ID: id, Symbol: "square", Title: id}
+	return dockItemMeta{ID: id, Title: id}
 }
 
 // sidebarWorkspaceDock renders the A2 horizontal dock at the top of the sidebar.
@@ -411,7 +354,7 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 
 			slot := ui.Box(c.Key("dock-item-" + id)).
 				Grow(1).MinWidth(0).Height(46).Radius(mui.RadiusControl).
-				Role(ui.RoleTab).Label(meta.Title).Tooltip(meta.Tooltip).
+				Role(ui.RoleTab).Label(meta.Title).Tooltip(meta.Title).
 				Cursor(ui.CursorPointer)
 
 			slot.Drag(workspaceDockDrag{ID: id, Index: i})
@@ -441,20 +384,12 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 				c.Invalidate()
 			}
 
-			iconColor := t.Muted
-			countColor := t.Muted
-			if meta.Placeholder {
-				iconColor = t.Faint
-				countColor = t.Faint
-			}
-			switch {
-			case selected:
-				iconColor = t.Accent
-				countColor = t.Accent
-			case slot.Hovered() || slot.Pressed():
-				iconColor = t.Text
-				countColor = t.Text
-			}
+			// Every glyph keeps its own colour in every state, a
+			// placeholder workspace's included: a workspace that is not
+			// built yet says so in its content, not by fading its icon.
+			// Selection, hover and press show in the slot's background,
+			// drawn below in the same layer.
+			iconColor := t.WorkspaceIconColor(meta.Icon)
 
 			slot.Draw(func(p *ui.Painter, r ui.Rect) {
 				switch {
@@ -474,18 +409,7 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 					p.Fill(ui.Rect{X: indX, Y: r.Y + 4, W: 2, H: r.H - 8}, t.Accent, 1)
 				}
 
-				if meta.Count != "" {
-					cw, _ := p.MeasureText(0, ui.Span{Text: meta.Count, Size: 11})
-					cx := r.X + (r.W-cw)/2
-					cy := r.Y + 28
-					p.Text(cx, cy, meta.Count, 11, countColor)
-				}
-			})
-
-			slot.Children(func() {
-				ui.Column(c).Fill().AlignItems(ui.Center).Padding(4, 0, 0, 0).Children(func() {
-					sfsymbols.Symbol(c, meta.Symbol).Size(18).Color(iconColor).Element.Role(ui.RoleNone)
-				})
+				mui.WorkspaceIconDraw(p, r, meta.Icon, iconColor)
 			})
 
 			if slot.Clicked() {

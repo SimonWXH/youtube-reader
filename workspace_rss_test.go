@@ -338,8 +338,11 @@ func TestAddRSSModalDialogLifecycle(t *testing.T) {
 	}
 }
 
-func TestRSSDockUnreadCountMatchesLibrary(t *testing.T) {
-	a, w := setupRSSTestApp(t)
+// TestRSSUnreadCountMatchesLibrary keeps the app's RSS unread total, which the
+// sidebar labels and the column header read, tied to the stored articles. The
+// dock itself no longer shows a count.
+func TestRSSUnreadCountMatchesLibrary(t *testing.T) {
+	a, _ := setupRSSTestApp(t)
 
 	feed := core.RSSFeed{ID: core.FeedID("https://example.com/rss"), FeedURL: "https://example.com/rss", Title: "Feed 1"}
 	_ = a.SubscribeRSSFeed(feed, "")
@@ -353,8 +356,7 @@ func TestRSSDockUnreadCountMatchesLibrary(t *testing.T) {
 	_ = a.Store.SaveRSSArticles(ctx, articles)
 	_ = a.ReloadRSS()
 
-	meta := w.dockMeta("en", WorkspaceRSS)
-	if meta.Count != "2" {
-		t.Fatalf("dock count = %q, want 2 unread articles", meta.Count)
+	if got := a.RSSTotalUnread; got != 2 {
+		t.Fatalf("unread total = %d, want 2 unread articles", got)
 	}
 }
