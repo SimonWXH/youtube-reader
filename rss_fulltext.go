@@ -71,8 +71,8 @@ type rssFullTextJob struct {
 
 // rssFullTextFetcher fetches article full text away from the frame. One small
 // pool of workers drains a queue of article IDs, the same article is never in
-// flight twice, and an article whose fetch gave up is remembered so opening it
-// again keeps the summary until the reader asks for the retry.
+// flight twice, and an article whose fetch gave up keeps that state until the
+// article is requested again.
 type rssFullTextFetcher struct {
 	fetch func(ctx context.Context, articleID string) (core.RSSArticle, error)
 	// onResult runs for every finished fetch, in the worker. The window moves
@@ -82,15 +82,15 @@ type rssFullTextFetcher struct {
 	mu      sync.Mutex
 	queue   []rssFullTextJob
 	pending map[string]bool // queued or in flight
-	failed  map[string]bool // attempts that gave up, until a retry
+	failed  map[string]bool // attempts that gave up, until the next request
 	running int
 }
 
 // request asks for one article's full text and reports the phase the reader
 // should show for it: fetching when the request queued or an earlier one is
-// still in flight, failed when an attempt gave up and only a retry asks again,
-// and settled when there is nothing to fetch. An automatic request never
-// starts a second attempt for an article that already gave up.
+// still in flight, and settled when there is nothing to fetch. Every request
+// is one attempt of its own, so it clears the record of an earlier attempt that
+// gave up; an article already queued or in flight is never asked for twice.
 func (f *rssFullTextFetcher) request(articleID string, manual bool) rssFullTextPhase {
 	if articleID == "" {
 		return rssFullTextSettled
@@ -99,10 +99,6 @@ func (f *rssFullTextFetcher) request(articleID string, manual bool) rssFullTextP
 	if f.pending[articleID] {
 		f.mu.Unlock()
 		return rssFullTextFetching
-	}
-	if !manual && f.failed[articleID] {
-		f.mu.Unlock()
-		return rssFullTextFailed
 	}
 	if f.pending == nil {
 		f.pending = map[string]bool{}
@@ -249,8 +245,8 @@ func (w *Window) openRSSFullText(art core.RSSArticle) {
 }
 
 // requestRSSFullText puts art in the window's fetch queue and shows the phase
-// the queue reports, so a queued fetch reads as one in progress and a retry
-// refused by an article that already gave up keeps its failure state.
+// the queue reports, so a queued fetch reads as one in progress and a fresh
+// attempt clears the failure the header showed for an earlier one.
 func (w *Window) requestRSSFullText(c *ui.Context, art core.RSSArticle, manual bool) {
 	if w.app == nil || art.ID == "" || strings.TrimSpace(art.Link) == "" {
 		return

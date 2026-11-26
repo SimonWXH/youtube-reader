@@ -634,10 +634,8 @@ func rssFeedFullTextMenuLabel(locale string) string {
 	return "Fetch Full Text by Default"
 }
 
-// toggleRSSFeedFullText turns one feed's automatic full-text fetching over and
-// saves it. Turning it back on fetches the open article at once when that
-// article is the feed's own summary, so the setting acts on what the reader is
-// looking at instead of only on the next article opened.
+// toggleRSSFeedFullText turns one feed's automatic full-text fetching over,
+// saves it, and refreshes the row that carries the setting.
 func (w *Window) toggleRSSFeedFullText(c *ui.Context, f core.RSSFeed) {
 	if w.app == nil {
 		return
@@ -650,11 +648,6 @@ func (w *Window) toggleRSSFeedFullText(c *ui.Context, f core.RSSFeed) {
 		}
 		w.toast(c, saved, true)
 		return
-	}
-	if on {
-		if art := w.app.SelectedRSSArticle(); art != nil && art.FeedID == f.ID && !art.IsFullText {
-			w.requestRSSFullText(c, *art, false)
-		}
 	}
 	c.Invalidate()
 }

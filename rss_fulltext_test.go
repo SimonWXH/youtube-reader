@@ -185,8 +185,8 @@ func TestRSSFullTextPlaceholderReplacesTheBrowserNotice(t *testing.T) {
 
 // TestRSSFullTextFailureKeepsTheSummaryAndOffersRetry pins the failure state:
 // the summary stays, one compact line says the fetch gave up, the capture
-// action becomes the retry, and reopening the article does not quietly try
-// again. The retry runs through the same fetch.
+// action becomes the retry, and opening the article again tries once more.
+// The retry runs through the same fetch.
 func TestRSSFullTextFailureKeepsTheSummaryAndOffersRetry(t *testing.T) {
 	a, w, tt := rssReaderTestWindow(t)
 
@@ -198,7 +198,7 @@ func TestRSSFullTextFailureKeepsTheSummaryAndOffersRetry(t *testing.T) {
 		calls++
 		attempt := calls
 		mu.Unlock()
-		if attempt == 1 {
+		if attempt <= 2 {
 			return core.RSSArticle{}, errors.New("the site refused the page")
 		}
 		return storeFetch(ctx, articleID)
@@ -226,12 +226,12 @@ func TestRSSFullTextFailureKeepsTheSummaryAndOffersRetry(t *testing.T) {
 		t.Fatalf("a failed fetch still offers the browser's call to action: %v", tt.Texts())
 	}
 
-	// Reopening the article it already gave up on keeps the failure and asks
-	// nothing more of the site.
+	// Opening the article again is a fresh attempt, so it asks the site once
+	// more and its failure keeps the retry on screen.
 	tt.ClickAt(row.X+row.W/2, row.Y+row.H/2)
 	tt.Frame()
-	if got := callsNow(); got != 1 {
-		t.Fatalf("reopening a failed article fetched %d times, want no further request", got)
+	if got := callsNow(); got != 2 {
+		t.Fatalf("reopening a failed article fetched %d times, want one more attempt", got)
 	}
 	if !tt.HasText("Retry full text") {
 		t.Fatalf("reopening a failed article lost its retry: %v", tt.Texts())
@@ -241,7 +241,7 @@ func TestRSSFullTextFailureKeepsTheSummaryAndOffersRetry(t *testing.T) {
 		t.Fatalf("click the retry: %v", err)
 	}
 	tt.Frame()
-	if got := callsNow(); got != 2 {
+	if got := callsNow(); got != 3 {
 		t.Fatalf("the retry fetched %d times, want the same path once more", got)
 	}
 	if !tt.HasText(rssFullTextTestBody) {
@@ -500,7 +500,7 @@ func TestRSSFeedFullTextToggleStopsAutomaticFetchAndPersists(t *testing.T) {
 
 	// Opening one of the feed's articles now leaves it on the feed's summary,
 	// with the browser notice the reader has always had.
-	openRSSFullTextSummaryRow(t, tt)
+	row := openRSSFullTextSummaryRow(t, tt)
 	mu.Lock()
 	gotFetches := fetches
 	mu.Unlock()
@@ -518,7 +518,8 @@ func TestRSSFeedFullTextToggleStopsAutomaticFetchAndPersists(t *testing.T) {
 		t.Fatalf("a feed with the setting off lost the capture action: %v", tt.Texts())
 	}
 
-	// Turning the setting back on fetches the article the reader is on.
+	// Turning the setting back on leaves the open article alone: the switch
+	// governs the articles opened after it, and this one keeps its summary.
 	if err := tt.RightClick("The Long Read"); err != nil {
 		t.Fatalf("open the feed's context menu again: %v", err)
 	}
@@ -529,8 +530,24 @@ func TestRSSFeedFullTextToggleStopsAutomaticFetchAndPersists(t *testing.T) {
 	mu.Lock()
 	gotFetches = fetches
 	mu.Unlock()
+	if gotFetches != 0 {
+		t.Fatalf("turning the setting back on fetched %d times, want the open article left alone", gotFetches)
+	}
+	if !tt.HasText("Showing the feed's summary. Open the original article in your browser for the full text.") {
+		t.Fatalf("the open article lost its summary when the setting came back on: %v", tt.Texts())
+	}
+	if !tt.HasText("Refetch") {
+		t.Fatalf("the open article lost its capture action: %v", tt.Texts())
+	}
+
+	// The articles opened from now on follow the setting again.
+	tt.ClickAt(row.X+row.W/2, row.Y+row.H/2)
+	tt.Frame()
+	mu.Lock()
+	gotFetches = fetches
+	mu.Unlock()
 	if gotFetches != 1 {
-		t.Fatalf("turning the setting back on fetched %d times, want the open article once", gotFetches)
+		t.Fatalf("opening an article after the setting came back on fetched %d times, want once", gotFetches)
 	}
 	if !tt.HasText("Retry full text") {
 		t.Fatalf("the failed fetch did not leave its retry: %v", tt.Texts())
