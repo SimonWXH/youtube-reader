@@ -108,6 +108,34 @@ func TestParseHTMLBlocksPlainTextFallback(t *testing.T) {
 	}
 }
 
+// sspai's pages ship each body picture with its address already absolute in
+// src, and repeat the untransformed original in data-original, the attribute a
+// lazy loader would read. The blocks keep the src the page resolved: the picture
+// is never described by the lazy twin alone, so nothing has to be swapped out
+// before it can be shown.
+func TestParseHTMLBlocksKeepsAnAlreadyResolvedPicture(t *testing.T) {
+	const src = "https://cdnfile.sspai.com/2026/11/25/article/059192f3eea37fdaf3a0519800f48d8d.jpeg?imageView2/2/w/1120/q/90/interlace/1/ignore-error/1"
+	const original = "https://cdnfile.sspai.com/2026/11/25/article/059192f3eea37fdaf3a0519800f48d8d.jpeg"
+	content := `<figure><img src="` + src + `" data-original="` + original + `" alt="AI 原始草图（上） vs Keynote 最终成品图（下）对比"><figcaption>AI 原始草图（上） vs Keynote 最终成品图（下）对比</figcaption></figure>`
+
+	blocks := ParseHTMLBlocks(content)
+	var images []ArticleBlock
+	for _, b := range blocks {
+		if b.Type == BlockImage {
+			images = append(images, b)
+		}
+	}
+	if len(images) != 1 {
+		t.Fatalf("got %d image blocks, want 1: %+v", len(images), blocks)
+	}
+	if images[0].URL != src {
+		t.Fatalf("image URL = %q, want the page's own src %q", images[0].URL, src)
+	}
+	if images[0].Caption == "" {
+		t.Fatalf("image lost its caption: %+v", images[0])
+	}
+}
+
 func TestExtractHeroImage(t *testing.T) {
 	html := `<p>Intro text</p><img src="https://example.com/lead.jpg" alt="lead"><p>More text</p>`
 	got := ExtractHeroImage(html)
