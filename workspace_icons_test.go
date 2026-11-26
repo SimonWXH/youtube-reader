@@ -220,7 +220,6 @@ func TestWorkspaceDockRSSColourSurvivesDarkMode(t *testing.T) {
 		bg   ui.Color
 	}{
 		{"dark", dark.WorkspaceRSS, dark.Sidebar},
-		{"dark selected", dark.WorkspaceRSS, dark.WorkspaceDockSelected},
 	} {
 		if ratio := dockContrast(tc.ink, tc.bg); ratio < 3 {
 			t.Fatalf("%s RSS glyph contrast on its background = %.2f:1, want at least 3:1", tc.name, ratio)
@@ -249,7 +248,7 @@ func dockContrast(fg, bg ui.Color) float64 {
 
 // TestWorkspaceDockIconsRender checks the app's own pixels: in both
 // appearances every slot paints its own glyph 30 dp tall and centred in the
-// slot, and the selected slot keeps that colour over the dock's selected fill
+// slot, and the selected slot keeps that colour over the dock background
 // instead of tinting the glyph. A placeholder workspace is coloured
 // like the others: its placeholder state is content, not ink.
 func TestWorkspaceDockIconsRender(t *testing.T) {
@@ -332,44 +331,12 @@ func TestWorkspaceDockIconsRender(t *testing.T) {
 	}
 }
 
-// TestWorkspaceDockStateCues checks the dock's non-glyph state cues: the
-// active slot's fill is visible against the sidebar, and hover and press each
-// read differently from selection and from the idle slot, in both appearances.
+// TestWorkspaceDockStateCues checks the dock's state cues are drawn beside the
+// ink, never behind it: the active tab carries the accent bar, hover draws a
+// faint outline and press a stronger one, the glyphs keep at least their idle
+// contrast, and each state reads differently from the next in both
+// appearances.
 func TestWorkspaceDockStateCues(t *testing.T) {
-	for _, appearance := range []struct {
-		name string
-		dark bool
-		tok  mui.Tokens
-	}{
-		{"light", false, mui.NewTokens(nil, false)},
-		{"dark", true, mui.NewTokens(nil, true)},
-	} {
-		t.Run(appearance.name, func(t *testing.T) {
-			tok := appearance.tok
-			for _, tc := range []struct {
-				name string
-				fg   ui.Color
-				bg   ui.Color
-				want float64
-			}{
-				{"selected fill on the sidebar", tok.WorkspaceDockSelected, tok.Sidebar, 3},
-				{"hover fill on the sidebar", tok.WorkspaceDockHover, tok.Sidebar, 1.5},
-				{"pressed fill against the selected fill", tok.WorkspaceDockPressed, tok.WorkspaceDockSelected, 1.5},
-				{"hover fill against the selected fill", tok.WorkspaceDockHover, tok.WorkspaceDockSelected, 1.5},
-			} {
-				if ratio := dockContrast(tc.fg, tc.bg); ratio < tc.want {
-					t.Fatalf("%s = %.2f:1, want at least %.1f:1", tc.name, ratio, tc.want)
-				}
-			}
-		})
-	}
-}
-
-// TestWorkspaceDockStateFillsRender checks the dock paints its own state fills:
-// the active slot shows the selected fill, an idle slot shows the dock
-// background, and the slot under the pointer shows the hover fill, then the
-// pressed fill while the pointer is down, in both appearances.
-func TestWorkspaceDockStateFillsRender(t *testing.T) {
 	_, w := setupWorkspaceTestApp(t)
 	const scale float32 = 2
 	tt := ui.NewTester(w.view, 1280, 808)
@@ -384,6 +351,7 @@ func TestWorkspaceDockStateFillsRender(t *testing.T) {
 		{"dark", true, mui.NewTokens(nil, true)},
 	} {
 		t.Run(appearance.name, func(t *testing.T) {
+			tok := appearance.tok
 			tt.SetDark(appearance.dark)
 			tt.Advance(mui.MotionInteraction + 20*time.Millisecond)
 			tt.Move(1, 1)
@@ -397,31 +365,77 @@ func TestWorkspaceDockStateFillsRender(t *testing.T) {
 			if !ok {
 				t.Fatal("the idle dock slot is not in the accessibility tree")
 			}
-			// A point in the slot's top band: on its fill, above the glyph.
-			fill := func(r ui.Rect) color.RGBA {
-				return tt.Image().RGBAAt(
-					int(math.Round(float64((r.X+r.W/2)*scale))),
-					int(math.Round(float64((r.Y+4)*scale))))
+			pixel := func(img *image.RGBA, r ui.Rect, x, y float32) color.RGBA {
+				return img.RGBAAt(
+					int(math.Round(float64((r.X+x)*scale))),
+					int(math.Round(float64((r.Y+y)*scale))))
 			}
 			want := func(c ui.Color) color.RGBA { return color.RGBA{R: c.R, G: c.G, B: c.B, A: c.A} }
-
-			if got := fill(active); got != want(appearance.tok.WorkspaceDockSelected) {
-				t.Fatalf("active slot fill = %v, want the dock selected fill %v", got, appearance.tok.WorkspaceDockSelected)
+			asColor := func(p color.RGBA) ui.Color { return ui.Color{R: p.R, G: p.G, B: p.B, A: p.A} }
+			// has reports whether the slot's top band holds c, which is
+			// where an outline is drawn.
+			has := func(img *image.RGBA, r ui.Rect, band float32, c ui.Color) bool {
+				x0 := int(math.Round(float64(r.X * scale)))
+				x1 := int(math.Round(float64((r.X + r.W) * scale)))
+				y0 := int(math.Round(float64(r.Y * scale)))
+				y1 := int(math.Round(float64((r.Y + band) * scale)))
+				for y := y0; y < y1; y++ {
+					for x := x0; x < x1; x++ {
+						if img.RGBAAt(x, y) == want(c) {
+							return true
+						}
+					}
+				}
+				return false
 			}
-			if got := fill(idle); got != want(appearance.tok.Sidebar) {
-				t.Fatalf("idle slot fill = %v, want the dock background %v", got, appearance.tok.Sidebar)
+
+			// The slot interior just above the glyph: the background each
+			// brand glyph sits on in that state.
+			img := tt.Image()
+			idleBG := pixel(img, idle, idle.W/2, 4)
+			if idleBG != want(tok.Sidebar) {
+				t.Fatalf("idle slot background = %v, want the dock background %v", idleBG, tok.Sidebar)
+			}
+			if got := pixel(img, active, active.W/2, 4); got != idleBG {
+				t.Fatalf("active slot background = %v, want the dock background %v: the active cue paints no plate", got, idleBG)
+			}
+			if got := pixel(img, active, 1, active.H/2); got != want(tok.Accent) {
+				t.Fatalf("active slot edge bar = %v, want the accent %v", got, tok.Accent)
+			}
+			if has(img, active, 2, tok.BorderSoft) {
+				t.Fatal("the active slot draws a hover outline: the bar alone is the active cue")
+			}
+			for _, icon := range dockIcons {
+				ink := dockIconColour(icon.kind, appearance.dark)
+				if got, want := dockContrast(ink, asColor(idleBG)), dockContrast(ink, tok.Sidebar); got < want-0.001 {
+					t.Fatalf("%s glyph contrast on the active slot = %.2f:1, want at least its idle %.2f:1", icon.name, got, want)
+				}
 			}
 
 			tt.Move(idle.X+idle.W/2, idle.Y+idle.H/2)
 			tt.Frame()
-			if got := fill(idle); got != want(appearance.tok.WorkspaceDockHover) {
-				t.Fatalf("hovered slot fill = %v, want the dock hover fill %v", got, appearance.tok.WorkspaceDockHover)
+			img = tt.Image()
+			if got := pixel(img, idle, idle.W/2, 4); got != idleBG {
+				t.Fatalf("hovered slot background = %v, want the dock background %v: hover paints no plate", got, idleBG)
+			}
+			if !has(img, idle, 2, tok.BorderSoft) {
+				t.Fatalf("the hovered slot draws no BorderSoft %v outline", tok.BorderSoft)
+			}
+			if got := pixel(img, idle, 3, idle.H/2); got != idleBG {
+				t.Fatalf("hovered slot edge = %v, want the dock background %v: the bar marks the active tab alone", got, idleBG)
 			}
 
 			tt.Press(idle.X+idle.W/2, idle.Y+idle.H/2)
 			tt.Frame()
-			if got := fill(idle); got != want(appearance.tok.WorkspaceDockPressed) {
-				t.Fatalf("pressed slot fill = %v, want the dock pressed fill %v", got, appearance.tok.WorkspaceDockPressed)
+			img = tt.Image()
+			if !has(img, idle, 2, tok.Accent) {
+				t.Fatalf("the pressed slot draws no accent %v outline", tok.Accent)
+			}
+			if has(img, idle, 2, tok.BorderSoft) {
+				t.Fatalf("the pressed slot keeps the hover outline %v", tok.BorderSoft)
+			}
+			if ratio := dockContrast(tok.Accent, tok.BorderSoft); ratio < 3 {
+				t.Fatalf("pressed outline against the hovered outline = %.2f:1, want at least 3:1", ratio)
 			}
 			tt.CancelPress()
 			tt.Move(1, 1)
@@ -466,16 +480,17 @@ func TestWorkspaceDockReportsActiveTab(t *testing.T) {
 // differ from its background, and how many they are. The slot's rounded
 // corners are skipped: they show the dock behind the selection fill.
 func dockInkOf(img *image.RGBA, r ui.Rect, scale float32) (image.Rectangle, int) {
-	// The slot's own rim is antialiased into the dock behind it, so the
-	// scan keeps 1.5 dp clear of it; no glyph comes that close.
-	const rim = 1.5
+	// A slot's edge carries its state cue, the accent bar or the hover and
+	// press outlines, so the scan keeps 4 dp clear of it; no glyph comes
+	// that close.
+	const rim = 4
 	x0 := int(math.Round(float64((r.X + rim) * scale)))
 	y0 := int(math.Round(float64((r.Y + rim) * scale)))
 	x1 := int(math.Round(float64((r.X + r.W - rim) * scale)))
 	y1 := int(math.Round(float64((r.Y + r.H - rim) * scale)))
-	// The slot's leading edge at its middle, clear of every glyph, holds
-	// the background the glyph is painted over.
-	bg := img.RGBAAt(x0+int(3*scale), y0+int(r.H/2*scale))
+	// The slot's leading edge at its middle, clear of every glyph and of
+	// the state cue, holds the background the glyph is painted over.
+	bg := img.RGBAAt(x0+int(3*scale), int(math.Round(float64((r.Y+r.H/2)*scale))))
 	var box image.Rectangle
 	count := 0
 	for y := y0; y < y1; y++ {

@@ -90,12 +90,6 @@ type Tokens struct {
 	WorkspaceRSS       ui.Color // WorkspaceRSS is the RSS dock glyph.
 	WorkspaceReadLater ui.Color // WorkspaceReadLater is the 稍后读 dock glyph.
 	WorkspaceWeChat    ui.Color // WorkspaceWeChat is the 微信读书 dock glyph.
-	// The dock's slot fills are its own, stronger than the selected-row
-	// AccentSoft and the hover SurfaceAlt they replace, because the brand
-	// glyph carries no state colour of its own.
-	WorkspaceDockSelected ui.Color // WorkspaceDockSelected is the active dock slot's fill.
-	WorkspaceDockPressed  ui.Color // WorkspaceDockPressed is the dock slot under the pointer's press.
-	WorkspaceDockHover    ui.Color // WorkspaceDockHover is the dock slot under the pointer.
 }
 
 // NewTokens derives a palette from the system theme. Dark mode uses its own
@@ -127,10 +121,6 @@ func NewTokens(base *ui.Theme, prefersDark bool) Tokens {
 			WorkspaceRSS:       ui.Hex("#f2f2f3"),
 			WorkspaceReadLater: ui.Hex("#ff8b52"),
 			WorkspaceWeChat:    ui.Hex("#6cc3ff"),
-
-			WorkspaceDockSelected: ui.Hex("#406f9f"),
-			WorkspaceDockPressed:  ui.Hex("#24405a"),
-			WorkspaceDockHover:    ui.Hex("#3f4249"),
 		}
 	}
 	return Tokens{
@@ -158,10 +148,6 @@ func NewTokens(base *ui.Theme, prefersDark bool) Tokens {
 		WorkspaceRSS:       ui.Hex("#000000"),
 		WorkspaceReadLater: ui.Hex("#f46b26"),
 		WorkspaceWeChat:    ui.Hex("#35a8ff"),
-
-		WorkspaceDockSelected: ui.Hex("#4b87bf"),
-		WorkspaceDockPressed:  ui.Hex("#33688f"),
-		WorkspaceDockHover:    ui.Hex("#c2c2bc"),
 	}
 }
 
