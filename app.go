@@ -1679,8 +1679,7 @@ func (a *App) FeedTitle(feedID string) string {
 
 // RSSUnreadCount returns the unread article count for feedID, or for every
 // active feed when feedID is empty. It reads the counts ReloadRSS derives from
-// SQLite so the article column header, the sidebar rows, and the dock badge
-// always agree.
+// SQLite so the article column header and the sidebar rows always agree.
 func (a *App) RSSUnreadCount(feedID string) int {
 	if feedID == "" {
 		return a.RSSTotalUnread

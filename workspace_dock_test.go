@@ -48,7 +48,7 @@ func setupWorkspaceTestApp(t *testing.T) (*App, *Window) {
 }
 
 // TestWorkspaceDockRendersFourEntrances verifies that the A2 dock renders all 4 entrances
-// with correct labels, icons, counts, and bilingual support.
+// with correct labels, icons, and bilingual support.
 func TestWorkspaceDockRendersFourEntrances(t *testing.T) {
 	_, w := setupWorkspaceTestApp(t)
 	tt := ui.NewTester(w.view, 1280, 808)
@@ -62,32 +62,32 @@ func TestWorkspaceDockRendersFourEntrances(t *testing.T) {
 	}
 
 	// In English:
-	metaVideos := w.dockMeta("en", WorkspaceVideos)
-	metaRSS := w.dockMeta("en", WorkspaceRSS)
-	metaReadLater := w.dockMeta("en", WorkspaceReadLater)
-	metaWeChatNotes := w.dockMeta("en", WorkspaceWeChatNotes)
+	metaVideos := dockMeta("en", WorkspaceVideos)
+	metaRSS := dockMeta("en", WorkspaceRSS)
+	metaReadLater := dockMeta("en", WorkspaceReadLater)
+	metaWeChatNotes := dockMeta("en", WorkspaceWeChatNotes)
 
-	if metaVideos.Title != "Videos" || metaVideos.Count != "2" {
-		t.Fatalf("videos meta = %+v, want Videos with 2 unwatched", metaVideos)
+	if metaVideos.Title != "Videos" {
+		t.Fatalf("videos meta = %+v, want Videos", metaVideos)
 	}
-	if metaRSS.Title != "RSS" || metaRSS.Count != "0" {
-		t.Fatalf("rss meta = %+v, want RSS with 0 count", metaRSS)
+	if metaRSS.Title != "RSS" {
+		t.Fatalf("rss meta = %+v, want RSS", metaRSS)
 	}
-	if metaReadLater.Title != "Read Later" || metaReadLater.Count != "0" {
-		t.Fatalf("read later meta = %+v, want Read Later with the placeholder 0", metaReadLater)
+	if metaReadLater.Title != "Read Later" {
+		t.Fatalf("read later meta = %+v, want Read Later", metaReadLater)
 	}
-	if metaWeChatNotes.Title != "WeChat Notes" || metaWeChatNotes.Count != "0" {
-		t.Fatalf("wechat notes meta = %+v, want WeChat Notes with the placeholder 0", metaWeChatNotes)
+	if metaWeChatNotes.Title != "WeChat Notes" {
+		t.Fatalf("wechat notes meta = %+v, want WeChat Notes", metaWeChatNotes)
 	}
 
 	// In Chinese:
 	tt.SetLocale("zh-CN")
 	tt.Frame()
 
-	metaZhVideos := w.dockMeta("zh-CN", WorkspaceVideos)
-	metaZhRSS := w.dockMeta("zh-CN", WorkspaceRSS)
-	metaZhReadLater := w.dockMeta("zh-CN", WorkspaceReadLater)
-	metaZhWeChatNotes := w.dockMeta("zh-CN", WorkspaceWeChatNotes)
+	metaZhVideos := dockMeta("zh-CN", WorkspaceVideos)
+	metaZhRSS := dockMeta("zh-CN", WorkspaceRSS)
+	metaZhReadLater := dockMeta("zh-CN", WorkspaceReadLater)
+	metaZhWeChatNotes := dockMeta("zh-CN", WorkspaceWeChatNotes)
 
 	if metaZhVideos.Title != "视频" {
 		t.Fatalf("zh videos title = %q, want 视频", metaZhVideos.Title)
