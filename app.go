@@ -1746,12 +1746,15 @@ func (a *App) VisibleRSSArticles() []core.RSSArticle {
 	var allowedFeeds map[string]bool
 	starredOnly := false
 	todayOnly := false
+	unreadOnly := false
 
 	switch {
 	case selected == "starred":
 		starredOnly = true
 	case selected == todayDestination:
 		todayOnly = true
+	case selected == "all" || selected == "":
+		unreadOnly = true
 	case strings.HasPrefix(selected, "feed:"):
 		fid := strings.TrimPrefix(selected, "feed:")
 		allowedFeeds = map[string]bool{fid: true}
@@ -1792,7 +1795,7 @@ func (a *App) VisibleRSSArticles() []core.RSSArticle {
 		if allowedFeeds != nil && !allowedFeeds[art.FeedID] {
 			continue
 		}
-		if a.UnreadOnly && art.Read {
+		if (unreadOnly || a.UnreadOnly) && art.Read {
 			continue
 		}
 		if q != "" {

@@ -553,9 +553,9 @@ func (w *Window) selectedRSSSourceTitle(locale string) string {
 	zh := strings.HasPrefix(strings.ToLower(locale), "zh")
 	if w.app == nil || w.app.Selected == "all" || w.app.Selected == "" {
 		if zh {
-			return "全部文章"
+			return "全部未读"
 		}
-		return "All Articles"
+		return "All Unread"
 	}
 	if w.app.Selected == todayDestination {
 		if zh {

@@ -77,7 +77,7 @@ func rssTodayTestApp(t *testing.T) (*App, *Window, *ui.Tester) {
 		t.Fatalf("reload rss: %v", err)
 	}
 
-	w := &Window{app: a, selectedIndex: new(int), now: func() time.Time { return now }}
+	w := &Window{app: a, selectedIndex: new(int)}
 	w.selectWorkspace(WorkspaceRSS)
 	tt := ui.NewTester(w.view, 1280, 808)
 	tt.Frame()
@@ -179,7 +179,7 @@ func TestRSSTodayDestinationSelectsTheWindow(t *testing.T) {
 		{locale: "zh", row: "今天", headerTitle: "今天", unread: "3 篇未读", emptyTitle: "暂无文章"},
 	} {
 		t.Run(tc.locale, func(t *testing.T) {
-			a, w, tt := rssTodayTestApp(t)
+			a, _, tt := rssTodayTestApp(t)
 			tt.SetLocale(tc.locale)
 			tt.Frame()
 
@@ -208,7 +208,6 @@ func TestRSSTodayDestinationSelectsTheWindow(t *testing.T) {
 			// empty state does, in the same words.
 			later := rssTodayClock.Add(72 * time.Hour)
 			a.now = func() time.Time { return later }
-			w.now = func() time.Time { return later }
 			if err := a.ReloadRSS(); err != nil {
 				t.Fatalf("reload rss: %v", err)
 			}
@@ -227,8 +226,8 @@ func TestRSSTodayDestinationSelectsTheWindow(t *testing.T) {
 }
 
 // TestRSSSmartFeedsKeepTheOtherDestinations guards what the new rows sit beside:
-// Starred still lists only starred articles, and All Unread keeps the whole
-// article list it has always shown, read articles included.
+// Starred still lists only starred articles, and the feed destination still
+// lists every article it holds, read ones included.
 func TestRSSSmartFeedsKeepTheOtherDestinations(t *testing.T) {
 	a, _, tt := rssTodayTestApp(t)
 
@@ -243,16 +242,76 @@ func TestRSSSmartFeedsKeepTheOtherDestinations(t *testing.T) {
 		t.Fatalf("Starred's articles = %q, want %q", got, want)
 	}
 
-	if err := tt.Click("All Unread"); err != nil {
-		t.Fatalf("click All Unread: %v", err)
+	if err := tt.Click("The Daily Feed"); err != nil {
+		t.Fatalf("click The Daily Feed: %v", err)
 	}
 	tt.Frame()
-	if a.Selected != "all" {
-		t.Fatalf("after clicking All Unread the selection = %q", a.Selected)
+	if a.Selected != "feed:feed-today" {
+		t.Fatalf("after clicking the feed the selection = %q", a.Selected)
 	}
-	if got := len(a.VisibleRSSArticles()); got != len(rssTodayArticles) {
-		t.Fatalf("All Unread lists %d articles, want the destination's %d", got, len(rssTodayArticles))
+	if got, want := len(rssVisibleIDs(a)), len(rssTodayArticles); got != want {
+		t.Fatalf("the feed lists %d articles, want its whole %d", got, want)
 	}
+}
+
+// TestRSSAllUnreadSmartFeedListsOnlyUnread covers the second smart feed: with
+// read and unread articles seeded, the row and the column header both say All
+// Unread, the count is the unread total, and the list holds exactly the unread
+// articles.
+func TestRSSAllUnreadSmartFeedListsOnlyUnread(t *testing.T) {
+	for _, tc := range []struct {
+		locale, row, title, unread string
+	}{
+		{locale: "en", row: "All Unread", title: "All Unread", unread: "5 unread"},
+		{locale: "zh", row: "全部未读", title: "全部未读", unread: "5 篇未读"},
+	} {
+		t.Run(tc.locale, func(t *testing.T) {
+			a, _, tt := rssTodayTestApp(t)
+			tt.SetLocale(tc.locale)
+			tt.Frame()
+
+			if err := tt.Click(tc.row); err != nil {
+				t.Fatalf("click %q: %v", tc.row, err)
+			}
+			tt.Frame()
+			if a.Selected != "all" {
+				t.Fatalf("after clicking %q the selection = %q, want all", tc.row, a.Selected)
+			}
+			want := []string{"art-1h", "art-23h", "art-edge-24h", "art-25h", "art-48h"}
+			if got := rssVisibleIDs(a); !slices.Equal(got, want) {
+				t.Fatalf("All Unread's articles = %q, want the unread ones %q", got, want)
+			}
+			if got, want := len(want), a.RSSTotalUnread; got != want {
+				t.Fatalf("All Unread lists %d articles against a count of %d", got, want)
+			}
+			if !rssColumnHeaderHas(t, tt, tc.title) {
+				t.Fatalf("the column header does not name %q: %v", tc.title, tt.Texts())
+			}
+			if !rssColumnHeaderHas(t, tt, tc.unread) {
+				t.Fatalf("the column header does not count %q: %v", tc.unread, tt.Texts())
+			}
+			for _, read := range []string{"art-2h-read", "art-30h-read"} {
+				if tt.HasText(read) {
+					t.Fatalf("All Unread lists the read article %q", read)
+				}
+			}
+		})
+	}
+}
+
+// rssColumnHeaderHas reports whether the article column header draws text.
+func rssColumnHeaderHas(t *testing.T, tt *ui.Tester, text string) bool {
+	t.Helper()
+	header, ok := tt.AccessByRole(ui.RoleGroup, "Article column header")
+	if !ok {
+		t.Fatal("the article column has no accessible header")
+	}
+	for _, info := range tt.AccessAll() {
+		if info.Name == text && rssBoxHolds(header.Bounds, info.Bounds) {
+			return true
+		}
+	}
+	return false
 }
 
 // TestRSSSmartFeedRowMetrics pins the rows the reference measures: the smart

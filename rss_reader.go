@@ -542,14 +542,17 @@ func (w *Window) rssReaderEmpty(c *ui.Context, t mui.Tokens) {
 }
 
 // The reading header's action group, as NetNewsWire's: six borderless icon
-// controls in one row at the header's trailing edge. Each box is 24 pt with a
-// 16 pt glyph, and the boxes keep 1.5 pt of optical space between them so the
-// six read as one group rather than six buttons.
+// controls in one pill on the header's leading edge. Each box is 24 pt with a
+// 16 pt glyph, the boxes keep 1.5 pt of optical space between them so the six
+// read as one group rather than six buttons, and the pill carries 5 pt of
+// vertical and 6 pt of horizontal padding inside its border.
 const (
 	rssHeaderActionSize  float32 = 24
 	rssHeaderActionGap   float32 = 1.5
 	rssHeaderActionGlyph float32 = 16
 	rssHeaderActions     int     = 6
+	rssHeaderActionPadY  float32 = 5
+	rssHeaderActionPadX  float32 = 6
 )
 
 // rssHeaderActionsLabel names the action group for the accessibility tree.
@@ -576,13 +579,24 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 	gutter := rssReaderPadding(w.rssLayout.readerWidth - rssTickRailWidth)
 	content := w.rssLayout.readerWidth - rssTickRailWidth - 2*gutter
 	now := time.Now()
-	if w.now != nil {
-		now = w.now()
+	if w.app != nil {
+		now = w.app.clockNow()
 	}
 	date := rssReaderDate(art.PublishedAt, now)
 	inline := rssHeaderRowWidth(c, feedName, date) <= content
 	actions := func() {
 		w.rssHeaderActions(c, t, art)
+	}
+	source := func() {
+		if feedName != "" {
+			mui.Metadata.Apply(ui.Text(c, feedName)).TextColor(t.Accent).SingleLine().Shrink(1)
+		}
+		if date != "" {
+			if feedName != "" {
+				mui.Metadata.Apply(ui.Text(c, "·")).TextColor(t.Faint).Shrink(0)
+			}
+			mui.Metadata.Apply(ui.Text(c, date)).TextColor(t.Muted).SingleLine().Shrink(0)
+		}
 	}
 
 	head := ui.Column(c.Key("rss-reader-header")).Shrink(0).FillWidth().
@@ -593,33 +607,22 @@ func (w *Window) rssReaderHeader(c *ui.Context, t mui.Tokens, art core.RSSArticl
 	})
 	head.Children(func() {
 		ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(mui.Space(2)).Children(func() {
-			if feedName != "" {
-				mui.Metadata.Apply(ui.Text(c, feedName)).TextColor(t.Accent).SingleLine().Shrink(1)
-			}
-			if date != "" {
-				if feedName != "" {
-					mui.Metadata.Apply(ui.Text(c, "·")).TextColor(t.Faint).Shrink(0)
-				}
-				mui.Metadata.Apply(ui.Text(c, date)).TextColor(t.Muted).SingleLine().Shrink(0)
-			}
+			actions()
 			if inline {
-				ui.Spacer(c)
-				w.rssTextSizeControl(c, t)
-				actions()
+				source()
 			}
+			ui.Spacer(c)
+			w.rssTextSizeControl(c, t)
 		})
+		if !inline {
+			// A narrow reader keeps the pill and the size control on the
+			// leading and trailing edges and gives the source its own row, so
+			// neither leaves the pane and the feed name keeps its room.
+			ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(mui.Space(2)).Children(source)
+		}
 		w.readingType().Title.Apply(ui.Text(c, art.Title)).TextColor(t.Text).MaxLines(3).Wrap()
 		if author := strings.TrimSpace(art.Author); author != "" {
 			mui.Secondary.Apply(ui.Text(c, author)).TextColor(t.Muted).SingleLine()
-		}
-		if !inline {
-			// A narrow reader gives the size control and the actions their
-			// own rows under the metadata, so neither leaves the pane and the
-			// feed name keeps its room.
-			ui.Row(c).FillWidth().Justify(ui.End).Children(func() {
-				w.rssTextSizeControl(c, t)
-			})
-			ui.Row(c).FillWidth().Justify(ui.End).Children(actions)
 		}
 	})
 }
@@ -692,14 +695,14 @@ func (w *Window) rssTextSizeControl(c *ui.Context, t mui.Tokens) {
 }
 
 // rssHeaderRowWidth is the width the header's metadata row needs to stay
-// inline: the date, the text size control, and the action group, as their
-// roles draw them, the row's own gaps, and the least room the feed name and
-// its separator keep. Below it the row stacks rather than shrinking the feed
-// name to a stub. The group is measured at its full six icons, so the row never
-// flips to the stacked layout because a fetch moved on.
+// inline: the action pill, the date, the text size control, the row's own gaps,
+// and the least room the feed name and its separator keep. Below it the row
+// stacks rather than shrinking the feed name to a stub. The pill is measured at
+// its full six icons, so the row never flips to the stacked layout because a
+// fetch moved on.
 func rssHeaderRowWidth(c *ui.Context, feedName, date string) float32 {
-	width := rssTextSizeControlWidth(c) + rssHeaderActionsWidth()
-	children := 4 // the feed name, the spacer, the size control, and the actions
+	width := rssHeaderActionsWidth() + rssTextSizeControlWidth(c)
+	children := 4 // the action pill, the feed name, the spacer, and the size control
 	if feedName != "" {
 		width += rssHeaderFeedMin
 	}
@@ -714,10 +717,12 @@ func rssHeaderRowWidth(c *ui.Context, feedName, date string) float32 {
 	return width + float32(children-1)*mui.Space(2)
 }
 
-// rssHeaderActionsWidth is the action group's own width: six 24 pt boxes and
-// the 1.5 pt optical space between them.
+// rssHeaderActionsWidth is the action pill's own width: its border and
+// horizontal padding around six 24 pt boxes and the 1.5 pt optical space
+// between them.
 func rssHeaderActionsWidth() float32 {
-	return float32(rssHeaderActions)*rssHeaderActionSize + float32(rssHeaderActions-1)*rssHeaderActionGap
+	boxes := float32(rssHeaderActions)*rssHeaderActionSize + float32(rssHeaderActions-1)*rssHeaderActionGap
+	return 2*mui.Hairline + 2*rssHeaderActionPadX + boxes
 }
 
 // rssTextWidth measures one run in the given role, the width it draws at.
@@ -814,6 +819,8 @@ func (w *Window) rssHeaderAction(c *ui.Context, t mui.Tokens, spec rssHeaderActi
 func (w *Window) rssHeaderActions(c *ui.Context, t mui.Tokens, art core.RSSArticle) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	ui.Row(c).Key("rss-reader-actions").Shrink(0).Gap(rssHeaderActionGap).
+		Padding(rssHeaderActionPadY, rssHeaderActionPadX).
+		Background(t.SurfaceAlt).Border(mui.Hairline, t.BorderSoft).Radius(mui.RadiusNotice).
 		AlignItems(ui.Center).Role(ui.RoleGroup).Label(rssHeaderActionsLabel(zh)).Children(func() {
 		w.rssReadAction(c, t, art)
 		w.rssStarAction(c, t, art)

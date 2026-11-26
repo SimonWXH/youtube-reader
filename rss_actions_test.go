@@ -39,13 +39,22 @@ func TestRSSReaderActionGroupIsSixIcons(t *testing.T) {
 	}
 
 	// The six boxes draw left to right in that order, each the 24 pt the
-	// reference gives it, and 1.5 pt apart.
+	// reference gives it, and 1.5 pt apart, inside the reference's one rounded
+	// pill: a hairline border and 6 pt of horizontal, 5 pt of vertical padding
+	// around the six.
 	area := rssHeaderActionsArea(t, tt)
+	if area.W != 165.5 || area.H != 36 {
+		t.Fatalf("the action pill is %vx%v pt, want the reference's 165.5x36 pt pill", area.W, area.H)
+	}
 	var last ui.Rect
 	for i, name := range want {
 		box := rssHeaderAction(t, tt, name).Bounds
 		if box.W != 24 || box.H != 24 {
 			t.Fatalf("%s is %vx%v pt, want the reference's 24 pt box", name, box.W, box.H)
+		}
+		if i == 0 && (box.X-area.X != 7 || box.Y-area.Y != 6) {
+			t.Fatalf("%s sits %v,%v from the pill's corner, want its 1 pt border and 6x5 pt padding",
+				name, box.X-area.X, box.Y-area.Y)
 		}
 		if i > 0 {
 			if gap := box.X - (last.X + last.W); gap != 1.5 {
@@ -55,7 +64,23 @@ func TestRSSReaderActionGroupIsSixIcons(t *testing.T) {
 		last = box
 	}
 	if last.X+last.W > area.X+area.W+0.5 {
-		t.Fatalf("the last action at %v runs past the group %v", last, area)
+		t.Fatalf("the last action at %v runs past the pill %v", last, area)
+	}
+	// The pill leads the reader's first row, before the feed name, and stands
+	// whole inside the header.
+	header, ok := tt.AccessByRole(ui.RoleGroup, "Article header")
+	if !ok {
+		t.Fatal("the reader header has no accessible group")
+	}
+	if area.X <= header.Bounds.X || area.X+area.W >= header.Bounds.X+header.Bounds.W {
+		t.Fatalf("the action pill at %v does not stand inside the header %v", area, header.Bounds)
+	}
+	feed, ok := rssHeaderNode(t, tt, header.Bounds, "The Long Read")
+	if !ok {
+		t.Fatal("the header draws no feed name beside the pill")
+	}
+	if feed.X <= area.X+area.W {
+		t.Fatalf("the feed name at %v does not follow the action pill %v", feed, area)
 	}
 
 	// Every control but share acts on this article, which carries a link, and
@@ -104,39 +129,48 @@ func TestRSSReaderActionGroupIsSixIcons(t *testing.T) {
 }
 
 // TestRSSReaderOriginalResolvesTheFeedsRelativePictures covers a feed body
-// stored as the feed delivered it: its relative picture references resolve
-// against the article's link, so the original shows the picture the reader
-// would otherwise report as unloadable.
+// stored as the feed delivered it: its picture references resolve against the
+// article's own link by the URL base rule, so the original shows the picture
+// the reader would otherwise report as unloadable.
 func TestRSSReaderOriginalResolvesTheFeedsRelativePictures(t *testing.T) {
-	a, _, tt := rssReaderTestWindow(t)
+	for _, tc := range []struct{ name, src, want string }{
+		{name: "relative", src: "images/a.png", want: "https://feeds.example.com/images/a.png"},
+		{name: "root-relative", src: "/images/a.png", want: "https://feeds.example.com/images/a.png"},
+		{name: "protocol-relative", src: "//cdn.example.com/a.png", want: "https://cdn.example.com/a.png"},
+		{name: "absolute", src: "https://cdn.example.com/a.png", want: "https://cdn.example.com/a.png"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, _, tt := rssReaderTestWindow(t)
 
-	art := rssReaderTestArticle()
-	art.ContentHTML = "<p>the extracted full text</p>"
-	art.Blocks = []core.ArticleBlock{{Type: core.BlockParagraph, Text: "the extracted full text"}}
-	art.FeedContentHTML = `<p>the feed's own version</p><p><img src="/images/a.png" alt="A reading room"></p>`
-	if err := a.Store.SaveRSSArticles(context.Background(), []core.RSSArticle{art}); err != nil {
-		t.Fatalf("save the article's two bodies: %v", err)
-	}
-	if err := a.ReloadRSS(); err != nil {
-		t.Fatalf("reload rss: %v", err)
-	}
-	openRSSReaderFullTextArticle(t, tt)
-	clickRSSHeaderAction(t, tt, "Show Original")
-
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		img, ok := tt.AccessByRole(ui.RoleLink, "A reading room")
-		if ok && img.Bounds.H > 0 {
-			if want := "https://feeds.example.com/images/a.png"; img.Description != want {
-				t.Fatalf("the original's picture points at %q, want %q", img.Description, want)
+			art := rssReaderTestArticle()
+			art.ContentHTML = "<p>the extracted full text</p>"
+			art.Blocks = []core.ArticleBlock{{Type: core.BlockParagraph, Text: "the extracted full text"}}
+			art.FeedContentHTML = `<p>the feed's own version</p><p><img src="` + tc.src + `" alt="A reading room"></p>`
+			if err := a.Store.SaveRSSArticles(context.Background(), []core.RSSArticle{art}); err != nil {
+				t.Fatalf("save the article's two bodies: %v", err)
 			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("picture block = %+v, %v; want a laid-out named frame", img, ok)
-		}
-		tt.Frame()
-		time.Sleep(5 * time.Millisecond)
+			if err := a.ReloadRSS(); err != nil {
+				t.Fatalf("reload rss: %v", err)
+			}
+			openRSSReaderFullTextArticle(t, tt)
+			clickRSSHeaderAction(t, tt, "Show Original")
+
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				img, ok := tt.AccessByRole(ui.RoleLink, "A reading room")
+				if ok && img.Bounds.H > 0 {
+					if img.Description != tc.want {
+						t.Fatalf("the original's picture points at %q, want %q", img.Description, tc.want)
+					}
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("picture block = %+v, %v; want a laid-out named frame", img, ok)
+				}
+				tt.Frame()
+				time.Sleep(5 * time.Millisecond)
+			}
+		})
 	}
 }
 

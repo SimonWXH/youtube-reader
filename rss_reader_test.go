@@ -683,7 +683,8 @@ func rssReaderTestApp(t *testing.T) (*App, *Window) {
 		t.Fatalf("reload rss: %v", err)
 	}
 
-	w := &Window{app: a, selectedIndex: new(int), now: func() time.Time { return rssReaderTestNow }}
+	a.now = func() time.Time { return rssReaderTestNow }
+	w := &Window{app: a, selectedIndex: new(int)}
 	w.selectWorkspace(WorkspaceRSS)
 	return a, w
 }

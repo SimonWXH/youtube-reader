@@ -202,9 +202,9 @@ func TestRSSReadingColumnNarrowsWithTheWindow(t *testing.T) {
 }
 
 // TestRSSHeaderSizeControlFitsTheReader checks the control never leaves the
-// pane: on the shipped default window and the widest reader it shares the
-// actions' row, and on readers too narrow for it and a readable feed name it
-// takes its own row above them, each segment inside the reader and the track's
+// pane: the size control trails the action pill on its row at every window,
+// and on a reader too narrow for it and a readable feed name the feed name and
+// date move to the row below, each segment inside the reader and the track's
 // inset, and the feed name never squeezed below its minimum.
 func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 	for _, tc := range []struct {
@@ -259,13 +259,19 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 				if box.Y < header.Bounds.Y || box.Y+box.H > header.Bounds.Y+header.Bounds.H {
 					t.Fatalf("segment %d at %v leaves the header %v", i, box, header.Bounds)
 				}
-				sharesRow := box.Y+box.H > actions.Y && box.Y < actions.Y+actions.H
-				if sharesRow != tc.inline {
-					t.Fatalf("segment %d at %v shares the actions' row = %v, want %v", i, box, sharesRow, tc.inline)
+				if box.Y < actions.Y || box.Y+box.H > actions.Y+actions.H {
+					t.Fatalf("segment %d at %v does not trail the action pill %v on its row", i, box, actions)
 				}
 			}
 			if actions.X+actions.W > header.Bounds.X+header.Bounds.W {
 				t.Fatalf("the actions run outside the header: %v in %v", actions, header.Bounds)
+			}
+			feed, ok := rssHeaderNode(t, tt, header.Bounds, "The Long Read")
+			if !ok {
+				t.Fatal("the header draws no feed name")
+			}
+			if sharesRow := feed.Y < actions.Y+actions.H; sharesRow != tc.inline {
+				t.Fatalf("the feed name at %v shares the pill's row = %v, want %v", feed, sharesRow, tc.inline)
 			}
 			rssHeaderFeedBox(t, tt, header.Bounds)
 		})
@@ -293,7 +299,14 @@ func TestRSSHeaderSizeControlFitsTheReader(t *testing.T) {
 				t.Fatalf("%d pt: the fetching action is %v pt wide, want the reference's 24 pt box", width, got.W)
 			}
 			actions := rssHeaderActionsArea(t, tt)
-			if box := segments[0].Bounds; box.Y+box.H > actions.Y && box.Y < actions.Y+actions.H {
+			if got := rssHeaderAction(t, tt, "Fetching…").Bounds; got.Y < actions.Y || got.Y+got.H > actions.Y+actions.H {
+				t.Fatalf("%d pt: the fetching action %v does not sit inside the pill %v", width, got, actions)
+			}
+			feed, ok := rssHeaderNode(t, tt, header.Bounds, "The Long Read")
+			if !ok {
+				t.Fatalf("%d pt: the header draws no feed name", width)
+			}
+			if feed.Y < actions.Y+actions.H {
 				inlineRows++
 			}
 			rssHeaderFeedBox(t, tt, header.Bounds)
