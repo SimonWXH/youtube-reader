@@ -394,8 +394,8 @@ func (s *Store) ListRSSArticles(ctx context.Context, filter RSSArticleFilter) ([
 }
 
 // ListRSSArticleSummaries returns article metadata and snippets matching filter
-// without loading content_html or blocks_json into memory. Full article bodies
-// are loaded on demand via GetRSSArticle.
+// without loading content_html, feed_content_html or blocks_json into memory.
+// Full article bodies are loaded on demand via GetRSSArticle.
 func (s *Store) ListRSSArticleSummaries(ctx context.Context, filter RSSArticleFilter) ([]RSSArticle, error) {
 	query, args := buildRSSArticleQuery(`
 		id, feed_id, title, link, guid, author, published_at, snippet,
