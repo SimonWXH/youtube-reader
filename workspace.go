@@ -1004,10 +1004,11 @@ func (w *Window) rssEmptyState(c *ui.Context, t mui.Tokens) {
 		unreadForced := w.app.Selected == "all" || w.app.Selected == ""
 		hasFeeds := len(w.app.RSSFeeds) > 0
 		destinationArticles := w.app.RSSDestinationArticleCount()
-		filtersHide := strings.TrimSpace(w.app.Search) != "" || (w.app.UnreadOnly && !unreadForced)
+		searchActive := strings.TrimSpace(w.app.Search) != ""
+		unreadActive := w.app.UnreadOnly && !unreadForced
 		switch {
-		case destinationArticles > 0 && filtersHide:
-			title, sentence = rssNoMatchCopy(zh, unreadForced)
+		case destinationArticles > 0 && (searchActive || unreadActive):
+			title, sentence = rssNoMatchCopy(zh, searchActive, unreadActive)
 		case destinationArticles == 0 && unreadForced && hasFeeds:
 			title = "You are up to date"
 			sentence = "New articles will appear here when your feeds publish them."
@@ -1035,19 +1036,25 @@ func (w *Window) rssEmptyState(c *ui.Context, t mui.Tokens) {
 	})
 }
 
-// rssNoMatchCopy words the empty column when nothing matches: it names the
-// unread filter only at the destinations that still draw one.
-func rssNoMatchCopy(zh, unreadForced bool) (string, string) {
-	if zh {
-		if unreadForced {
-			return "无匹配文章", "尝试清除搜索词。"
+// rssNoMatchCopy words the empty column when nothing matches: it names exactly
+// the filters that are hiding the destination's articles.
+func rssNoMatchCopy(zh, searchActive, unreadActive bool) (string, string) {
+	switch {
+	case searchActive && unreadActive:
+		if zh {
+			return "无匹配文章", "尝试清除搜索词或未读过滤。"
 		}
-		return "无匹配文章", "尝试清除搜索词或未读过滤。"
+		return "No Matching Articles", "Try clearing search terms or the unread filter."
+	case unreadActive:
+		if zh {
+			return "无匹配文章", "尝试清除未读过滤。"
+		}
+		return "No Matching Articles", "Try clearing the unread filter."
 	}
-	if unreadForced {
-		return "No Matching Articles", "Try clearing the search term."
+	if zh {
+		return "无匹配文章", "尝试清除搜索词。"
 	}
-	return "No Matching Articles", "Try clearing search terms or the unread filter."
+	return "No Matching Articles", "Try clearing the search term."
 }
 
 // readLaterMainArea renders the bilingual empty state for Read Later.

@@ -456,14 +456,14 @@ func TestRSSAllUnreadEmptyStateSaysUpToDate(t *testing.T) {
 			sentence: "New articles will appear here when your feeds publish them.",
 			count:    "0 articles", genericTitle: "No Articles",
 			searchLabel: "Search articles", searchTitle: "No Matching Articles",
-			feedSearchSentence: "Try clearing search terms or the unread filter.",
+			feedSearchSentence: "Try clearing the search term.",
 		},
 		{
 			locale: "zh", row: "全部未读", title: "已无未读",
 			sentence: "订阅源更新后，新文章会出现在这里。",
 			count:    "0 篇文章", genericTitle: "暂无文章",
 			searchLabel: "搜索文章", searchTitle: "无匹配文章",
-			feedSearchSentence: "尝试清除搜索词或未读过滤。",
+			feedSearchSentence: "尝试清除搜索词。",
 		},
 	} {
 		t.Run(tc.locale, func(t *testing.T) {
@@ -514,7 +514,7 @@ func TestRSSAllUnreadEmptyStateSaysUpToDate(t *testing.T) {
 			}
 
 			// The feed holds articles the search hides, so its no-match copy
-			// names both controls.
+			// names the search alone.
 			a.Selected = "feed:feed-today"
 			tt.Frame()
 			if !tt.HasText(tc.feedSearchSentence) {
@@ -730,6 +730,91 @@ func TestRSSTodayEmptyStateFollowsTheWindow(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRSSNoMatchCopyNamesOnlyActiveFilters covers the no-match sentence: it
+// names the search only, the unread filter only, or both, according to what is
+// actually hiding the destination's articles.
+func TestRSSNoMatchCopyNamesOnlyActiveFilters(t *testing.T) {
+	for _, tc := range []struct {
+		locale, starred, allUnread, searchOnly, unreadOnly, both string
+	}{
+		{
+			locale: "en", starred: "Starred", allUnread: "All Unread",
+			searchOnly: "Try clearing the search term.",
+			unreadOnly: "Try clearing the unread filter.",
+			both:       "Try clearing search terms or the unread filter.",
+		},
+		{
+			locale: "zh", starred: "标星", allUnread: "全部未读",
+			searchOnly: "尝试清除搜索词。",
+			unreadOnly: "尝试清除未读过滤。",
+			both:       "尝试清除搜索词或未读过滤。",
+		},
+	} {
+		t.Run(tc.locale, func(t *testing.T) {
+			a, _, tt := rssTodayTestApp(t)
+			tt.SetLocale(tc.locale)
+			tt.Frame()
+			if err := tt.Click(tc.starred); err != nil {
+				t.Fatalf("click %s: %v", tc.starred, err)
+			}
+
+			a.Search = "anything"
+			tt.Frame()
+			if !rssHasSentence(t, tt, tc.searchOnly) {
+				t.Fatalf("a search alone did not name the search: %v", tt.Texts())
+			}
+			if rssHasSentence(t, tt, tc.unreadOnly) || rssHasSentence(t, tt, tc.both) {
+				t.Fatalf("a search alone named the unread filter that is off: %v", tt.Texts())
+			}
+
+			a.Search = ""
+			a.UnreadOnly = true
+			tt.Frame()
+			if !rssHasSentence(t, tt, tc.unreadOnly) {
+				t.Fatalf("the unread filter alone did not name itself: %v", tt.Texts())
+			}
+			if rssHasSentence(t, tt, tc.both) || rssHasSentence(t, tt, tc.searchOnly) {
+				t.Fatalf("the unread filter alone named a search that is blank: %v", tt.Texts())
+			}
+
+			a.Search = "anything"
+			tt.Frame()
+			if !rssHasSentence(t, tt, tc.both) {
+				t.Fatalf("both filters did not name both: %v", tt.Texts())
+			}
+
+			a.Search = "   "
+			tt.Frame()
+			if !rssHasSentence(t, tt, tc.unreadOnly) {
+				t.Fatalf("a blank search counted as an active one: %v", tt.Texts())
+			}
+			if rssHasSentence(t, tt, tc.both) {
+				t.Fatalf("a blank search made the copy name both filters: %v", tt.Texts())
+			}
+
+			a.UnreadOnly = false
+			a.Search = "anything"
+			if err := tt.Click(tc.allUnread); err != nil {
+				t.Fatalf("click %s: %v", tc.allUnread, err)
+			}
+			tt.Frame()
+			if !rssHasSentence(t, tt, tc.searchOnly) {
+				t.Fatalf("All Unread's search did not name the search alone: %v", tt.Texts())
+			}
+			if rssHasSentence(t, tt, tc.unreadOnly) || rssHasSentence(t, tt, tc.both) {
+				t.Fatalf("All Unread's copy named its forced unread filter: %v", tt.Texts())
+			}
+		})
+	}
+}
+
+// rssHasSentence reports whether the column draws text exactly.
+func rssHasSentence(t *testing.T, tt *ui.Tester, text string) bool {
+	t.Helper()
+	_, ok := tt.Find(text)
+	return ok
 }
 
 // TestRSSSmartFeedRowMetrics pins the rows the reference measures: the smart
