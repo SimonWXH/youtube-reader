@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -80,10 +79,11 @@ func runNotifyOnly(app *App) {
 }
 
 func realMain() {
-	// A picture whose server accepts the connection and then stalls has to end
-	// in the reader's failed-image placeholder, not hold the frame forever, so
-	// bound every image download netimage makes rather than wait on it.
-	netimage.SetClient(&http.Client{Timeout: 15 * time.Second})
+	// Pictures download through one client: it bounds every download netimage
+	// makes so a server that stalls ends in the reader's failed-image
+	// placeholder instead of holding the frame, and it sends the Referer a
+	// picture's host requires so a CDN that guards against hotlinking serves it.
+	netimage.SetClient(core.NewImageClient(core.DefaultImageTimeout))
 	app, err := LoadApp()
 	if err != nil {
 		log.Fatal(err)
