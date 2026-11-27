@@ -81,15 +81,17 @@ type Tokens struct {
 	// ModalShadow is the L2 panel's shadow ink, drawn with the
 	// ElevationModal geometry below.
 	ModalShadow ui.Color
-	// The workspace dock's four glyphs keep their own colours instead of
-	// following the interaction states, so the active slot shows an accent
-	// edge bar, hover and press an outline, and the brand reads at a glance.
+	// The workspace dock's active glyph keeps its own brand colour while the
+	// three unselected glyphs step back to WorkspaceDockIdle; hover and press
+	// draw a 1 pt outline so no state dims or covers the ink with a plate.
 	// Dark mode lifts the warm inks and turns RSS from black to near-white,
 	// because a black glyph would disappear on the dark sidebar.
 	WorkspaceVideo     ui.Color // WorkspaceVideo is the Video dock glyph.
 	WorkspaceRSS       ui.Color // WorkspaceRSS is the RSS dock glyph.
 	WorkspaceReadLater ui.Color // WorkspaceReadLater is the 稍后读 dock glyph.
 	WorkspaceWeChat    ui.Color // WorkspaceWeChat is the 微信读书 dock glyph.
+	// WorkspaceDockIdle is the muted colour of an unselected dock glyph.
+	WorkspaceDockIdle ui.Color
 	// WorkspaceDockHoverOutline marks the dock slot under the pointer: a
 	// 1 pt outline that reads on the sidebar without tinting any ink.
 	WorkspaceDockHoverOutline ui.Color
@@ -124,6 +126,7 @@ func NewTokens(base *ui.Theme, prefersDark bool) Tokens {
 			WorkspaceRSS:              ui.Hex("#f2f2f3"),
 			WorkspaceReadLater:        ui.Hex("#ff8b52"),
 			WorkspaceWeChat:           ui.Hex("#6cc3ff"),
+			WorkspaceDockIdle:         ui.Hex("#919294"),
 			WorkspaceDockHoverOutline: ui.Hex("#3f4249"),
 		}
 	}
@@ -152,6 +155,7 @@ func NewTokens(base *ui.Theme, prefersDark bool) Tokens {
 		WorkspaceRSS:              ui.Hex("#000000"),
 		WorkspaceReadLater:        ui.Hex("#f46b26"),
 		WorkspaceWeChat:           ui.Hex("#35a8ff"),
+		WorkspaceDockIdle:         ui.Hex("#7a7a7a"),
 		WorkspaceDockHoverOutline: ui.Hex("#c2c2bc"),
 	}
 }
