@@ -316,7 +316,7 @@ func (a *App) DeleteRSSGroup(id string) error {
 		g, err := a.Store.GetRSSGroup(ctx, id)
 		if err == nil && g != nil {
 			// Ungroup any feeds in this group
-			for _, feedID := range g.FeedIDs {
+			for _, feedID := range a.RSSGroupFeedIDs(id) {
 				if feed, fErr := a.Store.GetRSSFeed(ctx, feedID); fErr == nil && feed != nil {
 					newGroups := make([]string, 0, len(feed.GroupIDs))
 					for _, gid := range feed.GroupIDs {

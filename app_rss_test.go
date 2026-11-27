@@ -326,3 +326,67 @@ func TestAppReloadRSSLoadsSummariesAndSelectsFullArticleOnDemand(t *testing.T) {
 		t.Fatalf("SelectedRSSArticle did not reflect MarkRSSArticleRead")
 	}
 }
+
+// TestAppRSSGroupDeleteUngroupsEveryDrawnMember covers the folder's single
+// definition of its feeds on the delete path: a feed the folder draws only
+// through its own GroupIDs loses that membership too, so deleting the folder
+// leaves it ungrouped rather than invisible with a stale group id.
+func TestAppRSSGroupDeleteUngroupsEveryDrawnMember(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	defer a.Close()
+	ctx := context.Background()
+	now := time.Now().UnixMilli()
+
+	group := core.RSSGroup{ID: "group-shelf", Name: "Shelf", FeedIDs: []string{"feed-listed"}, UpdatedAt: now}
+	if err := a.Store.SaveRSSGroup(ctx, group); err != nil {
+		t.Fatalf("save the folder: %v", err)
+	}
+	feeds := []core.RSSFeed{
+		{ID: "feed-listed", FeedURL: "https://feeds.example.com/listed.xml", Title: "Listed", GroupIDs: []string{"group-shelf"}, UpdatedAt: now},
+		{ID: "feed-named", FeedURL: "https://feeds.example.com/named.xml", Title: "Named", GroupIDs: []string{"group-shelf"}, UpdatedAt: now},
+	}
+	for _, f := range feeds {
+		if err := a.Store.SaveRSSFeed(ctx, f); err != nil {
+			t.Fatalf("save feed %q: %v", f.ID, err)
+		}
+	}
+	if err := a.ReloadRSS(); err != nil {
+		t.Fatalf("reload rss: %v", err)
+	}
+
+	// The folder draws both feeds even though its own FeedIDs lists one.
+	drawn := a.RSSGroupFeedIDs(group.ID)
+	slices.Sort(drawn)
+	if !slices.Equal(drawn, []string{"feed-listed", "feed-named"}) {
+		t.Fatalf("the folder draws %q, want its listed feed and the feed that names it", drawn)
+	}
+
+	if err := a.DeleteRSSGroup(group.ID); err != nil {
+		t.Fatalf("delete the folder: %v", err)
+	}
+
+	for _, id := range []string{"feed-listed", "feed-named"} {
+		feed, err := a.Store.GetRSSFeed(ctx, id)
+		if err != nil || feed == nil {
+			t.Fatalf("read %q back: %v", id, err)
+		}
+		if len(feed.GroupIDs) != 0 {
+			t.Fatalf("feed %q still names the deleted folder: %v", id, feed.GroupIDs)
+		}
+	}
+	if a.RSSGroupByID(group.ID).ID != "" {
+		t.Fatalf("the deleted folder is still in the library: %+v", a.RSSGroupByID(group.ID))
+	}
+
+	// The sidebar's Ungrouped section is where such a feed lands: no folder
+	// remains to draw it, so it must be ungrouped to stay visible.
+	w := &Window{app: a}
+	ungrouped := make([]string, 0, len(feeds))
+	for _, f := range w.rssUngroupedFeeds() {
+		ungrouped = append(ungrouped, f.ID)
+	}
+	slices.Sort(ungrouped)
+	if !slices.Equal(ungrouped, []string{"feed-listed", "feed-named"}) {
+		t.Fatalf("the Ungrouped section draws %q, want both feeds the folder dropped", ungrouped)
+	}
+}
