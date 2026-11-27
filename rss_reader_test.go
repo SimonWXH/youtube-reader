@@ -179,8 +179,9 @@ func TestRSSTickSections(t *testing.T) {
 
 // TestRSSTickGeometry pins the rail's geometry: the fixed 8 pt pitch, the three
 // mark sizes centred on it, the track's height and its hold inside a tenth and
-// a quarter of the reading viewport, and the merge a body too long for the
-// ceiling gets instead of a tighter pitch.
+// a quarter of the reading viewport - the scrolling body's height, not the whole
+// window's - and the merge a body too long for the ceiling gets instead of a
+// tighter pitch.
 func TestRSSTickGeometry(t *testing.T) {
 	const viewportH float32 = 800
 	lane := ui.Rect{X: 1200, Y: 80, W: rssTickRailWidth, H: viewportH}
@@ -295,8 +296,9 @@ func TestRSSTickGeometry(t *testing.T) {
 		if got, want := rssTickTrackHeight(10, viewportH), 9*8+rssTickActiveH+2*rssTickPad; got != want {
 			t.Fatalf("ten sections' track = %v, want its own %v", got, want)
 		}
-		// The clamp reads the reading viewport, not the lane it is painted in:
-		// a lane taller than the viewport still centres the viewport's share.
+		// The clamp reads the reading viewport - the body's height, not the whole
+		// window's - and not the lane it is painted in: a lane taller than the
+		// viewport still centres the viewport's share.
 		tall := ui.Rect{X: 1200, Y: 40, W: rssTickRailWidth, H: 3 * viewportH}
 		clamped := rssTickTrack(tall, 40, viewportH)
 		if clamped.H > 0.25*viewportH {
@@ -541,11 +543,8 @@ func TestRSSTickInteraction(t *testing.T) {
 		if width != 230 {
 			t.Fatalf("the preview is %v pt wide, want 230", width)
 		}
-		if rssPreviewRadius != 10 {
-			t.Fatalf("the preview's corner is %v, want 10", rssPreviewRadius)
-		}
-		if rssPreviewRadius != mui.RadiusCard {
-			t.Fatalf("the preview's corner is %v, want the 10 pt card radius %v", rssPreviewRadius, mui.RadiusCard)
+		if mui.RadiusCard != 10 {
+			t.Fatalf("the preview's corner is %v, want the brief's 10 pt card radius", mui.RadiusCard)
 		}
 		// The preview's place is in the rail's own coordinates: its right edge the
 		// gap left of the widest mark, which ends at the lane's right inset.
@@ -1292,9 +1291,11 @@ func TestRSSReaderSectionsMarkTheArticle(t *testing.T) {
 	}
 	rail := rssReaderTickRail(t, tt)
 	// The lane stretches with the body, so the height the track is clamped
-	// against is the lane's own.
+	// against is the lane's own, which is the reading viewport's height and not
+	// the whole window's.
 	if rail.H != w.rssReader.viewport.H {
-		t.Fatalf("the lane is %v tall, the reading viewport %v", rail.H, w.rssReader.viewport.H)
+		t.Fatalf("the lane is %v tall, the reading viewport %v; the track is clamped against the viewport, not the window",
+			rail.H, w.rssReader.viewport.H)
 	}
 	marks := rssReaderSectionMarks(t, rail, len(sections))
 	if len(marks) != len(sections) {
@@ -1797,8 +1798,9 @@ func rssReaderTickRail(t *testing.T, tt *ui.Tester) ui.Rect {
 }
 
 // rssReaderSectionMarks is where a rail's marks show in the window, as the
-// rail's own geometry draws them. The lane stretches with the reading viewport,
-// so its height is the viewport height the track is clamped against.
+// rail's own geometry draws them. The lane stretches with the reading viewport -
+// the body's height, not the whole window's - so its height is the viewport
+// height the track is clamped against.
 func rssReaderSectionMarks(t *testing.T, rail ui.Rect, sectionCount int) []ui.Rect {
 	t.Helper()
 	count := rssTickCount(sectionCount, rail.H)
