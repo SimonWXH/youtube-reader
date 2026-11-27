@@ -46,9 +46,10 @@ type App struct {
 
 	// rssUnreadListed is the membership the unread-only article column shows,
 	// and rssUnreadView names the view it was taken for. Reading an article
-	// never rewrites it: the set is rebuilt when the destination, the Unread
-	// filter or the library changes, so an opened article keeps its row and the
-	// keyboard can always step back the way it came.
+	// never rewrites it: the set is rebuilt when the destination or the Unread
+	// filter changes and grows with the articles a library reload gains, so an
+	// opened article keeps its row and the keyboard can always step back the
+	// way it came.
 	rssUnreadListed map[string]bool
 	rssUnreadView   string
 
@@ -1760,12 +1761,13 @@ func (a *App) rssUnreadViewKey() string {
 
 // rssUnreadMembership returns the article IDs the unread-only column lists.
 //
-// The set is taken when the view changes - a different destination, the Unread
-// filter going on or off, or the library reloading - and reading never rewrites
-// it: an article opened, starred or marked read keeps its row until the view is
-// rebuilt. That is what lets the article column behave like a reading list
-// rather than a shifting one, so J and K step back the way they came, while the
-// unread counts still follow every article's state as it changes.
+// The set is taken when the view changes - a different destination, or the
+// Unread filter going on or off - and reading never rewrites it: an article
+// opened, starred or marked read keeps its row until the view is rebuilt. A
+// library reload adds the articles it gains rather than retaking the set, so
+// the column behaves like a reading list rather than a shifting one and J and K
+// step back the way they came, while the unread counts still follow every
+// article's state as it changes.
 func (a *App) rssUnreadMembership() map[string]bool {
 	view := a.rssUnreadViewKey()
 	if a.rssUnreadListed != nil && a.rssUnreadView == view {
@@ -1854,9 +1856,10 @@ func (d rssDestinationArticles) owns(art core.RSSArticle) bool {
 	return true
 }
 
-// RSSUnreadForced reports whether the selected destination lists only unread
-// articles: the All Unread destination does, so its strip hides the Unread
-// filter and its empty state never blames it.
+// RSSUnreadForced reports whether the selected destination fixes the set its
+// column lists on its own: the All Unread destination lists its frozen unread
+// membership, so its strip hides the Unread filter, which would add nothing,
+// and its empty state never blames it.
 func (a *App) RSSUnreadForced() bool {
 	return a.rssDestination().unreadForced
 }

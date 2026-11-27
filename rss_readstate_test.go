@@ -342,6 +342,7 @@ func TestRSSFolderMenuOffersOnlyMarkAllRead(t *testing.T) {
 			t.Fatalf("%s: open the folder's menu: %v", tc.locale, err)
 		}
 		menu := tt.Menu()
+		t.Logf("%s folder menu: %q", tc.locale, menu)
 		if !slices.Equal(menu, tc.want) {
 			t.Fatalf("%s: folder menu = %q, want exactly %q", tc.locale, menu, tc.want)
 		}
@@ -393,6 +394,8 @@ func TestRSSFolderMenuOffersOnlyMarkAllRead(t *testing.T) {
 	if a.RSSTotalUnread != 2 {
 		t.Fatalf("the unread total = %d after the folder's read, want the 2 outside it", a.RSSTotalUnread)
 	}
+	t.Logf("folder read action: %d transaction, %d counter refresh, %d read records, store total unread %d",
+		transactions()-before, a.RSCCountReloads, len(records), a.RSSTotalUnread)
 }
 
 // TestRSSFeedMenuOffersBothReadActions pins the feed's menu to its two read
@@ -405,6 +408,7 @@ func TestRSSFeedMenuOffersBothReadActions(t *testing.T) {
 		t.Fatalf("open the feed's menu: %v", err)
 	}
 	menu := tt.Menu()
+	t.Logf("feed menu: %q", menu)
 	for _, want := range []string{"Mark Feed as Read", "Mark Feed as Unread"} {
 		if !slices.Contains(menu, want) {
 			t.Fatalf("the feed's menu %q has no %q entry", menu, want)
@@ -447,6 +451,7 @@ func TestRSSFeedMenuOffersBothReadActions(t *testing.T) {
 		t.Fatalf("open the feed's menu in Chinese: %v", err)
 	}
 	zhMenu := tt.Menu()
+	t.Logf("zh feed menu: %q", zhMenu)
 	for _, want := range []string{"标记本订阅源已读", "标记本订阅源未读"} {
 		if !slices.Contains(zhMenu, want) {
 			t.Fatalf("the Chinese feed menu %q has no %q entry", zhMenu, want)
@@ -520,6 +525,8 @@ func TestRSSShiftCmdUMarksTheScopeRead(t *testing.T) {
 				}
 			}
 			saveRSSReadStateScreenshot(t, tt, "shift-cmd-u-"+strings.ReplaceAll(tc.name, " ", "-")+".png")
+			t.Logf("%s scope: %d transaction, %d counter refresh, library unread %d",
+				tc.name, transactions()-before, a.RSCCountReloads, a.RSSTotalUnread)
 		})
 	}
 }
@@ -558,6 +565,9 @@ func TestRSSShiftCmdUHandlesTheLargestFeedInOneTransaction(t *testing.T) {
 	if len(records) != count {
 		t.Fatalf("the read vector holds %d articles, want %d", len(records), count)
 	}
+	record := records["art-00"][a.DeviceID]
+	t.Logf("big feed: %d articles, %d transaction, %d counter refresh, %d read-vector records; art-00 on %q = read %v updated %d",
+		count, transactions()-before, a.RSCCountReloads, len(records), a.DeviceID, record.Read, record.UpdatedAt)
 	// The column keeps its rows, and reading is still on demand: the summaries
 	// in memory hold no bodies and the open article loads its own.
 	if got := len(a.VisibleRSSArticles()); got != count {

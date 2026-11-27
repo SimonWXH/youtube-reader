@@ -654,8 +654,9 @@ func (w *Window) rssColumnHeader(c *ui.Context, t mui.Tokens) {
 }
 
 // rssContentStrip renders the filter and search bar for RSS articles. The
-// Unread filter is left out at the All Unread destination, where the list is
-// already unread-only and the checkbox would have nothing to control.
+// Unread filter is left out at the All Unread destination, where the
+// destination already fixes the set the column lists, so the checkbox would
+// have nothing to control.
 func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens, visibleCount int) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	searchLabel := "Search articles"
