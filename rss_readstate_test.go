@@ -531,6 +531,9 @@ func TestRSSShiftCmdUHandlesTheLargestFeedInOneTransaction(t *testing.T) {
 		if art.ContentHTML != "" {
 			t.Fatalf("the article column holds a body: %+v", art)
 		}
+		if !art.Read {
+			t.Fatalf("the in-memory article %q stayed unread after the shortcut", art.ID)
+		}
 	}
 }
 
