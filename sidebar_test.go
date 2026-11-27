@@ -1137,3 +1137,32 @@ func pngAvatar(t *testing.T, c color.RGBA) []byte {
 	}
 	return buf.Bytes()
 }
+
+// TestSidebarHasNoDockDivider checks that no hairline border is painted
+// directly beneath the workspace dock in either appearance or workspace.
+func TestSidebarHasNoDockDivider(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		tokens := mui.NewTokens(nil, dark)
+		for _, ws := range []string{WorkspaceVideos, WorkspaceRSS} {
+			a := sidebarTestApp(t, false)
+			a.Settings.ActiveWorkspace = ws
+			w := &Window{app: a, selectedIndex: new(int)}
+			tt := ui.NewTester(w.view, 1280, 808)
+			tt.SetDark(dark)
+			tt.Frame()
+
+			dock, ok := dockRowBounds(tt)
+			if !ok {
+				t.Fatalf("dark=%v ws=%s: dock not found", dark, ws)
+			}
+			y := int(dock.Y + dock.H)
+			img := tt.Image()
+			want := color.RGBA{R: tokens.Sidebar.R, G: tokens.Sidebar.G, B: tokens.Sidebar.B, A: tokens.Sidebar.A}
+			for _, x := range []int{12, 80, 160, int(defaultSidebarWidth) - 12} {
+				if got := img.RGBAAt(x, y); got != want {
+					t.Fatalf("dark=%v ws=%s: pixel at (%d,%d) below dock = %v, want sidebar background %v (no hairline)", dark, ws, x, y, got, want)
+				}
+			}
+		}
+	}
+}

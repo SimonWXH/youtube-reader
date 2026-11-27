@@ -129,6 +129,15 @@ func TestSidebarRowMetrics(t *testing.T) {
 	if SidebarRowHeight != 28 {
 		t.Fatalf("SidebarRowHeight = %v, want 28", SidebarRowHeight)
 	}
+	if SidebarChannelRowHeight != 34 {
+		t.Fatalf("SidebarChannelRowHeight = %v, want 34", SidebarChannelRowHeight)
+	}
+	if SidebarChannelAvatar != 24 {
+		t.Fatalf("SidebarChannelAvatar = %v, want 24", SidebarChannelAvatar)
+	}
+	if SidebarFeedIcon != 24 {
+		t.Fatalf("SidebarFeedIcon = %v, want 24", SidebarFeedIcon)
+	}
 	if SidebarRenameFieldHeight != 26 {
 		t.Fatalf("SidebarRenameFieldHeight = %v, want 26", SidebarRenameFieldHeight)
 	}
@@ -198,5 +207,74 @@ func TestSidebarSelectionIsATint(t *testing.T) {
 		if face.Background == tokens.Accent {
 			t.Fatalf("dark=%v selected row uses a solid accent fill", dark)
 		}
+	}
+}
+
+// TestSidebarFeedRowMatchesChannelHeightAndRoundedSquareIcon checks that a
+// subscription feed row matches channel row height (34 pt) with a 24 pt
+// rounded-square icon and 13 pt label, while smart-feed/navigation and fold
+// rows remain 28 pt.
+func TestSidebarFeedRowMatchesChannelHeightAndRoundedSquareIcon(t *testing.T) {
+	tokens := NewTokens(nil, false)
+	tt := mui.NewTester(func(c *mui.Context) {
+		mui.Column(c).Fill().Background(tokens.Sidebar).Padding(Space(2)).Children(func() {
+			SidebarRow{Key: "smart", Label: "Today", Symbol: "sun.max"}.Build(c, tokens)
+			SidebarRow{Key: "fold", Label: "Folder", Fold: true}.Build(c, tokens)
+			SidebarRow{Key: "chan", Label: "Channel Row", Channel: true}.Build(c, tokens)
+			SidebarRow{Key: "feed", Label: "Feed Row", Feed: true}.Build(c, tokens)
+		})
+	}, 260, 220)
+	tt.Frame()
+
+	for _, tc := range []struct {
+		role mui.Role
+		name string
+		want float32
+	}{
+		{mui.RoleButton, "Today", SidebarRowHeight},
+		{mui.RoleButton, "Folder", SidebarRowHeight},
+		{mui.RoleButton, "Channel Row", SidebarChannelRowHeight},
+		{mui.RoleButton, "Feed Row", SidebarChannelRowHeight},
+	} {
+		info, ok := tt.AccessByRole(tc.role, tc.name)
+		if !ok {
+			t.Fatalf("row %q not found", tc.name)
+		}
+		if info.Bounds.H != tc.want {
+			t.Fatalf("row %q height = %v, want %v", tc.name, info.Bounds.H, tc.want)
+		}
+	}
+
+	// Verify the feed row's 24x24 rounded-square icon keeps a flat top border
+	// past the 6 pt corner radius (unlike a 24 pt circle whose top edge curves
+	// away from y=0 by x=7), while its 13 pt label starts after the 24 pt icon.
+	// Verify the feed row's 24x24 rounded-square icon keeps a flat top/bottom/side
+	// border past the 6 pt corner radius (unlike a 24 pt circle) and sits in
+	// its 24 pt slot before the 8 pt gap and 13 pt label.
+	feedRow, _ := tt.AccessByRole(mui.RoleButton, "Feed Row")
+	img := tt.Image()
+	iconX := int(feedRow.Bounds.X + Space(2))
+	iconY := int(feedRow.Bounds.Y + (feedRow.Bounds.H-SidebarFeedIcon)/2)
+	wantSidebar := color.RGBA{R: tokens.Sidebar.R, G: tokens.Sidebar.G, B: tokens.Sidebar.B, A: tokens.Sidebar.A}
+	if corner := img.RGBAAt(iconX, iconY); corner != wantSidebar {
+		t.Fatalf("feed icon corner (%d,%d) = %v, want sidebar background %v (rounded corner)", iconX, iconY, corner, wantSidebar)
+	}
+	for _, pt := range []struct {
+		name string
+		x, y int
+	}{
+		{"top border", iconX + 7, iconY},
+		{"bottom border", iconX + 7, iconY + int(SidebarFeedIcon) - 1},
+		{"left border", iconX, iconY + int(SidebarFeedIcon)/2},
+		{"right border", iconX + int(SidebarFeedIcon) - 1, iconY + int(SidebarFeedIcon)/2},
+	} {
+		if got := img.RGBAAt(pt.x, pt.y); got == wantSidebar {
+			t.Fatalf("feed icon %s at (%d,%d) = %v, want rounded-square border distinct from sidebar", pt.name, pt.x, pt.y, got)
+		}
+	}
+	// The 8 pt gap after the 24 pt icon must be pure sidebar background (label
+	// has not started early at 16 pt).
+	if gap := img.RGBAAt(iconX+int(SidebarFeedIcon)+2, int(feedRow.Bounds.Y+feedRow.Bounds.H/2)); gap != wantSidebar {
+		t.Fatalf("pixel after 24 pt feed icon = %v, want sidebar background %v", gap, wantSidebar)
 	}
 }

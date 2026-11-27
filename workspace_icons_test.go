@@ -38,7 +38,7 @@ var dockIcons = []struct {
 // swapped or mistyped token cannot satisfy itself.
 var dockIconHexes = map[mui.WorkspaceIconKind][2]string{
 	mui.WorkspaceIconVideos:      {"#ff0033", "#ff5b74"},
-	mui.WorkspaceIconRSS:         {"#000000", "#f2f2f3"},
+	mui.WorkspaceIconRSS:         {"#2bb24c", "#2bb24c"},
 	mui.WorkspaceIconReadLater:   {"#f46b26", "#ff8b52"},
 	mui.WorkspaceIconWeChatNotes: {"#35a8ff", "#6cc3ff"},
 }
@@ -216,11 +216,14 @@ func dockRowBounds(tt *ui.Tester) (ui.Rect, bool) {
 	return ui.Rect{}, false
 }
 
-// TestWorkspaceDockRSSColourSurvivesDarkMode checks the RSS glyph leaves black
-// for near-white ink in the dark appearance, on the sidebar it sits on.
+// TestWorkspaceDockRSSColourSurvivesDarkMode checks the RSS glyph uses #2bb24c
+// in both appearances, keeps at least 3:1 contrast on the dark sidebar, and
+// documents the explicit light-sidebar exception for the captain-selected brand
+// colour (#2bb24c on #f1f1ee measures ~2.45:1, guarded by a 2.4:1 floor).
 func TestWorkspaceDockRSSColourSurvivesDarkMode(t *testing.T) {
-	if got, want := mui.NewTokens(nil, false).WorkspaceRSS, dockIconColour(mui.WorkspaceIconRSS, false); got != want {
-		t.Fatalf("light RSS token = %v, want black %v", got, want)
+	light := mui.NewTokens(nil, false)
+	if got, want := light.WorkspaceRSS, dockIconColour(mui.WorkspaceIconRSS, false); got != want {
+		t.Fatalf("light RSS token = %v, want %v", got, want)
 	}
 	dark := mui.NewTokens(nil, true)
 	if got, want := dark.WorkspaceRSS, dockIconColour(mui.WorkspaceIconRSS, true); got != want {
@@ -230,11 +233,16 @@ func TestWorkspaceDockRSSColourSurvivesDarkMode(t *testing.T) {
 		name string
 		ink  ui.Color
 		bg   ui.Color
+		min  float64
 	}{
-		{"dark", dark.WorkspaceRSS, dark.Sidebar},
+		{"dark", dark.WorkspaceRSS, dark.Sidebar, 3},
+		// Explicit exception for the captain-selected #2bb24c brand colour on
+		// the light sidebar (#f1f1ee): measured contrast is ~2.45:1, so keep a
+		// 2.4:1 floor rather than lowering the shared 3:1 bar elsewhere.
+		{"light", light.WorkspaceRSS, light.Sidebar, 2.4},
 	} {
-		if ratio := dockContrast(tc.ink, tc.bg); ratio < 3 {
-			t.Fatalf("%s RSS glyph contrast on its background = %.2f:1, want at least 3:1", tc.name, ratio)
+		if ratio := dockContrast(tc.ink, tc.bg); ratio < tc.min {
+			t.Fatalf("%s RSS glyph contrast on its background = %.2f:1, want at least %.1f:1", tc.name, ratio, tc.min)
 		}
 	}
 }
@@ -259,9 +267,9 @@ func dockContrast(fg, bg ui.Color) float64 {
 }
 
 // TestWorkspaceDockIconsRender checks the app's own pixels: in both
-// appearances every slot paints its own glyph 26 dp tall and centred in the
-// slot, the selected slot paints in its workspace brand colour (including dark
-// mode's near-white RSS), and the remaining three paint in the muted idle grey.
+// appearances every slot paints its own glyph 22 dp tall and centred in the
+// slot, the selected slot paints in its workspace brand colour (including
+// #2bb24c for RSS), and the remaining three paint in the muted idle grey.
 // A placeholder workspace follows the same selection colour rule: its
 // placeholder state is content, not ink.
 func TestWorkspaceDockIconsRender(t *testing.T) {
@@ -517,6 +525,98 @@ func TestWorkspaceDockStateCues(t *testing.T) {
 			tt.CancelPress()
 			tt.Move(1, 1)
 			tt.Frame()
+		})
+	}
+}
+
+// TestWorkspaceDockTooltipAnchoredBelowSlot checks that hovering a dock slot
+// opens its tooltip below the slot's bottom edge (anchored bottom-to-top and
+// horizontally centered), and that Escape and pointer press dismiss it.
+func TestWorkspaceDockTooltipAnchoredBelowSlot(t *testing.T) {
+	if mui.WorkspaceIconSize != 22 {
+		t.Fatalf("WorkspaceIconSize = %v, want 22", mui.WorkspaceIconSize)
+	}
+	_, w := setupWorkspaceTestApp(t)
+	tt := ui.NewTester(w.view, 1280, 808)
+	tt.Frame()
+
+	for _, locale := range []struct {
+		code  string
+		index int
+	}{{"en", 0}, {"zh-CN", 1}} {
+		t.Run(locale.code, func(t *testing.T) {
+			tt.SetLocale(locale.code)
+			tt.Move(1, 1)
+			tt.Advance(time.Second)
+			tt.Frame()
+
+			for _, icon := range []struct {
+				id       string
+				centered bool
+			}{
+				{WorkspaceVideos, false},
+				{WorkspaceRSS, true},
+				{WorkspaceReadLater, true},
+				{WorkspaceWeChatNotes, true},
+			} {
+				want := dockTitles[icon.id][locale.index]
+				slot, ok := tt.Find(want)
+				if !ok {
+					t.Fatalf("dock slot %q not found", want)
+				}
+
+				tt.Move(slot.X+slot.W/2, slot.Y+slot.H/2)
+				tt.Advance(700 * time.Millisecond)
+				tt.Frame()
+
+				tip, ok := tt.AccessByRole(ui.RoleTooltip, "")
+				if !ok {
+					t.Fatalf("%s: tooltip not shown after hover delay", icon.id)
+				}
+				if !tt.HasText(want) {
+					t.Fatalf("%s: tooltip text %q missing in %v", icon.id, want, tt.Texts())
+				}
+				if tip.Bounds.Y < slot.Y+slot.H {
+					t.Fatalf("%s: tooltip at %+v did not open below slot %+v", icon.id, tip.Bounds, slot)
+				}
+				if icon.centered {
+					tipCX := tip.Bounds.X + tip.Bounds.W/2
+					slotCX := slot.X + slot.W/2
+					if math.Abs(float64(tipCX-slotCX)) > 1.5 {
+						t.Fatalf("%s: tooltip centre x = %v, want slot centre %v ± 1.5", icon.id, tipCX, slotCX)
+					}
+				}
+
+				// Escape hides the tooltip until the pointer leaves and returns.
+				tt.Key(0, ui.KeyEscape)
+				tt.Frame()
+				if _, ok := tt.AccessByRole(ui.RoleTooltip, ""); ok {
+					t.Fatalf("%s: tooltip still shown after Escape", icon.id)
+				}
+
+				tt.Move(1, 1)
+				tt.Advance(time.Second)
+				tt.Frame()
+			}
+
+			// Pressing a dock slot dismisses its tooltip immediately.
+			rssTitle := dockTitles[WorkspaceRSS][locale.index]
+			rssSlot, ok := tt.Find(rssTitle)
+			if !ok {
+				t.Fatalf("RSS dock slot %q not found", rssTitle)
+			}
+			tt.Move(rssSlot.X+rssSlot.W/2, rssSlot.Y+rssSlot.H/2)
+			tt.Advance(700 * time.Millisecond)
+			tt.Frame()
+			if _, ok := tt.AccessByRole(ui.RoleTooltip, ""); !ok {
+				t.Fatalf("RSS tooltip not shown before press")
+			}
+			tt.Press(rssSlot.X+rssSlot.W/2, rssSlot.Y+rssSlot.H/2)
+			tt.Frame()
+			if _, ok := tt.AccessByRole(ui.RoleTooltip, ""); ok {
+				t.Fatal("tooltip still shown while slot is pressed")
+			}
+			tt.CancelPress()
 		})
 	}
 }
