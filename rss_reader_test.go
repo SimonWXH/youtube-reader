@@ -188,6 +188,15 @@ func TestRSSTickGeometry(t *testing.T) {
 	// centre is a mark's middle on the pitch line, whatever its own height.
 	centre := func(r ui.Rect) float32 { return r.Y + r.H/2 }
 
+	// The brief's acceptance numbers, pinned as literals so the test rejects a
+	// self-consistent drift away from an 8 pt pitch and a 10%-25% band.
+	if rssTickPitch != 8 {
+		t.Fatalf("the pitch is %v, want the brief's 8", rssTickPitch)
+	}
+	if rssTickTrackMin != 0.10 || rssTickTrackMax != 0.25 {
+		t.Fatalf("the clamp band is %v-%v, want the brief's 0.10-0.25", rssTickTrackMin, rssTickTrackMax)
+	}
+
 	t.Run("fixed pitch", func(t *testing.T) {
 		for _, count := range []int{3, 5, 20} {
 			rects := rssTickRects(lane, count, 0, -1, viewportH)
@@ -195,14 +204,14 @@ func TestRSSTickGeometry(t *testing.T) {
 				t.Fatalf("%d marks for %d sections", len(rects), count)
 			}
 			for i := 1; i < count; i++ {
-				if got := centre(rects[i]) - centre(rects[i-1]); got != rssTickPitch {
-					t.Fatalf("%d marks: marks %d and %d are %v apart, want the fixed %v",
-						count, i-1, i, got, rssTickPitch)
+				if got := centre(rects[i]) - centre(rects[i-1]); got != 8 {
+					t.Fatalf("%d marks: marks %d and %d are %v apart, want the fixed 8",
+						count, i-1, i, got)
 				}
 			}
 			// The marks never spread over the lane: their span is the pitch's,
 			// not the lane's height shared out.
-			if got, want := centre(rects[count-1])-centre(rects[0]), float32(count-1)*rssTickPitch; got != want {
+			if got, want := centre(rects[count-1])-centre(rects[0]), float32(count-1)*8; got != want {
 				t.Fatalf("%d marks span %v, want %v", count, got, want)
 			}
 		}
@@ -252,7 +261,7 @@ func TestRSSTickGeometry(t *testing.T) {
 		for _, sections := range []int{1, 4, 40} {
 			count := rssTickCount(sections, viewportH)
 			height := rssTickTrackHeight(count, viewportH)
-			low, high := rssTickTrackMin*viewportH, rssTickTrackMax*viewportH
+			low, high := 0.10*viewportH, 0.25*viewportH
 			if height < low || height > high {
 				t.Fatalf("%d sections: track %v, want it inside the %v-%v viewport share", sections, height, low, high)
 			}
@@ -274,23 +283,24 @@ func TestRSSTickGeometry(t *testing.T) {
 		}
 		// A couple of sections is raised to the floor rather than reading as a
 		// stray dot, and the room it adds stays blank at both ends: 10% of 800.
-		if got := rssTickTrackHeight(1, viewportH); got != rssTickTrackMin*viewportH {
-			t.Fatalf("one section's track = %v, want the %v floor", got, rssTickTrackMin*viewportH)
+		const floor = 0.10 * viewportH
+		if got := rssTickTrackHeight(1, viewportH); got != floor {
+			t.Fatalf("one section's track = %v, want the %v floor", got, floor)
 		}
-		if got := rssTickTrackHeight(4, viewportH); got != rssTickTrackMin*viewportH {
-			t.Fatalf("four sections' track = %v, want the %v floor", got, rssTickTrackMin*viewportH)
+		if got := rssTickTrackHeight(4, viewportH); got != floor {
+			t.Fatalf("four sections' track = %v, want the %v floor", got, floor)
 		}
 		// Once the marks outgrow the floor the track follows them a pitch at a
 		// time, so the surplus of a short article is never spread over them.
-		if got, want := rssTickTrackHeight(10, viewportH), 9*rssTickPitch+rssTickActiveH+2*rssTickPad; got != want {
+		if got, want := rssTickTrackHeight(10, viewportH), 9*8+rssTickActiveH+2*rssTickPad; got != want {
 			t.Fatalf("ten sections' track = %v, want its own %v", got, want)
 		}
 		// The clamp reads the reading viewport, not the lane it is painted in:
 		// a lane taller than the viewport still centres the viewport's share.
 		tall := ui.Rect{X: 1200, Y: 40, W: rssTickRailWidth, H: 3 * viewportH}
 		clamped := rssTickTrack(tall, 40, viewportH)
-		if clamped.H > rssTickTrackMax*viewportH {
-			t.Fatalf("a tall lane's track is %v, want the viewport's %v ceiling", clamped.H, rssTickTrackMax*viewportH)
+		if clamped.H > 0.25*viewportH {
+			t.Fatalf("a tall lane's track is %v, want the viewport's %v ceiling", clamped.H, 0.25*viewportH)
 		}
 		if got, want := clamped.Y+clamped.H/2, tall.Y+tall.H/2; got != want {
 			t.Fatalf("a tall lane's track is centred at %v, want the lane's %v", got, want)
@@ -299,23 +309,26 @@ func TestRSSTickGeometry(t *testing.T) {
 
 	t.Run("overflow merges", func(t *testing.T) {
 		const sections = 400
-		count := rssTickCount(sections, viewportH)
-		if count <= 0 || count >= sections {
-			t.Fatalf("%d sections show %d marks, want fewer marks than sections", sections, count)
+		// A quarter of 800 is 200 pt: 24 gaps of 8 pt plus the tallest 4 pt
+		// mark fit, a 25th gap would not, so 25 marks is the ceiling.
+		const capacity = 25
+		if got := rssTickCapacity(viewportH); got != capacity {
+			t.Fatalf("the viewport fits %d marks, want %d", got, capacity)
 		}
-		if got := rssTickCapacity(viewportH); count != got {
-			t.Fatalf("%d sections show %d marks, want the ceiling's %d", sections, count, got)
+		count := rssTickCount(sections, viewportH)
+		if count != capacity {
+			t.Fatalf("%d sections show %d marks, want the ceiling's %d", sections, count, capacity)
 		}
 		// The merged marks keep the pitch: merging loses marks, it never packs
 		// them closer than 8 pt or squeezes them under the ceiling.
 		rects := rssTickRects(lane, count, 0, -1, viewportH)
 		for i := 1; i < count; i++ {
-			if got := centre(rects[i]) - centre(rects[i-1]); got != rssTickPitch {
-				t.Fatalf("merged marks %d and %d are %v apart, want %v", i-1, i, got, rssTickPitch)
+			if got := centre(rects[i]) - centre(rects[i-1]); got != 8 {
+				t.Fatalf("merged marks %d and %d are %v apart, want 8", i-1, i, got)
 			}
 		}
-		if got := rssTickExtent(count); got > rssTickTrackMax*viewportH {
-			t.Fatalf("the merged marks need %v, past the track's %v ceiling", got, rssTickTrackMax*viewportH)
+		if got := rssTickExtent(count); got > 0.25*viewportH {
+			t.Fatalf("the merged marks need %v, past the track's %v ceiling", got, 0.25*viewportH)
 		}
 		// Adjacent sections share a mark, in order, without skipping one.
 		last := -1
@@ -1288,8 +1301,8 @@ func TestRSSReaderSectionsMarkTheArticle(t *testing.T) {
 		t.Fatalf("%d marks for %d sections", len(marks), len(sections))
 	}
 	for i := 1; i < len(marks); i++ {
-		if got := marks[i].Y + marks[i].H/2 - (marks[i-1].Y + marks[i-1].H/2); got != rssTickPitch {
-			t.Fatalf("marks %d and %d are %v apart, want the fixed %v", i-1, i, got, rssTickPitch)
+		if got := marks[i].Y + marks[i].H/2 - (marks[i-1].Y + marks[i-1].H/2); got != 8 {
+			t.Fatalf("marks %d and %d are %v apart, want the fixed 8", i-1, i, got)
 		}
 	}
 	if w.rssReader.active != 0 {
