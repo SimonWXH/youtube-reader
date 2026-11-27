@@ -135,10 +135,11 @@ func TestRSSKeyboardStepsSelection(t *testing.T) {
 	}
 }
 
-// TestRSSKeyboardStepsKeepTheAnchor checks a step still lands beside the open
-// article after M or S hides it from the filtered column, instead of jumping
-// back to the top of the list.
-func TestRSSKeyboardStepsKeepTheAnchor(t *testing.T) {
+// TestRSSKeyboardKeepsTheOpenedRowInTheUnreadColumn checks the unread column
+// behaves like a reading list: opening an article marks it read and takes its
+// dot, but its row stays where it was, so J and K step beside it and back
+// through it instead of losing their place. The counts follow the state live.
+func TestRSSKeyboardKeepsTheOpenedRowInTheUnreadColumn(t *testing.T) {
 	a, w, tt := rssShortcutFixture(t, 6)
 	a.UnreadOnly = true
 	tt.Frame()
@@ -150,88 +151,114 @@ func TestRSSKeyboardStepsKeepTheAnchor(t *testing.T) {
 	if a.SelectedRSSArticleID != "art-02" {
 		t.Fatalf("chosen article = %q, want art-02", a.SelectedRSSArticleID)
 	}
-
-	// M hides the open article from the unread column while it stays open.
-	tt.Key(0, ui.KeyM)
-	tt.Frame()
-	if a.SelectedRSSArticleID != "art-02" {
-		t.Fatalf("marking read changed the open article to %q", a.SelectedRSSArticleID)
+	// Opening the article marked it read, and the column kept its row.
+	if art := a.SelectedRSSArticle(); art == nil || !art.Read {
+		t.Fatalf("opening the article left it unread: %+v", art)
 	}
-	if visible := a.VisibleRSSArticles(); len(visible) != 5 {
-		t.Fatalf("the unread column holds %d articles, want 5", len(visible))
+	if visible := a.VisibleRSSArticles(); len(visible) != 6 {
+		t.Fatalf("the unread column holds %d articles after opening one, want all 6", len(visible))
+	}
+	if _, ok := tt.Find("Unread: Article 02"); ok {
+		t.Fatal("the read article still shows its unread dot")
+	}
+	if a.RSSTotalUnread != 3 {
+		t.Fatalf("unread total after opening three articles = %d, want 3", a.RSSTotalUnread)
 	}
 
-	// J carries on with the article after the hidden one, not the top entry.
+	// J carries on with the article after the open one.
 	tt.Key(0, ui.KeyJ)
 	tt.Frame()
 	if a.SelectedRSSArticleID != "art-03" {
-		t.Fatalf("J after the open article was hidden chose %q, want art-03", a.SelectedRSSArticleID)
+		t.Fatalf("J after the open article chose %q, want art-03", a.SelectedRSSArticleID)
 	}
 	if w.rssReader.articleID != "art-03" {
 		t.Fatalf("reader shows %q, want art-03", w.rssReader.articleID)
 	}
 
-	tt.Key(0, ui.KeyM)
+	// K comes back through the read row to the one before it.
+	tt.Key(0, ui.KeyK)
 	tt.Frame()
-	if visible := a.VisibleRSSArticles(); len(visible) != 4 {
-		t.Fatalf("the unread column holds %d articles, want 4", len(visible))
+	if a.SelectedRSSArticleID != "art-02" {
+		t.Fatalf("K chose %q, want the row it came from, art-02", a.SelectedRSSArticleID)
 	}
-
-	// K goes back to the article before both hidden ones.
 	tt.Key(0, ui.KeyK)
 	tt.Frame()
 	if a.SelectedRSSArticleID != "art-01" {
-		t.Fatalf("K after the open article was hidden chose %q, want art-01", a.SelectedRSSArticleID)
+		t.Fatalf("K chose %q, want art-01", a.SelectedRSSArticleID)
 	}
 
-	// The arrow keys share the move and keep the same anchor.
+	// M flips the open article back to unread in place: the dot returns, the
+	// count returns, and the row never leaves the column.
+	tt.Key(0, ui.KeyM)
+	tt.Frame()
+	if art := a.SelectedRSSArticle(); art == nil || art.Read {
+		t.Fatalf("M left the article read: %+v", art)
+	}
+	if _, ok := tt.Find("Unread: Article 01"); !ok {
+		t.Fatal("the article M returned to unread shows no unread dot")
+	}
+	if a.RSSTotalUnread != 3 {
+		t.Fatalf("unread total after marking one unread = %d, want 3", a.RSSTotalUnread)
+	}
+	if visible := a.VisibleRSSArticles(); len(visible) != 6 {
+		t.Fatalf("the unread column holds %d articles, want all 6", len(visible))
+	}
+
+	// The arrow keys share the move.
 	if err := tt.Click("Article 01"); err != nil {
 		t.Fatalf("focus the open row: %v", err)
 	}
 	tt.Frame()
 	tt.Key(0, ui.KeyDown)
 	tt.Frame()
-	if a.SelectedRSSArticleID != "art-04" {
-		t.Fatalf("the down arrow chose %q, want art-04", a.SelectedRSSArticleID)
+	if a.SelectedRSSArticleID != "art-02" {
+		t.Fatalf("the down arrow chose %q, want art-02", a.SelectedRSSArticleID)
 	}
 }
 
 // TestRSSKeyboardStepsClampAtTheHiddenAnchorEdge checks a step past the end of
-// the filtered column clamps to that edge when the hidden open article is the
-// oldest, and to the first row when it is the newest.
+// a filtered column clamps to that edge when the open article a filter hid is
+// the oldest, and to the first row when it is the newest. The Starred
+// destination is the column the keyboard empties: S unstars the open article,
+// which takes its row out of the list.
 func TestRSSKeyboardStepsClampAtTheHiddenAnchorEdge(t *testing.T) {
-	a, _, tt := rssShortcutFixture(t, 4)
-	a.UnreadOnly = true
+	a, _, tt := rssShortcutFixture(t, 3)
+	for _, id := range []string{"art-00", "art-01", "art-02"} {
+		if err := a.SetRSSArticleStarred(id, true); err != nil {
+			t.Fatalf("star %s: %v", id, err)
+		}
+	}
+	if err := tt.Click("Starred"); err != nil {
+		t.Fatalf("open the Starred destination: %v", err)
+	}
 	tt.Frame()
 
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 3; i++ {
 		tt.Key(0, ui.KeyJ)
 		tt.Frame()
 	}
-	if a.SelectedRSSArticleID != "art-03" {
-		t.Fatalf("chosen article = %q, want art-03", a.SelectedRSSArticleID)
+	if a.SelectedRSSArticleID != "art-02" {
+		t.Fatalf("chosen article = %q, want art-02", a.SelectedRSSArticleID)
 	}
 
-	// The oldest article goes read and leaves the column; a further step down
-	// stays at the bottom row rather than jumping to the top.
-	tt.Key(0, ui.KeyM)
+	// The oldest article loses its star and leaves the column; a further step
+	// down stays at the bottom row rather than jumping to the top.
+	tt.Key(0, ui.KeyS)
 	tt.Frame()
 	tt.Key(0, ui.KeyJ)
 	tt.Frame()
-	if a.SelectedRSSArticleID != "art-02" {
-		t.Fatalf("J past the hidden oldest article chose %q, want the last row art-02", a.SelectedRSSArticleID)
+	if a.SelectedRSSArticleID != "art-01" {
+		t.Fatalf("J past the hidden oldest article chose %q, want the last row art-01", a.SelectedRSSArticleID)
 	}
 
-	// The newest article goes read and leaves; a step up clamps to the first
-	// remaining row.
-	tt.Key(0, ui.KeyK)
-	tt.Frame()
+	// The newest article loses its star and leaves; a step up clamps to the
+	// first remaining row.
 	tt.Key(0, ui.KeyK)
 	tt.Frame()
 	if a.SelectedRSSArticleID != "art-00" {
 		t.Fatalf("K reached %q, want art-00", a.SelectedRSSArticleID)
 	}
-	tt.Key(0, ui.KeyM)
+	tt.Key(0, ui.KeyS)
 	tt.Frame()
 	tt.Key(0, ui.KeyK)
 	tt.Frame()
@@ -286,6 +313,8 @@ func TestRSSKeyboardStarKeepsTheAnchorInStarred(t *testing.T) {
 func TestRSSKeyboardTogglesTakeThePressAlone(t *testing.T) {
 	a, _, tt := rssShortcutFixture(t, 6)
 
+	// Opening the article marked it read, so M's single press is the one that
+	// puts it back to unread, and the auto-repeats must leave that alone.
 	tt.Key(0, ui.KeyJ)
 	tt.Frame()
 
@@ -295,11 +324,11 @@ func TestRSSKeyboardTogglesTakeThePressAlone(t *testing.T) {
 		tt.KeyRepeat(0, ui.KeyM)
 		tt.Frame()
 	}
-	if art := a.SelectedRSSArticle(); art == nil || !art.Read {
-		t.Fatalf("the auto-repeats flipped the article back to unread: %+v", art)
+	if art := a.SelectedRSSArticle(); art == nil || art.Read {
+		t.Fatalf("the auto-repeats flipped the article again: %+v", art)
 	}
-	if a.RSSTotalUnread != 5 {
-		t.Fatalf("unread total after holding M = %d, want 5", a.RSSTotalUnread)
+	if a.RSSTotalUnread != 6 {
+		t.Fatalf("unread total after holding M = %d, want 6", a.RSSTotalUnread)
 	}
 
 	tt.Key(0, ui.KeyS)
@@ -351,27 +380,19 @@ func TestRSSKeyboardTogglesRead(t *testing.T) {
 	}
 	tt.Key(0, ui.KeyJ)
 	tt.Frame()
-	if !tt.HasText("3 unread") {
-		t.Fatalf("choosing an article leaves it unread, so the header keeps 3 unread, texts = %v", tt.Texts())
-	}
-	if _, ok := tt.Find("Unread: Article 00"); !ok {
-		t.Fatal("the chosen unread article shows no unread dot")
-	}
-
-	tt.Key(0, ui.KeyM)
-	tt.Frame()
+	// Choosing the article is what marks it read.
 	art := a.SelectedRSSArticle()
 	if art == nil || !art.Read || art.ReadAt == 0 {
-		t.Fatalf("M left the article unread: %+v", art)
-	}
-	if a.RSSTotalUnread != 2 {
-		t.Fatalf("unread total after M = %d, want 2", a.RSSTotalUnread)
+		t.Fatalf("choosing an article left it unread: %+v", art)
 	}
 	if !tt.HasText("2 unread") {
-		t.Fatalf("header should show 2 unread, texts = %v", tt.Texts())
+		t.Fatalf("opening the article should leave 2 unread, texts = %v", tt.Texts())
 	}
 	if _, ok := tt.Find("Unread: Article 00"); ok {
 		t.Fatal("a read article still shows the unread dot")
+	}
+	if !tt.HasText("Article 00") {
+		t.Fatal("the read article left the column it was opened from")
 	}
 	stored, err := a.Store.GetRSSArticle(ctx, "art-00")
 	if err != nil || stored == nil {
@@ -390,14 +411,18 @@ func TestRSSKeyboardTogglesRead(t *testing.T) {
 		t.Fatalf("the reloaded article is unread: %+v", art)
 	}
 
-	// M again returns it to unread.
+	// M returns it to unread: the dot comes back, the count follows, and the
+	// store keeps it.
 	tt.Key(0, ui.KeyM)
 	tt.Frame()
 	if art := a.SelectedRSSArticle(); art == nil || art.Read || art.ReadAt != 0 {
 		t.Fatalf("M did not return the article to unread: %+v", art)
 	}
 	if a.RSSTotalUnread != 3 {
-		t.Fatalf("unread total after the second M = %d, want 3", a.RSSTotalUnread)
+		t.Fatalf("unread total after M = %d, want 3", a.RSSTotalUnread)
+	}
+	if _, ok := tt.Find("Unread: Article 00"); !ok {
+		t.Fatal("the article M marked unread shows no unread dot")
 	}
 	stored, err = a.Store.GetRSSArticle(ctx, "art-00")
 	if err != nil || stored == nil {
@@ -405,6 +430,16 @@ func TestRSSKeyboardTogglesRead(t *testing.T) {
 	}
 	if stored.Read {
 		t.Fatalf("the store kept the article read: %+v", stored)
+	}
+
+	// M takes it back to read.
+	tt.Key(0, ui.KeyM)
+	tt.Frame()
+	if art := a.SelectedRSSArticle(); art == nil || !art.Read {
+		t.Fatalf("the second M left the article unread: %+v", art)
+	}
+	if a.RSSTotalUnread != 2 {
+		t.Fatalf("unread total after the second M = %d, want 2", a.RSSTotalUnread)
 	}
 }
 
@@ -658,10 +693,12 @@ func TestRSSShortcutsStayInTheRSSWorkspace(t *testing.T) {
 	if art == nil {
 		t.Fatal("the RSS article is gone after the trip to the video page")
 	}
-	if art.Read || art.Starred {
+	// J marked it read before the trip; nothing pressed on the video page
+	// changed it further.
+	if !art.Read || art.Starred {
 		t.Fatalf("a key pressed on the video page changed the article: %+v", art)
 	}
-	if a.RSSTotalUnread != 2 || a.RSSStarredTotal != 0 {
+	if a.RSSTotalUnread != 1 || a.RSSStarredTotal != 0 {
 		t.Fatalf("counts changed outside the RSS page: unread %d, starred %d", a.RSSTotalUnread, a.RSSStarredTotal)
 	}
 

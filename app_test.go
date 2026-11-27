@@ -67,6 +67,7 @@ func newTestApp(t *testing.T, dir string) *App {
 		Dir:      dir,
 		Store:    store,
 		Lock:     lock,
+		DeviceID: "test-device",
 		Settings: core.Settings{SyncPath: filepath.Join(dir, "sync.json"), RefreshMinutes: 60},
 		Sync: core.SyncState{
 			SchemaVersion: 1,

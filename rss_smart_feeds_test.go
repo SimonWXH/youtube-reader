@@ -508,6 +508,12 @@ func TestRSSAllUnreadEmptyStateSaysUpToDate(t *testing.T) {
 					t.Fatalf("mark %q read: %v", art.id, err)
 				}
 			}
+			// Reading a row does not take it out of the column it was read in,
+			// so the reader asks for a fresh list by leaving the destination
+			// and coming back.
+			a.SelectDestination(todayDestination)
+			tt.Frame()
+			a.SelectDestination("all")
 			tt.Frame()
 
 			if got := len(a.VisibleRSSArticles()); got != 0 {

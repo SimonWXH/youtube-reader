@@ -429,7 +429,7 @@ func (w *Window) rssGroupSection(c *ui.Context, t mui.Tokens, g core.RSSGroup, i
 	// Calculate group unread count
 	groupUnread := 0
 	if w.app != nil {
-		for _, fid := range g.FeedIDs {
+		for _, fid := range w.app.RSSGroupFeedIDs(g.ID) {
 			groupUnread += w.app.RSSUnreadMap[fid]
 		}
 	}
@@ -461,6 +461,13 @@ func (w *Window) rssGroupSection(c *ui.Context, t mui.Tokens, g core.RSSGroup, i
 					c.Invalidate()
 				},
 				OnContextMenu: func(m *ui.Menu) {
+					// The folder's read action comes first and has no unread
+					// counterpart: a folder is a way to clear a shelf of unread
+					// articles, not a way to put one back.
+					if m.Item(rssMarkFolderReadMenuLabel(c.Locale())).Chosen() {
+						w.markRSSGroupRead(c, g)
+					}
+					m.Separator()
 					renameText := renameMenuLabel(c.Locale())
 					if m.Item(renameText).Chosen() {
 						w.startRenameRSSGroup(g.ID, g.Name)
@@ -502,15 +509,8 @@ func (w *Window) rssGroupSection(c *ui.Context, t mui.Tokens, g core.RSSGroup, i
 
 			// Render member feeds
 			feedsInGroup := make([]core.RSSFeed, 0, len(g.FeedIDs))
-			for _, fid := range g.FeedIDs {
-				f := w.app.RSSFeedByID(fid)
-				if f.ID != "" {
-					feedsInGroup = append(feedsInGroup, f)
-				}
-			}
-			// Include any feeds whose GroupIDs contains g.ID but not yet in g.FeedIDs
-			for _, f := range w.app.RSSFeeds {
-				if slices.Contains(f.GroupIDs, g.ID) && !slices.Contains(g.FeedIDs, f.ID) {
+			for _, fid := range w.app.RSSGroupFeedIDs(g.ID) {
+				if f := w.app.RSSFeedByID(fid); f.ID != "" {
 					feedsInGroup = append(feedsInGroup, f)
 				}
 			}
@@ -568,6 +568,17 @@ func (w *Window) renderRSSFeedRow(c *ui.Context, t mui.Tokens, f core.RSSFeed, g
 				c.Invalidate()
 			},
 			OnContextMenu: func(m *ui.Menu) {
+				// A feed's two read actions lead its menu: they change the
+				// source's own articles, while everything below changes the
+				// source itself.
+				markReadLabel, markUnreadLabel := rssMarkFeedMenuLabels(c.Locale())
+				if m.Item(markReadLabel).Chosen() {
+					w.markRSSFeedRead(c, f, true)
+				}
+				if m.Item(markUnreadLabel).Chosen() {
+					w.markRSSFeedRead(c, f, false)
+				}
+				m.Separator()
 				renameText := renameMenuLabel(c.Locale())
 				if m.Item(renameText).Chosen() {
 					w.startRenameRSSFeed(f.ID, f.DisplayName())
@@ -659,6 +670,88 @@ func rssFeedFullTextMenuLabel(locale string) string {
 		return "默认全文抓取"
 	}
 	return "Fetch Full Text by Default"
+}
+
+// rssMarkFolderReadMenuLabel names the one read action a folder's menu offers:
+// marking every article the folder holds read. A folder has no unread
+// counterpart, because a folder is a way to clear a shelf, not to refill it.
+func rssMarkFolderReadMenuLabel(locale string) string {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return "标记整个文件夹已读"
+	}
+	return "Mark All Read"
+}
+
+// rssMarkFeedMenuLabels names the feed menu's pair of read actions, which
+// cover the feed's own articles in both directions.
+func rssMarkFeedMenuLabels(locale string) (read, unread string) {
+	if strings.HasPrefix(strings.ToLower(locale), "zh") {
+		return "标记本订阅源已读", "标记本订阅源未读"
+	}
+	return "Mark Feed as Read", "Mark Feed as Unread"
+}
+
+// rssBulkReadToast confirms a bulk read-state action in one line, naming how
+// many articles it changed and whether it marked them read or unread.
+func rssBulkReadToast(locale string, changed int, read bool) string {
+	zh := strings.HasPrefix(strings.ToLower(locale), "zh")
+	switch {
+	case changed == 0 && zh:
+		return "没有需要标记的文章"
+	case changed == 0:
+		return "No articles to mark"
+	case changed == 1 && read && zh:
+		return "已将 1 篇文章标记为已读"
+	case changed == 1 && read:
+		return "Marked 1 article as read"
+	case changed == 1 && zh:
+		return "已将 1 篇文章标记为未读"
+	case changed == 1:
+		return "Marked 1 article as unread"
+	case read && zh:
+		return fmt.Sprintf("已将 %d 篇文章标记为已读", changed)
+	case read:
+		return fmt.Sprintf("Marked %d articles as read", changed)
+	case zh:
+		return fmt.Sprintf("已将 %d 篇文章标记为未读", changed)
+	}
+	return fmt.Sprintf("Marked %d articles as unread", changed)
+}
+
+// markRSSScopeRead writes one bulk read-state change for an explicit scope and
+// repaints, confirming how many articles it changed. The store does the whole
+// scope in one transaction and the app refreshes the counters once, so the
+// confirmation and the scope's counts land together.
+func (w *Window) markRSSScopeRead(c *ui.Context, sc core.RSSReadScope, read bool) {
+	if w.app == nil {
+		return
+	}
+	changed, err := w.app.MarkRSSReadScope(sc, read)
+	if err != nil {
+		w.toast(c, "Couldn't update the read state", true)
+		return
+	}
+	locale := ""
+	if c != nil {
+		locale = c.Locale()
+	}
+	w.toast(c, rssBulkReadToast(locale, changed, read), false)
+	if c != nil {
+		c.Invalidate()
+	}
+}
+
+// markRSSGroupRead marks every article the folder holds read.
+func (w *Window) markRSSGroupRead(c *ui.Context, g core.RSSGroup) {
+	if w.app == nil {
+		return
+	}
+	w.markRSSScopeRead(c, core.RSSReadScope{FeedIDs: w.app.RSSGroupFeedIDs(g.ID)}, true)
+}
+
+// markRSSFeedRead marks the feed's own articles read, or back unread.
+func (w *Window) markRSSFeedRead(c *ui.Context, f core.RSSFeed, read bool) {
+	w.markRSSScopeRead(c, core.RSSReadScope{FeedIDs: []string{f.ID}}, read)
 }
 
 // toggleRSSFeedFullText turns one feed's automatic full-text fetching over,

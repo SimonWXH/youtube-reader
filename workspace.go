@@ -275,7 +275,7 @@ func (w *Window) restoreWorkspaceState(id string) {
 			w.app.SelectedVideoID = ""
 		}
 		if id == WorkspaceRSS {
-			w.app.SelectedRSSArticleID = st.SelectedItemID
+			w.app.SelectRSSArticle(st.SelectedItemID)
 		} else {
 			w.app.SelectedRSSArticleID = ""
 		}
@@ -605,15 +605,9 @@ func (w *Window) rssSelectionUnreadCount() int {
 		return w.app.RSSUnreadCount(fid)
 	}
 	if strings.HasPrefix(selected, "group:") {
-		gid := strings.TrimPrefix(selected, "group:")
 		allowed := make(map[string]bool)
-		for _, g := range w.app.RSSGroups {
-			if g.ID == gid {
-				for _, fid := range g.FeedIDs {
-					allowed[fid] = true
-				}
-				break
-			}
+		for _, fid := range w.app.RSSGroupFeedIDs(strings.TrimPrefix(selected, "group:")) {
+			allowed[fid] = true
 		}
 		cnt := 0
 		for _, art := range w.app.RSSArticles {
@@ -660,8 +654,9 @@ func (w *Window) rssColumnHeader(c *ui.Context, t mui.Tokens) {
 }
 
 // rssContentStrip renders the filter and search bar for RSS articles. The
-// Unread filter is left out at the All Unread destination, where the list is
-// already unread-only and the checkbox would have nothing to control.
+// Unread filter is left out at the All Unread destination, where the
+// destination already fixes the set the column lists, so the checkbox would
+// have nothing to control.
 func (w *Window) rssContentStrip(c *ui.Context, t mui.Tokens, visibleCount int) {
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	searchLabel := "Search articles"
@@ -886,13 +881,18 @@ func (w *Window) rssArticleItemRow(c *ui.Context, t mui.Tokens, art core.RSSArti
 	}
 }
 
-// selectRSSArticle selects the article by ID, updating app state and firing observer.
-// Opening an article also starts its full-text fetch when the feed asks for it.
+// selectRSSArticle opens the article the reader chose - a click, Return, or a
+// step through the column: the row loads in the reader, its full-text fetch
+// starts when the feed asks for it, and the article is marked read. A selection
+// restored without a reader's act goes through App.SelectRSSArticle instead and
+// marks nothing.
 func (w *Window) selectRSSArticle(id string) {
 	if w.app == nil {
 		return
 	}
-	w.app.SelectRSSArticle(id)
+	if err := w.app.OpenRSSArticle(id); err != nil {
+		w.toast(nil, "Couldn't update the read state", true)
+	}
 	art := w.app.SelectedRSSArticle()
 	if art != nil {
 		w.openRSSFullText(*art)

@@ -8,17 +8,19 @@ import (
 )
 
 // The RSS workspace's keyboard reading flow: J and K step the article list, M
-// toggles the open article's read state, S toggles its star, and Cmd+O opens
-// its original page in the default browser. The keys are declared as window
-// shortcuts while the RSS page builds, so no other workspace hears them, and
-// the single-key ones stand aside while a field takes typing, so J in the
-// search field is the letter and not the next article.
+// toggles the open article's read state, S toggles its star, Cmd+O opens its
+// original page in the default browser, and Shift+Cmd+U marks the whole
+// destination read. The keys are declared as window shortcuts while the RSS
+// page builds, so no other workspace hears them, and the single-key ones stand
+// aside while a field takes typing, so J in the search field is the letter and
+// not the next article.
 func (w *Window) installRSSShortcuts(c *ui.Context) {
 	c.OnWindowShortcut(0, ui.KeyJ, func() { w.rssStepSelection(c, 1) })
 	c.OnWindowShortcut(0, ui.KeyK, func() { w.rssStepSelection(c, -1) })
 	c.OnWindowShortcut(0, ui.KeyM, func() { w.rssToggleOpenArticleRead(c) })
 	c.OnWindowShortcut(0, ui.KeyS, func() { w.rssToggleOpenArticleStar(c) })
 	c.OnWindowShortcut(ui.Cmd, ui.KeyO, func() { w.rssOpenArticleInBrowser(c) })
+	c.OnWindowShortcut(ui.Cmd|ui.Shift, ui.KeyU, func() { w.rssMarkDestinationRead(c) })
 }
 
 // rssSingleKeyReady reports whether a single-key shortcut may act: the RSS page
@@ -67,6 +69,17 @@ func (w *Window) rssToggleOpenArticleStar(c *ui.Context) {
 		return
 	}
 	w.toggleRSSArticleStar(c, *art)
+}
+
+// rssMarkDestinationRead marks every article the selected destination covers
+// read: a feed's own articles, a folder's feeds' articles, or - at a smart feed
+// such as Today, All Unread or Starred, whose filter is a view over the library
+// - exactly the articles the column is showing.
+func (w *Window) rssMarkDestinationRead(c *ui.Context) {
+	if w.app == nil || w.activeWorkspaceName() != WorkspaceRSS || c.ShortcutRepeated() {
+		return
+	}
+	w.markRSSScopeRead(c, w.app.RSSBulkReadScope(), true)
 }
 
 // rssOpenArticleInBrowser opens the open article's original page in the

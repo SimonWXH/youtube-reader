@@ -6,6 +6,9 @@ import (
 	"net/http/httptest"
 	"slices"
 	"testing"
+	"time"
+
+	"github.com/egoist/mygo"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/simon/youtube-reader/core"
@@ -358,4 +361,96 @@ func TestRSSUnreadCountMatchesLibrary(t *testing.T) {
 	if got := a.RSSTotalUnread; got != 2 {
 		t.Fatalf("unread total = %d, want 2 unread articles", got)
 	}
+}
+
+// TestRSSFolderDeleteKeepsEveryDrawnFeedVisible drives the folder's own delete
+// entry from the sidebar. A feed the folder draws only because the feed names
+// the folder must land in Ungrouped and stay on screen, rather than vanish with
+// a dangling group id that no folder draws any more.
+func TestRSSFolderDeleteKeepsEveryDrawnFeedVisible(t *testing.T) {
+	stubNetImages(t)
+	origDialog := dialogMessage
+	defer func() { dialogMessage = origDialog }()
+	dialogMessage = func(opts mygo.MessageOptions) (mygo.MessageResult, error) {
+		return mygo.MessageResult{Button: 1}, nil
+	}
+
+	a, w := setupRSSTestApp(t)
+	ctx := context.Background()
+	now := time.Now().UnixMilli()
+
+	// The folder's own list names one feed only; the second names the folder.
+	group := core.RSSGroup{ID: "group-shelf", Name: "Shelf", FeedIDs: []string{"feed-listed"}, UpdatedAt: now}
+	if err := a.Store.SaveRSSGroup(ctx, group); err != nil {
+		t.Fatalf("save the folder: %v", err)
+	}
+	feeds := []core.RSSFeed{
+		{ID: "feed-listed", FeedURL: "https://feeds.example.com/listed.xml", Title: "Feed Listed", GroupIDs: []string{"group-shelf"}, UpdatedAt: now},
+		{ID: "feed-named", FeedURL: "https://feeds.example.com/named.xml", Title: "Feed Named", GroupIDs: []string{"group-shelf"}, UpdatedAt: now},
+	}
+	for _, f := range feeds {
+		if err := a.Store.SaveRSSFeed(ctx, f); err != nil {
+			t.Fatalf("save feed %q: %v", f.ID, err)
+		}
+	}
+	articles := []core.RSSArticle{
+		{ID: "art-listed", FeedID: "feed-listed", Title: "Listed story", Link: "https://feeds.example.com/listed/1", PublishedAt: time.Now().Add(-time.Hour).Format(time.RFC3339), UpdatedAt: now},
+		{ID: "art-named", FeedID: "feed-named", Title: "Named story", Link: "https://feeds.example.com/named/1", PublishedAt: time.Now().Add(-2 * time.Hour).Format(time.RFC3339), UpdatedAt: now},
+	}
+	if err := a.Store.SaveRSSArticles(ctx, articles); err != nil {
+		t.Fatalf("save articles: %v", err)
+	}
+	if err := a.ReloadRSS(); err != nil {
+		t.Fatalf("reload rss: %v", err)
+	}
+	a.Selected = "all"
+	w.selectWorkspace(WorkspaceRSS)
+	tt := ui.NewTester(w.shell, 1280, 808)
+	tt.Frame()
+
+	// The folder draws both feeds before it is deleted.
+	if !tt.HasText("Feed Listed") || !tt.HasText("Feed Named") {
+		t.Fatalf("the folder does not draw both feeds: %v", tt.Texts())
+	}
+	saveRSSReadStateScreenshot(t, tt, "23-folder-delete-before.png")
+
+	if err := tt.RightClick("Shelf"); err != nil {
+		t.Fatalf("open the folder's menu: %v", err)
+	}
+	if err := tt.ChooseMenuItem("Delete Group"); err != nil {
+		t.Fatalf("choose Delete Group: %v", err)
+	}
+	tt.Frame()
+
+	if a.RSSGroupByID(group.ID).ID != "" {
+		t.Fatalf("the deleted folder is still in the library")
+	}
+	for _, f := range feeds {
+		stored, err := a.Store.GetRSSFeed(ctx, f.ID)
+		if err != nil || stored == nil {
+			t.Fatalf("read %q back: %v", f.ID, err)
+		}
+		if len(stored.GroupIDs) != 0 {
+			t.Fatalf("feed %q still names the deleted folder: %v", f.ID, stored.GroupIDs)
+		}
+	}
+	texts := tt.Texts()
+	if tt.HasText("Shelf") {
+		t.Fatalf("the deleted folder is still drawn: %v", texts)
+	}
+	if !tt.HasText("Ungrouped") {
+		t.Fatalf("the sidebar draws no Ungrouped section: %v", texts)
+	}
+	ungrouped := make([]string, 0, 2)
+	for _, f := range w.rssUngroupedFeeds() {
+		ungrouped = append(ungrouped, f.Title)
+	}
+	slices.Sort(ungrouped)
+	if !slices.Equal(ungrouped, []string{"Feed Listed", "Feed Named"}) {
+		t.Fatalf("the Ungrouped section holds %q, want both feeds the folder drew", ungrouped)
+	}
+	if !tt.HasText("Feed Listed") || !tt.HasText("Feed Named") {
+		t.Fatalf("a feed the folder drew vanished from the sidebar: %v", texts)
+	}
+	saveRSSReadStateScreenshot(t, tt, "24-folder-delete-after-ungrouped.png")
 }

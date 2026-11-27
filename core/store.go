@@ -52,6 +52,7 @@ func OpenStore(ctx context.Context, path string) (*Store, error) {
 		`CREATE INDEX IF NOT EXISTS idx_rss_articles_starred ON rss_articles(starred)`,
 		`CREATE TABLE IF NOT EXISTS rss_notes (id TEXT PRIMARY KEY, article_id TEXT NOT NULL, paragraph_index INTEGER NOT NULL, paragraph_hash TEXT, selected_text TEXT, note_text TEXT, updated_at INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE INDEX IF NOT EXISTS idx_rss_notes_article_id ON rss_notes(article_id)`,
+		`CREATE TABLE IF NOT EXISTS rss_read_states (article_id TEXT NOT NULL, device_id TEXT NOT NULL, read INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(article_id, device_id))`,
 	} {
 		if _, err := db.Execute(ctx, ddl); err != nil {
 			db.Close()

@@ -98,6 +98,10 @@ func (a *App) ReloadRSS() error {
 	a.RSSGroups = orderRSSGroups(groups, a.settingsSnapshot().RSSGroupOrder)
 	a.RSSArticles = articles
 	a.selectedRSSCache = nil
+	// A reload follows a fetch settling or a refresh rather than the reader
+	// changing the view, so the unread column keeps the rows it already has and
+	// gains the articles the library has gained.
+	a.mergeRSSUnreadMembership()
 	a.reloadRSSCounts()
 	return nil
 }
@@ -109,6 +113,7 @@ func (a *App) reloadRSSCounts() {
 	if a.Store == nil {
 		return
 	}
+	a.RSCCountReloads++
 	ctx := context.Background()
 	unreadMap, _ := a.Store.RSSUnreadCounts(ctx)
 	if unreadMap == nil {
@@ -304,14 +309,16 @@ func (a *App) RenameRSSGroup(id, newName string) error {
 	return a.ReloadRSS()
 }
 
-// DeleteRSSGroup removes an RSS group from the store and ungroups any feeds that belonged to it.
+// DeleteRSSGroup removes an RSS group from the store and ungroups every feed it
+// held - the ones its own FeedIDs name and the ones whose GroupIDs name the
+// group - so no feed is left pointing at a group the sidebar no longer draws.
 func (a *App) DeleteRSSGroup(id string) error {
 	if a.Store != nil {
 		ctx := context.Background()
 		g, err := a.Store.GetRSSGroup(ctx, id)
 		if err == nil && g != nil {
 			// Ungroup any feeds in this group
-			for _, feedID := range g.FeedIDs {
+			for _, feedID := range a.RSSGroupFeedIDs(id) {
 				if feed, fErr := a.Store.GetRSSFeed(ctx, feedID); fErr == nil && feed != nil {
 					newGroups := make([]string, 0, len(feed.GroupIDs))
 					for _, gid := range feed.GroupIDs {

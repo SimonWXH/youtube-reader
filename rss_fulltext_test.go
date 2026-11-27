@@ -574,7 +574,7 @@ func TestRSSFullTextStatesReadInBothLanguages(t *testing.T) {
 		t.Fatalf("the Chinese reader is missing the fetching line: %v", tt.Texts())
 	}
 	if got, want := rssHeaderActionNames(t, tt), []string{
-		"标记为已读 (M)", "标星 (S)", "抓取中…", "分享", "在浏览器中打开", "重新抓取",
+		"标记为未读 (M)", "标星 (S)", "抓取中…", "分享", "在浏览器中打开", "重新抓取",
 	}; !slices.Equal(got, want) {
 		t.Fatalf("Chinese header actions mid-fetch = %q, want %q", got, want)
 	}
