@@ -34,8 +34,10 @@ const (
 	rssTickActiveW   float32 = 18
 	rssTickActiveH   float32 = 4
 	// The track the marks sit in is as tall as they are plus their padding, then
-	// held between a tenth and a quarter of the reading viewport - the scrolling
-	// body's height, not the whole window's: the floor keeps a two-section piece
+	// held between a tenth and a quarter of the reading viewport - deliberately
+	// the scrolling body's height and not the whole window's, because the rail
+	// lives in the reading area and the header above it is not part of the
+	// stretch of text the marks describe: the floor keeps a two-section piece
 	// from reading as a stray dot, the ceiling keeps a long article's rail from
 	// running down the whole lane. Neither end of the clamp moves the pitch:
 	// surplus room a short article's floor adds stays blank above and below its
@@ -364,8 +366,9 @@ func rssSectionProse(blocks []core.ArticleBlock, heading int) int {
 
 // rssTickCapacity is how many marks the lane can show at the fixed pitch: as
 // many as fit the track's quarter ceiling, a quarter of the reading viewport -
-// the scrolling body's height, not the whole window's. Fewer sections than that
-// are all shown; more merge, which is the only case that costs a mark.
+// deliberately the scrolling body's height, not the whole window's. Fewer
+// sections than that are all shown; more merge, which is the only case that
+// costs a mark.
 func rssTickCapacity(viewportH float32) int {
 	room := rssTickTrackMax * viewportH
 	if room < rssTickActiveH {
@@ -439,9 +442,9 @@ func rssTickExtent(count int) float32 {
 
 // rssTickTrackHeight is the height of the track the marks sit in: their extent
 // plus the padding above and below, then held between a tenth and a quarter of
-// the reading viewport, the scrolling body's height rather than the whole
-// window's. A two-section piece is raised to the floor rather than reading as a
-// stray dot; a long one is capped rather than running the lane.
+// the reading viewport - deliberately the scrolling body's height rather than
+// the whole window's. A two-section piece is raised to the floor rather than
+// reading as a stray dot; a long one is capped rather than running the lane.
 // Neither end changes the pitch, so the surplus the floor adds stays blank.
 func rssTickTrackHeight(count int, viewportH float32) float32 {
 	if count <= 0 || viewportH <= 0 {
@@ -452,11 +455,11 @@ func rssTickTrackHeight(count int, viewportH float32) float32 {
 }
 
 // rssTickTrack is the track's box in the lane: the lane's width, its own
-// height, and its middle on the lane's middle, which is as tall as the reading
-// viewport the height is measured against, not the whole window, so a short
-// rail sits at the height the reader's eyes rest at. It is a measure rather
-// than a surface - the lane paints its marks and nothing behind them - so this
-// box only decides where they stand.
+// height, and its middle on the lane's middle - the lane is as tall as the
+// reading viewport the height is measured against, deliberately not the whole
+// window - so a short rail sits at the height the reader's eyes rest at. It is
+// a measure rather than a surface - the lane paints its marks and nothing
+// behind them - so this box only decides where they stand.
 func rssTickTrack(rail ui.Rect, count int, viewportH float32) ui.Rect {
 	height := rssTickTrackHeight(count, viewportH)
 	return ui.Rect{X: rail.X, Y: rail.Y + (rail.H-height)/2, W: rail.W, H: height}
@@ -1556,11 +1559,11 @@ func rssLinkHost(link string) string {
 // mark at the reading line grown and accented, the mark under the pointer grown
 // and darker, the rest thin and muted. A click on a mark takes the reader to
 // the heading it stands for, and the mark under the pointer opens its section's
-// preview. The lane spans the reading viewport - the scrolling body's height,
-// not the whole window's - so its marks and the track they sit in are measured
-// against the stretch of text they describe. The lane is painted, not built per
-// mark, so a long article costs one draw call per frame: the pointer's place in
-// the lane names the mark.
+// preview. The lane spans the reading viewport - deliberately the scrolling
+// body's height, not the whole window's - so its marks and the track they sit
+// in are measured against the stretch of text they describe. The lane is
+// painted, not built per mark, so a long article costs one draw call per frame:
+// the pointer's place in the lane names the mark.
 func (w *Window) rssTickRail(c *ui.Context, t mui.Tokens, blocks []core.ArticleBlock) {
 	st := &w.rssReader
 	st.hover = -1

@@ -307,6 +307,15 @@ func TestRSSTickGeometry(t *testing.T) {
 		if got, want := clamped.Y+clamped.H/2, tall.Y+tall.H/2; got != want {
 			t.Fatalf("a tall lane's track is centred at %v, want the lane's %v", got, want)
 		}
+		// The band follows the viewport argument, not the lane it is drawn in:
+		// the same 800 pt lane caps at a quarter of a viewport half as tall.
+		halfViewport := rssTickTrack(lane, 40, viewportH/2)
+		if want := 0.25 * (viewportH / 2); halfViewport.H != want {
+			t.Fatalf("a half-height viewport caps the track at %v, want the %v quarter band", halfViewport.H, want)
+		}
+		if got, want := halfViewport.Y+halfViewport.H/2, lane.Y+lane.H/2; got != want {
+			t.Fatalf("a half-height viewport centres the track at %v, want the lane's %v", got, want)
+		}
 	})
 
 	t.Run("overflow merges", func(t *testing.T) {
@@ -1311,7 +1320,7 @@ func TestRSSReaderSectionsMarkTheArticle(t *testing.T) {
 	// against is the lane's own, which is the reading viewport's height and not
 	// the whole window's.
 	if rail.H != w.rssReader.viewport.H {
-		t.Fatalf("the lane is %v tall, the reading viewport %v; the track is clamped against the viewport, not the window",
+		t.Fatalf("the lane is %v tall, the reading viewport %v; the clamp band is measured against this height, not the window's",
 			rail.H, w.rssReader.viewport.H)
 	}
 	marks := rssReaderSectionMarks(t, rail, len(sections))
