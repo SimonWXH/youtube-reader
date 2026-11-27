@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"image/png"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -36,6 +37,34 @@ func rssAppTransactions(t *testing.T, a *App) func() uint32 {
 			t.Fatalf("the database is %d bytes, too short for a header", len(data))
 		}
 		return binary.BigEndian.Uint32(data[24:28])
+	}
+}
+
+// saveRSSReadStateScreenshot writes the rendered frame into the evidence
+// directory named by YTREADER_EVIDENCE_DIR, when that directory exists. The
+// read-state tests use it to record what the reader actually draws; an
+// ordinary test run leaves the environment unset and writes nothing.
+func saveRSSReadStateScreenshot(t *testing.T, tt *ui.Tester, name string) {
+	t.Helper()
+	dir := os.Getenv("YTREADER_EVIDENCE_DIR")
+	if dir == "" {
+		return
+	}
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return
+	}
+	img := tt.Image()
+	if img == nil {
+		return
+	}
+	f, err := os.Create(filepath.Join(dir, name))
+	if err != nil {
+		t.Logf("screenshot file: %v", err)
+		return
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Logf("screenshot encode: %v", err)
 	}
 }
 
@@ -135,6 +164,7 @@ func TestRSSOpeningAnArticleMarksItReadOnceAndKeepsItRead(t *testing.T) {
 	if art == nil || !art.Read || art.ReadAt == 0 {
 		t.Fatalf("opening the article left it unread: %+v", art)
 	}
+	saveRSSReadStateScreenshot(t, tt, "01-opened-article-marks-read.png")
 	stored, err := a.Store.GetRSSArticle(ctx, "art-reader")
 	if err != nil || stored == nil || !stored.Read {
 		t.Fatalf("the store did not take the read state: %v %+v", err, stored)
@@ -191,6 +221,7 @@ func TestRSSOpeningAnArticleMarksItReadOnceAndKeepsItRead(t *testing.T) {
 	if art := a.SelectedRSSArticle(); art == nil || !art.Read {
 		t.Fatalf("the reloaded article came back unread: %+v", art)
 	}
+	saveRSSReadStateScreenshot(t, tt, "02-stays-read-after-workspace-trip.png")
 }
 
 // TestRSSRestoredSelectionMarksNothingRead covers the distinction the selection
@@ -218,6 +249,7 @@ func TestRSSRestoredSelectionMarksNothingRead(t *testing.T) {
 	if _, ok := tt.AccessByRole(ui.RoleButton, "Mark as Read (M)"); !ok {
 		t.Fatalf("the reader control does not offer the read: %q", rssHeaderActionNames(t, tt))
 	}
+	saveRSSReadStateScreenshot(t, tt, "10-restored-selection-keeps-unread.png")
 
 	// The reader's own click on the same article is the act that marks it.
 	row, ok := tt.Find("The Quiet Return of the Open Feed")
@@ -267,6 +299,7 @@ func TestRSSReaderToolbarAndListAgreeOnTheReadState(t *testing.T) {
 	if got := a.RSSTotalUnread; got != before {
 		t.Fatalf("the unread total = %d after M marked it unread, want %d", got, before)
 	}
+	saveRSSReadStateScreenshot(t, tt, "03a-M-marks-unread.png")
 
 	// The toolbar control flips it a second time, with the same agreement.
 	if err := tt.Click("Mark as Read (M)"); err != nil {
@@ -279,6 +312,7 @@ func TestRSSReaderToolbarAndListAgreeOnTheReadState(t *testing.T) {
 	if _, ok := tt.AccessByRole(ui.RoleButton, "Mark as Unread (M)"); !ok {
 		t.Fatalf("the reader control did not follow its own click: %q", rssHeaderActionNames(t, tt))
 	}
+	saveRSSReadStateScreenshot(t, tt, "03b-toolbar-marks-read.png")
 }
 
 // TestRSSFolderMenuOffersOnlyMarkAllRead pins the folder's menu to exactly one
@@ -485,6 +519,7 @@ func TestRSSShiftCmdUMarksTheScopeRead(t *testing.T) {
 					t.Fatalf("%s holds %d read and %d unread articles, want all unread", feedID, read, unread)
 				}
 			}
+			saveRSSReadStateScreenshot(t, tt, "shift-cmd-u-"+strings.ReplaceAll(tc.name, " ", "-")+".png")
 		})
 	}
 }
@@ -515,6 +550,7 @@ func TestRSSShiftCmdUHandlesTheLargestFeedInOneTransaction(t *testing.T) {
 	if !tt.HasText(fmt.Sprintf("Marked %d articles as read", count)) {
 		t.Fatalf("the bulk action left no confirmation of %d articles: %v", count, tt.Texts())
 	}
+	saveRSSReadStateScreenshot(t, tt, "09-big-feed-bulk-read.png")
 	records, err := a.Store.RSSReadStates(ctx)
 	if err != nil {
 		t.Fatalf("read the read vector: %v", err)
