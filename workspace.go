@@ -275,7 +275,7 @@ func (w *Window) restoreWorkspaceState(id string) {
 			w.app.SelectedVideoID = ""
 		}
 		if id == WorkspaceRSS {
-			w.app.SelectedRSSArticleID = st.SelectedItemID
+			w.app.SelectRSSArticle(st.SelectedItemID)
 		} else {
 			w.app.SelectedRSSArticleID = ""
 		}

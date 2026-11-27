@@ -738,7 +738,11 @@ func (w *Window) markRSSScopeRead(c *ui.Context, sc core.RSSReadScope, read bool
 		w.toast(c, "Couldn't update the read state", true)
 		return
 	}
-	w.toast(c, rssBulkReadToast(c.Locale(), changed, read), false)
+	locale := ""
+	if c != nil {
+		locale = c.Locale()
+	}
+	w.toast(c, rssBulkReadToast(locale, changed, read), false)
 	if c != nil {
 		c.Invalidate()
 	}
