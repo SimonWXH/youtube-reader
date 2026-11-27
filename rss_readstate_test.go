@@ -714,6 +714,13 @@ func TestRSSShiftCmdUOnASmartFeedMarksOnlyTheColumn(t *testing.T) {
 			if a.RSSTotalUnread != len(tc.wantUnread) {
 				t.Fatalf("the unread total = %d, want the %d articles outside the column", a.RSSTotalUnread, len(tc.wantUnread))
 			}
+			// The column the reader sees follows the store: every article the
+			// scope named reads read, and every other row keeps its state.
+			for _, art := range a.RSSArticles {
+				if want := slices.Contains(tc.wantRead, art.ID); art.Read != want {
+					t.Fatalf("the in-memory article %q reads %v, want %v", art.ID, art.Read, want)
+				}
+			}
 		})
 	}
 }

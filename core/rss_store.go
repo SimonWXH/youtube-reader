@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -594,13 +593,39 @@ func (sc RSSReadScope) where() (string, []any) {
 	return column + " IN (" + strings.Join(marks, ",") + `) AND feed_id NOT IN (SELECT id FROM rss_feeds WHERE deleted = 1)`, args
 }
 
-// Covers reports whether an article is inside the scope. It is the in-memory
-// mirror of where, so the app updates the same rows the store wrote.
-func (sc RSSReadScope) Covers(articleID, feedID string) bool {
+// RSSReadCoverage is the in-memory mirror of a scope's predicate, built once
+// per action: a smart feed's thousands of article IDs cost one map and one
+// lookup per row instead of a scan of the ID list for every row.
+type RSSReadCoverage struct {
+	articleIDs map[string]struct{}
+	feedIDs    map[string]struct{}
+}
+
+// Coverage builds the in-memory mirror of where for one bulk action.
+func (sc RSSReadScope) Coverage() RSSReadCoverage {
 	if len(sc.ArticleIDs) > 0 {
-		return slices.Contains(sc.ArticleIDs, articleID)
+		ids := make(map[string]struct{}, len(sc.ArticleIDs))
+		for _, id := range sc.ArticleIDs {
+			ids[id] = struct{}{}
+		}
+		return RSSReadCoverage{articleIDs: ids}
 	}
-	return slices.Contains(sc.FeedIDs, feedID)
+	ids := make(map[string]struct{}, len(sc.FeedIDs))
+	for _, id := range sc.FeedIDs {
+		ids[id] = struct{}{}
+	}
+	return RSSReadCoverage{feedIDs: ids}
+}
+
+// Covers reports whether an article is inside the scope, so the app updates the
+// same rows the store wrote.
+func (c RSSReadCoverage) Covers(articleID, feedID string) bool {
+	if c.articleIDs != nil {
+		_, ok := c.articleIDs[articleID]
+		return ok
+	}
+	_, ok := c.feedIDs[feedID]
+	return ok
 }
 
 // rssReadScopeChunk is how many IDs one statement of a bulk read-state pass

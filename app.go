@@ -2089,8 +2089,9 @@ func (a *App) MarkRSSReadScope(sc core.RSSReadScope, read bool) (int, error) {
 	if changed == 0 {
 		return 0, nil
 	}
+	covers := sc.Coverage()
 	for i := range a.RSSArticles {
-		if !sc.Covers(a.RSSArticles[i].ID, a.RSSArticles[i].FeedID) || a.RSSArticles[i].Read == read {
+		if !covers.Covers(a.RSSArticles[i].ID, a.RSSArticles[i].FeedID) || a.RSSArticles[i].Read == read {
 			continue
 		}
 		a.RSSArticles[i].Read = read
@@ -2100,7 +2101,7 @@ func (a *App) MarkRSSReadScope(sc core.RSSReadScope, read bool) (int, error) {
 		}
 		a.RSSArticles[i].UpdatedAt = now
 	}
-	if a.selectedRSSCache != nil && sc.Covers(a.selectedRSSCache.ID, a.selectedRSSCache.FeedID) && a.selectedRSSCache.Read != read {
+	if a.selectedRSSCache != nil && covers.Covers(a.selectedRSSCache.ID, a.selectedRSSCache.FeedID) && a.selectedRSSCache.Read != read {
 		a.selectedRSSCache.Read = read
 		a.selectedRSSCache.ReadAt = 0
 		if read {
