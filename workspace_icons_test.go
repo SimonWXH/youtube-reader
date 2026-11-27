@@ -555,18 +555,18 @@ func TestWorkspaceDockReportsActiveTab(t *testing.T) {
 
 // dockInkOf returns the device-pixel box of the pixels inside the slot that
 // differ from its background, and how many they are. The slot's rounded
-// corners and its edge cue are skipped: no glyph comes that close.
+// corners and its hover and press outlines are skipped: no glyph comes that
+// close.
 func dockInkOf(img *image.RGBA, r ui.Rect, scale float32) (image.Rectangle, int) {
-	// A slot's edge carries its state cue, the accent bar or the hover and
-	// press outlines, so the scan keeps 4 dp clear of it; no glyph comes
-	// that close.
+	// A slot's edge carries its state cue, the hover and press outlines, so
+	// the scan keeps 4 dp clear of it; no glyph comes that close.
 	const rim = 4
 	x0 := int(math.Round(float64((r.X + rim) * scale)))
 	y0 := int(math.Round(float64((r.Y + rim) * scale)))
 	x1 := int(math.Round(float64((r.X + r.W - rim) * scale)))
 	y1 := int(math.Round(float64((r.Y + r.H - rim) * scale)))
 	// The slot's leading edge at its middle, clear of every glyph and of
-	// the state cue, holds the background the glyph is painted over.
+	// the outline, holds the background the glyph is painted over.
 	bg := img.RGBAAt(x0+int(3*scale), int(math.Round(float64((r.Y+r.H/2)*scale))))
 	var box image.Rectangle
 	count := 0
