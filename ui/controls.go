@@ -17,10 +17,9 @@ const SidebarChannelRowHeight float32 = 34
 // SidebarChannelAvatar is the channel avatar's diameter in a sidebar row.
 const SidebarChannelAvatar float32 = 24
 
-// SidebarFeedIcon is the icon a subscription feed's row carries: the compact
-// 16 pt favicon NetNewsWire's feed list shows, on the same 28 pt row the smart
-// feed rows use rather than the taller channel row.
-const SidebarFeedIcon float32 = 16
+// SidebarFeedIcon is the icon a subscription feed's row carries: a 24 pt
+// rounded-square favicon matching the channel avatar size on the same 34 pt row.
+const SidebarFeedIcon float32 = 24
 
 // SidebarRenameFieldHeight is the height of the inline rename field in a fold
 // row. A 13 pt face lays out an 18 pt line, descenders included, so the field
@@ -33,12 +32,12 @@ const SidebarRenameFieldHeight float32 = 26
 // height. The sidebar, grid and detail panes share it.
 const ScrollBottomInset float32 = 20
 
-// SidebarRow is one row of the navigation sidebar. A navigation, fold or feed
-// row is 28 pt tall; a channel row is 34 pt. Both have an 8 pt horizontal
+// SidebarRow is one row of the navigation sidebar. A navigation or fold row is
+// 28 pt tall; a channel or feed row is 34 pt. Both have an 8 pt horizontal
 // inset, a 6 pt radius, and a 2 pt gap to the next row.
 //
 // A row shows one of four leads: a 16 pt accent glyph (Symbol), a 24 pt
-// channel avatar with a monogram fallback (Channel), a 16 pt feed icon in a
+// channel avatar with a monogram fallback (Channel), a 24 pt feed icon in a
 // rounded square (Feed), or a 12 pt disclosure chevron that folds the rows
 // below it (Fold). A fold row separates chevron toggle from row selection and
 // supports inline renaming. The label is 13 pt Regular, or 11 pt Semibold for
@@ -58,7 +57,7 @@ type SidebarRow struct {
 	Count          string
 	Symbol         string // SF Symbol name for the leading navigation glyph
 	Channel        bool   // show a channel avatar instead of a glyph
-	Feed           bool   // show a subscription feed's compact icon instead of a glyph
+	Feed           bool   // show a subscription feed's rounded-square icon instead of a glyph
 	Avatar         string // the channel's or feed's picture URL; empty draws a monogram
 	Fold           bool   // this row folds the rows below it
 	Expanded       bool   // the fold is open, so the chevron points down
@@ -103,11 +102,9 @@ func (r SidebarRow) Build(c *ui.Context, tokens Tokens) ui.Element {
 	}
 	face := tokens.Face(state, false, true)
 	rowHeight := SidebarRowHeight
-	if r.Channel {
+	if r.Channel || r.Feed {
 		rowHeight = SidebarChannelRowHeight
 	}
-	// A feed row keeps the navigation row's height: NetNewsWire's feed list
-	// is as tight as its smart feeds, and its 16 pt icon fits that row.
 	countColor := tokens.Muted
 	if r.Selected {
 		countColor = face.Text

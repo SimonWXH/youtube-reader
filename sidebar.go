@@ -79,7 +79,6 @@ func (w *Window) sidebar(c *ui.Context, t mui.Tokens) {
 	sidebar := ui.Column(c).Fill().Shrink(0).Background(t.Sidebar)
 	sidebar.Children(func() {
 		w.sidebarWorkspaceDock(c, t)
-		ui.Box(c).FillWidth().Height(mui.Hairline).Background(t.BorderSoft)
 
 		switch w.activeWorkspaceName() {
 		case WorkspaceRSS:

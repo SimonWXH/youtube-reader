@@ -923,25 +923,33 @@ func rssHasSentence(t *testing.T, tt *ui.Tester, text string) bool {
 	return ok
 }
 
-// TestRSSSmartFeedRowMetrics pins the rows the reference measures: the smart
-// feeds and the feeds under them share the sidebar's 28 pt row, and a feed's
-// icon is the reference's compact 16 pt favicon.
+// TestRSSSmartFeedRowMetrics pins the sidebar row heights: the smart feeds
+// share the 28 pt row, while subscription feeds match channel rows at 34 pt
+// with a 24 pt icon.
 func TestRSSSmartFeedRowMetrics(t *testing.T) {
 	_, _, tt := rssTodayTestApp(t)
-	for _, label := range []string{"Today", "All Unread", "Starred", "The Daily Feed"} {
-		box, ok := tt.Find(label)
+	for _, tc := range []struct {
+		label  string
+		height float32
+	}{
+		{"Today", 28},
+		{"All Unread", 28},
+		{"Starred", 28},
+		{"The Daily Feed", 34},
+	} {
+		box, ok := tt.Find(tc.label)
 		if !ok {
-			t.Fatalf("the sidebar has no %q row: %v", label, tt.Texts())
+			t.Fatalf("the sidebar has no %q row: %v", tc.label, tt.Texts())
 		}
-		row, ok := tt.AccessByRole(ui.RoleButton, label)
+		row, ok := tt.AccessByRole(ui.RoleButton, tc.label)
 		if !ok {
-			t.Fatalf("the %q row carries no accessible name", label)
+			t.Fatalf("the %q row carries no accessible name", tc.label)
 		}
-		if row.Bounds.H != 28 {
-			t.Fatalf("%q's row is %v pt tall, want the reference's 28 pt row", label, row.Bounds.H)
+		if row.Bounds.H != tc.height {
+			t.Fatalf("%q's row is %v pt tall, want %v pt", tc.label, row.Bounds.H, tc.height)
 		}
 		if box.X < row.Bounds.X || box.X+box.W > row.Bounds.X+row.Bounds.W {
-			t.Fatalf("%q's label at %v leaves its row %v", label, box, row.Bounds)
+			t.Fatalf("%q's label at %v leaves its row %v", tc.label, box, row.Bounds)
 		}
 	}
 }

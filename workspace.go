@@ -344,6 +344,22 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 		Padding(4, 6).Gap(4).AlignItems(ui.Center).Background(t.Sidebar).
 		Role(ui.RoleTabList).Label("Workspaces")
 
+	th := c.Theme()
+	if th == nil {
+		th = ui.LightTheme()
+	}
+	tipFill, tipText := th.Inverse, th.InverseText
+	if tipFill == ui.Transparent {
+		tipFill = th.Text
+	}
+	if tipText == ui.Transparent {
+		tipText = th.Background
+	}
+	tipFontSize := th.FontSize
+	if tipFontSize <= 0 {
+		tipFontSize = 13
+	}
+
 	dock.Children(func() {
 		for i, id := range order {
 			i := i
@@ -353,8 +369,20 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 
 			slot := ui.Box(c.Key("dock-item-" + id)).
 				Grow(1).MinWidth(0).Height(46).Radius(mui.RadiusControl).
-				Role(ui.RoleTab).Label(meta.Title).Tooltip(meta.Title).AccessSelected(selected).
+				Role(ui.RoleTab).Label(meta.Title).Description(meta.Title).AccessSelected(selected).
 				Cursor(ui.CursorPointer)
+			ui.TooltipBase(c, slot, func(tip ui.Element) {
+				tip.MaxWidth(th.Space(80)).
+					Padding(th.Space(1.25), th.Space(2)).
+					Radius(th.Space(1.25)).
+					Background(tipFill).
+					TextColor(tipText).
+					FontSize(tipFontSize-1).
+					Shadow(0, 2, 8, 0, ui.RGBA(0, 0, 0, 0.2)).
+					AttachTo(slot, ui.AnchorBottom, ui.AnchorTop).
+					Margin(th.Space(1.5), 0, 0, 0).
+					Children(func() { ui.Text(c, meta.Title) })
+			})
 
 			slot.Drag(workspaceDockDrag{ID: id, Index: i})
 			if slot.Dragging() {
