@@ -22,7 +22,7 @@ const (
 // about 61% tall, 微信读书 about 69%, RSS and 稍后读 100%), so a glyph is
 // normalized by its own bounds instead of by the design viewBox: otherwise the
 // four would look visibly unequal and one of them would grow past the slot.
-const WorkspaceIconSize float32 = 30
+const WorkspaceIconSize float32 = 26
 
 // The four d attributes, verbatim from the open-source icon set the captain
 // supplied.
@@ -38,7 +38,7 @@ const (
 // the rasterizer works at the display's resolution for the size shown:
 // drawing the outline through a transform instead would rasterize it in its
 // design units first, which leaves the 24-unit Video and 16-unit 稍后读 glyphs
-// blurry at 30 pt, or the 1024-unit 微信读书 one in an oversized mask.
+// blurry at 26 pt, or the 1024-unit 微信读书 one in an oversized mask.
 var workspaceIconSVGs = [workspaceIconKindCount]*ui.SVG{
 	WorkspaceIconVideos:      workspaceIconSVG(workspaceVideoPathD),
 	WorkspaceIconRSS:         workspaceIconSVG(workspaceRSSPathD),
@@ -68,9 +68,12 @@ func WorkspaceIconSVG(kind WorkspaceIconKind) *ui.SVG {
 }
 
 // WorkspaceIconColor returns the token that colours kind in the dock. The
-// glyph keeps its own colour in every interaction state, so the active slot is
-// marked by its accent edge bar instead of a tinted glyph.
-func (t Tokens) WorkspaceIconColor(kind WorkspaceIconKind) ui.Color {
+// active workspace uses its brand colour while unselected workspaces use
+// WorkspaceDockIdle.
+func (t Tokens) WorkspaceIconColor(kind WorkspaceIconKind, selected bool) ui.Color {
+	if !selected {
+		return t.WorkspaceDockIdle
+	}
 	switch kind {
 	case WorkspaceIconVideos:
 		return t.WorkspaceVideo

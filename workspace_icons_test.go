@@ -32,8 +32,8 @@ var dockIcons = []struct {
 	{WorkspaceWeChatNotes, mui.WorkspaceIconWeChatNotes, "WeChat Readings", 1024},
 }
 
-// dockIconHexes are the colours the four glyphs are specified to paint, per
-// appearance (0 light, 1 dark), taken from the icon set's spec rather than
+// dockIconHexes are the colours the four active glyphs are specified to paint,
+// per appearance (0 light, 1 dark), taken from the icon set's spec rather than
 // from the theme: the tokens and the painted pixels both answer to these, so a
 // swapped or mistyped token cannot satisfy itself.
 var dockIconHexes = map[mui.WorkspaceIconKind][2]string{
@@ -43,7 +43,11 @@ var dockIconHexes = map[mui.WorkspaceIconKind][2]string{
 	mui.WorkspaceIconWeChatNotes: {"#35a8ff", "#6cc3ff"},
 }
 
-// dockIconColour is the spec colour of kind in the light or dark appearance.
+// dockIdleHexes are the muted grey colours specified for unselected dock
+// glyphs, per appearance (0 light, 1 dark).
+var dockIdleHexes = [2]string{"#7a7a7a", "#919294"}
+
+// dockIconColour is the spec colour of kind when active in the light or dark appearance.
 func dockIconColour(kind mui.WorkspaceIconKind, dark bool) ui.Color {
 	hexes, ok := dockIconHexes[kind]
 	if !ok {
@@ -53,6 +57,14 @@ func dockIconColour(kind mui.WorkspaceIconKind, dark bool) ui.Color {
 		return ui.Hex(hexes[1])
 	}
 	return ui.Hex(hexes[0])
+}
+
+// dockIdleColour is the spec colour of an unselected dock glyph in the light or dark appearance.
+func dockIdleColour(dark bool) ui.Color {
+	if dark {
+		return ui.Hex(dockIdleHexes[1])
+	}
+	return ui.Hex(dockIdleHexes[0])
 }
 
 // dockTitles are the English and Chinese workspace names, which are also the
@@ -247,10 +259,11 @@ func dockContrast(fg, bg ui.Color) float64 {
 }
 
 // TestWorkspaceDockIconsRender checks the app's own pixels: in both
-// appearances every slot paints its own glyph 30 dp tall and centred in the
-// slot, and the selected slot keeps that colour over the dock background
-// instead of tinting the glyph. A placeholder workspace is coloured
-// like the others: its placeholder state is content, not ink.
+// appearances every slot paints its own glyph 26 dp tall and centred in the
+// slot, the selected slot paints in its workspace brand colour (including dark
+// mode's near-white RSS), and the remaining three paint in the muted idle grey.
+// A placeholder workspace follows the same selection colour rule: its
+// placeholder state is content, not ink.
 func TestWorkspaceDockIconsRender(t *testing.T) {
 	_, w := setupWorkspaceTestApp(t)
 	const width, height = 1280, 808
@@ -266,10 +279,14 @@ func TestWorkspaceDockIconsRender(t *testing.T) {
 		{"light", false, mui.NewTokens(nil, false)},
 		{"dark", true, mui.NewTokens(nil, true)},
 	} {
+		idleColour := dockIdleColour(appearance.dark)
 		for _, icon := range dockIcons {
 			colour := dockIconColour(icon.kind, appearance.dark)
-			if got := appearance.tok.WorkspaceIconColor(icon.kind); got != colour {
-				t.Fatalf("%s %s token = %v, want the spec colour %v", appearance.name, icon.name, got, colour)
+			if got := appearance.tok.WorkspaceIconColor(icon.kind, true); got != colour {
+				t.Fatalf("%s active %s token = %v, want the spec colour %v", appearance.name, icon.name, got, colour)
+			}
+			if got := appearance.tok.WorkspaceIconColor(icon.kind, false); got != idleColour {
+				t.Fatalf("%s idle %s token = %v, want the spec idle colour %v", appearance.name, icon.name, got, idleColour)
 			}
 		}
 		t.Run(appearance.name, func(t *testing.T) {
@@ -277,65 +294,79 @@ func TestWorkspaceDockIconsRender(t *testing.T) {
 			// The appearance change animates colours, and the Tester's
 			// clock stands still until it moves.
 			tt.Advance(mui.MotionInteraction + 20*time.Millisecond)
+
+			for _, active := range dockIcons {
+				w.selectWorkspace(active.id)
+				tt.Frame()
+				img := tt.Image()
+				if img == nil {
+					t.Fatal("no frame rendered")
+				}
+				heights := map[string]float32{}
+				for _, icon := range dockIcons {
+					want := dockTitles[icon.id][0]
+					slot, ok := tt.Find(want)
+					if !ok {
+						t.Fatalf("dock slot %q not found", want)
+					}
+					expectedColour := idleColour
+					if icon.id == active.id {
+						expectedColour = dockIconColour(icon.kind, appearance.dark)
+					}
+					ink, count := dockInkOf(img, slot, scale)
+					if count < 80 {
+						t.Fatalf("active=%s %s glyph painted %d pixels, want a real glyph", active.name, icon.name, count)
+					}
+					if !dockShows(img, ink, expectedColour) {
+						t.Fatalf("active=%s %s glyph is not painted in %v", active.name, icon.name, expectedColour)
+					}
+					if icon.id != active.id {
+						brandColour := dockIconColour(icon.kind, appearance.dark)
+						if brandColour != expectedColour && dockShows(img, ink, brandColour) {
+							t.Fatalf("active=%s unselected %s glyph still paints brand colour %v instead of %v", active.name, icon.name, brandColour, expectedColour)
+						}
+					}
+					bw, bh := mui.WorkspaceIconSVG(icon.kind).Size()
+					gotH := float32(ink.Dy()) / scale
+					gotW := float32(ink.Dx()) / scale
+					heights[icon.name] = gotH
+					if math.Abs(float64(gotH-mui.WorkspaceIconSize)) > 0.75 {
+						t.Fatalf("active=%s %s glyph is %g dp tall, want %g ± 0.75", active.name, icon.name, gotH, mui.WorkspaceIconSize)
+					}
+					if want := float64(bw / bh); math.Abs(float64(gotW/gotH)-want) > 0.06 {
+						t.Fatalf("active=%s %s glyph aspect = %g, want the glyph's %g", active.name, icon.name, gotW/gotH, want)
+					}
+					cx := (float32(ink.Min.X+ink.Max.X)/2 + 0.5) / scale
+					cy := (float32(ink.Min.Y+ink.Max.Y)/2 + 0.5) / scale
+					if math.Abs(float64(cx-(slot.X+slot.W/2))) > 1 {
+						t.Fatalf("active=%s %s glyph centre x = %g, want the slot's %g ± 1", active.name, icon.name, cx, slot.X+slot.W/2)
+					}
+					if math.Abs(float64(cy-(slot.Y+slot.H/2))) > 1 {
+						t.Fatalf("active=%s %s glyph centre y = %g, want the slot's %g ± 1", active.name, icon.name, cy, slot.Y+slot.H/2)
+					}
+				}
+				// The four glyphs read as one size: their painted heights
+				// agree within half a device pixel.
+				var lo, hi float32 = math.MaxFloat32, 0
+				for _, h := range heights {
+					lo, hi = min(lo, h), max(hi, h)
+				}
+				if hi-lo > 0.5 {
+					t.Fatalf("active=%s glyph heights %v differ by %g dp, want them equal within 0.5", active.name, heights, hi-lo)
+				}
+			}
+			// Restore initial Videos selection before leaving the subtest.
+			w.selectWorkspace(WorkspaceVideos)
 			tt.Frame()
-			img := tt.Image()
-			if img == nil {
-				t.Fatal("no frame rendered")
-			}
-			heights := map[string]float32{}
-			for _, icon := range dockIcons {
-				want := dockTitles[icon.id][0]
-				slot, ok := tt.Find(want)
-				if !ok {
-					t.Fatalf("dock slot %q not found", want)
-				}
-				// Every glyph, a placeholder workspace's included,
-				// shows its own specified colour in every state.
-				colour := dockIconColour(icon.kind, appearance.dark)
-				ink, count := dockInkOf(img, slot, scale)
-				if count < 100 {
-					t.Fatalf("%s glyph painted %d pixels, want a real glyph", icon.name, count)
-				}
-				if !dockShows(img, ink, colour) {
-					t.Fatalf("%s glyph is not painted in %v", icon.name, colour)
-				}
-				bw, bh := mui.WorkspaceIconSVG(icon.kind).Size()
-				gotH := float32(ink.Dy()) / scale
-				gotW := float32(ink.Dx()) / scale
-				heights[icon.name] = gotH
-				if math.Abs(float64(gotH-mui.WorkspaceIconSize)) > 0.75 {
-					t.Fatalf("%s glyph is %g dp tall, want %g ± 0.75", icon.name, gotH, mui.WorkspaceIconSize)
-				}
-				if want := float64(bw / bh); math.Abs(float64(gotW/gotH)-want) > 0.06 {
-					t.Fatalf("%s glyph aspect = %g, want the glyph's %g", icon.name, gotW/gotH, want)
-				}
-				cx := (float32(ink.Min.X+ink.Max.X)/2 + 0.5) / scale
-				cy := (float32(ink.Min.Y+ink.Max.Y)/2 + 0.5) / scale
-				if math.Abs(float64(cx-(slot.X+slot.W/2))) > 1 {
-					t.Fatalf("%s glyph centre x = %g, want the slot's %g ± 1", icon.name, cx, slot.X+slot.W/2)
-				}
-				if math.Abs(float64(cy-(slot.Y+slot.H/2))) > 1 {
-					t.Fatalf("%s glyph centre y = %g, want the slot's %g ± 1", icon.name, cy, slot.Y+slot.H/2)
-				}
-			}
-			// The four glyphs read as one size: their painted heights
-			// agree within half a device pixel.
-			var lo, hi float32 = math.MaxFloat32, 0
-			for _, h := range heights {
-				lo, hi = min(lo, h), max(hi, h)
-			}
-			if hi-lo > 0.5 {
-				t.Fatalf("glyph heights %v differ by %g dp, want them equal within 0.5", heights, hi-lo)
-			}
 		})
 	}
 }
 
 // TestWorkspaceDockStateCues checks the dock's state cues are drawn beside the
-// ink, never behind it: the active tab carries the accent bar, hover draws a
-// faint outline and press a stronger one, the glyphs keep at least their idle
-// contrast, and each state reads differently from the next in both
-// appearances.
+// ink, never behind it: the active tab carries no edge bar (selection is shown
+// by glyph colour alone), hover draws a faint outline and press a stronger one,
+// the glyphs keep at least their idle contrast, and each state reads
+// differently from the next in both appearances.
 func TestWorkspaceDockStateCues(t *testing.T) {
 	_, w := setupWorkspaceTestApp(t)
 	const scale float32 = 2
@@ -395,7 +426,7 @@ func TestWorkspaceDockStateCues(t *testing.T) {
 			}
 
 			// The slot interior just above the glyph: the background each
-			// brand glyph sits on in that state.
+			// glyph sits on in that state.
 			img := tt.Image()
 			idleBG := pixel(img, idle, idle.W/2, 4)
 			if idleBG != want(tok.Sidebar) {
@@ -405,11 +436,11 @@ func TestWorkspaceDockStateCues(t *testing.T) {
 			if activeBG != idleBG {
 				t.Fatalf("active slot background = %v, want the dock background %v: no state paints behind the ink", activeBG, idleBG)
 			}
-			if got := pixel(img, active, 1, active.H/2); got != want(tok.Accent) {
-				t.Fatalf("active slot edge bar = %v, want the accent %v", got, tok.Accent)
+			if got := pixel(img, active, 1, active.H/2); got != activeBG {
+				t.Fatalf("active slot edge = %v, want the dock background %v: the edge bar should be gone", got, activeBG)
 			}
 			if has(img, active, 2, hoverOutline) {
-				t.Fatal("the active slot draws a hover outline while idle: the bar alone is the active cue")
+				t.Fatal("the active slot draws a hover outline while idle")
 			}
 			for _, icon := range dockIcons {
 				ink := dockIconColour(icon.kind, appearance.dark)
@@ -428,7 +459,7 @@ func TestWorkspaceDockStateCues(t *testing.T) {
 				t.Fatalf("the hovered slot draws no %v outline", hoverOutline)
 			}
 			if got := pixel(img, idle, 3, idle.H/2); got != idleBG {
-				t.Fatalf("hovered slot edge = %v, want the dock background %v: the bar marks the active tab alone", got, idleBG)
+				t.Fatalf("hovered slot edge = %v, want the dock background %v", got, idleBG)
 			}
 
 			tt.Press(idle.X+idle.W/2, idle.Y+idle.H/2)
@@ -448,15 +479,15 @@ func TestWorkspaceDockStateCues(t *testing.T) {
 			tt.Frame()
 
 			// The active tab still shows its own hover and pressed states
-			// beside the selection bar.
+			// with no edge bar.
 			tt.Move(active.X+active.W/2, active.Y+active.H/2)
 			tt.Frame()
 			img = tt.Image()
 			if !has(img, active, 2, hoverOutline) {
 				t.Fatal("hovering the active slot draws no hover outline")
 			}
-			if got := pixel(img, active, 1, active.H/2); got != want(tok.Accent) {
-				t.Fatalf("active slot edge bar while hovered = %v, want the accent %v", got, tok.Accent)
+			if got := pixel(img, active, 1, active.H/2); got != activeBG {
+				t.Fatalf("active slot edge while hovered = %v, want the dock background %v", got, activeBG)
 			}
 			tt.Press(active.X+active.W/2, active.Y+active.H/2)
 			tt.Frame()
@@ -464,26 +495,24 @@ func TestWorkspaceDockStateCues(t *testing.T) {
 			if !has(img, active, 2, tok.Accent) {
 				t.Fatal("pressing the active slot draws no press outline")
 			}
-			if got := pixel(img, active, 1, active.H/2); got != want(tok.Accent) {
-				t.Fatalf("active slot edge bar while pressed = %v, want the accent %v", got, tok.Accent)
+			if got := pixel(img, active, 1, active.H/2); got != activeBG {
+				t.Fatalf("active slot edge while pressed = %v, want the dock background %v", got, activeBG)
 			}
 			tt.CancelPress()
 			tt.Move(1, 1)
 			tt.Frame()
 
-			// The insert caret runs the slot's full height, so dropping on
-			// the active slot still shows above and below the shorter
-			// selection bar.
+			// The insert caret runs the slot's full height on drop targets.
 			tt.Press(idle.X+idle.W/2, idle.Y+idle.H/2)
 			tt.Move(idle.X+idle.W/2, idle.Y+idle.H/2-5)
 			tt.Move(active.X+active.W/4, active.Y+active.H/2)
 			tt.Frame()
 			img = tt.Image()
 			if got := pixel(img, active, 1, 3); got != want(tok.Accent) {
-				t.Fatalf("drop caret above the selection bar = %v, want the accent %v", got, tok.Accent)
+				t.Fatalf("drop caret top = %v, want the accent %v", got, tok.Accent)
 			}
 			if got := pixel(img, active, 1, active.H-3); got != want(tok.Accent) {
-				t.Fatalf("drop caret below the selection bar = %v, want the accent %v", got, tok.Accent)
+				t.Fatalf("drop caret bottom = %v, want the accent %v", got, tok.Accent)
 			}
 			tt.CancelPress()
 			tt.Move(1, 1)

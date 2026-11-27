@@ -383,18 +383,15 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 				c.Invalidate()
 			}
 
-			// Every glyph keeps its own colour in every state, a
-			// placeholder workspace's included: a workspace that is not
-			// built yet says so in its content, not by fading its icon.
-			// The active slot shows an accent edge bar and hover and
-			// press an outline, never a plate behind the ink, so no state
-			// lowers a glyph's contrast.
-			iconColor := t.WorkspaceIconColor(meta.Icon)
+			// The active glyph takes its workspace brand colour while
+			// unselected slots step back to the muted dock colour; a
+			// placeholder workspace follows the same selection rule
+			// and conveys its unbuilt state in its content, not by
+			// dimming its icon. Hover and press draw a 1 pt outline
+			// rather than a plate behind the ink.
+			iconColor := t.WorkspaceIconColor(meta.Icon, selected)
 
 			slot.Draw(func(p *ui.Painter, r ui.Rect) {
-				if selected {
-					p.Fill(ui.Rect{X: r.X, Y: r.Y + 4, W: 2, H: r.H - 8}, t.Accent, 1)
-				}
 				switch {
 				case slot.Pressed():
 					p.Stroke(r, t.Accent, mui.RadiusControl, 1)
