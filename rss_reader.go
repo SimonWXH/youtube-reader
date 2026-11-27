@@ -1660,22 +1660,14 @@ func (w *Window) rssTickPreview(c *ui.Context, t mui.Tokens, blocks []core.Artic
 	})
 }
 
-// rssPreviewWords is a block's opening words for the section rail's preview:
-// its text run together on one line and cut at limit characters, or what a
-// picture shows when it carries no words of its own. A block left without any
-// previews nothing.
+// rssPreviewWords is a paragraph's opening words for the section rail's
+// preview: its text run together on one line and cut at limit characters, or
+// the words of its markup when the paragraph holds no text of its own. A
+// paragraph left without any previews nothing.
 func rssPreviewWords(block core.ArticleBlock, limit int) string {
 	text := block.Text
 	if strings.TrimSpace(text) == "" {
-		switch block.Type {
-		case core.BlockImage:
-			text = block.Alt
-			if strings.TrimSpace(text) == "" {
-				text = block.Caption
-			}
-		default:
-			text = core.CleanSnippet("", block.HTML, 0)
-		}
+		text = core.CleanSnippet("", block.HTML, 0)
 	}
 	text = strings.Join(strings.Fields(text), " ")
 	if runes := []rune(text); limit > 0 && len(runes) > limit {

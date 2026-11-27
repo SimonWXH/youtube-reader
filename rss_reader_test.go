@@ -616,7 +616,7 @@ func TestRSSTickInteraction(t *testing.T) {
 		if runes := []rune(cut); len(runes) != rssPreviewRunes+1 || !strings.HasSuffix(cut, "…") {
 			t.Fatalf("long paragraph previews %d runes (%q), want %d and an ellipsis", len(runes), cut, rssPreviewRunes+1)
 		}
-		// A block that carries only markup still previews its text.
+		// A paragraph that carries only markup still previews its text.
 		if got := rssPreviewWords(core.ArticleBlock{HTML: "<p>From <b>markup</b></p>"}, rssPreviewRunes); got != "From markup" {
 			t.Fatalf("markup-only preview = %q", got)
 		}
