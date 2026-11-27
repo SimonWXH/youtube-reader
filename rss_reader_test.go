@@ -479,11 +479,22 @@ func TestRSSTickInteraction(t *testing.T) {
 				t.Fatalf("after %d pt the current section = %d, want %d", tc.scrolled, got, tc.want)
 			}
 		}
-		// Before the first heading has reached the line the first section is
-		// the one being read, so the rail always shows a current section.
+		// Before the first heading has reached the line the reader is still in
+		// the lead, which belongs to no section: nothing is current.
 		below := []ui.Rect{{X: 900, Y: 200, W: 300, H: 28}, {X: 900, Y: 400, W: 300, H: 28}}
-		if got := rssActiveBlock(below, viewport); got != 0 {
-			t.Fatalf("above every heading the current section = %d, want 0", got)
+		if got := rssActiveBlock(below, viewport); got != -1 {
+			t.Fatalf("above every heading the current section = %d, want none", got)
+		}
+		// The first heading lights once it reaches the line and not a pixel
+		// before: the reading line sits at 124 in this viewport.
+		for _, tc := range []struct {
+			top  float32
+			want int
+		}{{124, 0}, {125, -1}} {
+			bounds := []ui.Rect{{X: 900, Y: tc.top, W: 300, H: 28}}
+			if got := rssActiveBlock(bounds, viewport); got != tc.want {
+				t.Fatalf("a first heading at %v: current section = %d, want %d", tc.top, got, tc.want)
+			}
 		}
 		// Unlaid-out headings are skipped, and an article without one has no
 		// current section at all.
@@ -590,10 +601,15 @@ func TestRSSTickInteraction(t *testing.T) {
 		if got := rssPreviewRect(ui.Rect{X: 1200, Y: 80, W: rssTickRailWidth}, mark, width, height, rssPreviewGap, rssPreviewMargin); got != (ui.Rect{}) {
 			t.Fatalf("lane without room: preview %v, want none", got)
 		}
-		// The room the bubble keeps is its padding and border, the heading's
-		// line, and the two lines of the paragraph under it.
-		if got, want := height, 2*mui.Space(2)+2*mui.Hairline+mui.PopoverTitle.LineHeight+
-			mui.Space(0.5)+float32(rssPreviewLines)*mui.PopoverBody.LineHeight; got != want {
+		// The room the bubble keeps follows what it renders: its padding and
+		// border with the heading's line, plus the gap and the paragraph's lines
+		// only when the section has a paragraph. A section without one keeps no
+		// blank body under its heading.
+		titleOnly := 2*mui.Space(2) + 2*mui.Hairline + mui.PopoverTitle.LineHeight
+		if got := rssPreviewHeight(0); got != titleOnly {
+			t.Fatalf("a section without prose keeps %v pt, want the heading's %v", got, titleOnly)
+		}
+		if got, want := height, titleOnly+mui.Space(0.5)+float32(rssPreviewLines)*mui.PopoverBody.LineHeight; got != want {
 			t.Fatalf("preview height = %v, want the type scale's %v", got, want)
 		}
 	})
@@ -1000,16 +1016,16 @@ func TestRSSReaderViewRendersArticle(t *testing.T) {
 	if got := rssHeaderAction(t, tt, "Share").Bounds.W; got != 24 {
 		t.Fatalf("an action box is %v pt wide, want the reference's 24 pt box", got)
 	}
-	// The rail marks the article's one level-2 heading, and that section is the
-	// one being read at the top.
+	// The rail marks the article's one level-2 heading, but the article's top
+	// is still its lead, above that heading, so no section is current.
 	if got, want := len(rssSections(a.SelectedRSSArticle().Blocks)), 1; got != want {
 		t.Fatalf("the fixture's full text holds %d sections, want %d", got, want)
 	}
 	if got, want := len(w.rssReader.blocks), len(a.SelectedRSSArticle().Blocks); got != want {
 		t.Fatalf("body blocks laid out = %d, want one per block (%d)", got, want)
 	}
-	if w.rssReader.active != 0 {
-		t.Fatalf("at the top the current section = %d, want 0", w.rssReader.active)
+	if w.rssReader.active != -1 {
+		t.Fatalf("at the top the current section = %d, want none above the first heading", w.rssReader.active)
 	}
 	// The picture block keeps its frame and is named for what it shows. The
 	// stubbed network never delivers the picture, so the frame settles into the
@@ -1281,7 +1297,8 @@ func rssRailTestWindow(t *testing.T) (*App, *Window, *ui.Tester) {
 
 // TestRSSReaderSectionsMarkTheArticle checks the rail in a real frame: one mark
 // per level-2 heading at the fixed pitch, the lane as tall as the reading
-// viewport, and the first section current at the top of the article.
+// viewport, and no current mark while the lead above the first section is what
+// the reader is reading.
 func TestRSSReaderSectionsMarkTheArticle(t *testing.T) {
 	a, w, tt := rssRailTestWindow(t)
 	blocks := a.SelectedRSSArticle().Blocks
@@ -1306,8 +1323,13 @@ func TestRSSReaderSectionsMarkTheArticle(t *testing.T) {
 			t.Fatalf("marks %d and %d are %v apart, want the fixed 8", i-1, i, got)
 		}
 	}
-	if w.rssReader.active != 0 {
-		t.Fatalf("at the top the current section = %d, want 0", w.rssReader.active)
+	// The article opens with its level-1 heading and a standfirst above the
+	// first level-2 heading, so at the top the rail lights no mark at all.
+	if w.rssReader.active != -1 {
+		t.Fatalf("at the top the current section = %d, want none above the first heading", w.rssReader.active)
+	}
+	if accent, ok := rssPaintedAccentMark(tt, rail); ok {
+		t.Fatalf("the lead paints an accent mark at %v, want none before the first section", accent)
 	}
 	// The headings that earn no mark still read in the body: the page marks its
 	// sections, it does not cut its other levels out.
@@ -1327,8 +1349,9 @@ func TestRSSReaderSectionsMarkTheArticle(t *testing.T) {
 }
 
 // TestRSSReaderSectionsFollowScroll checks the current section in a real frame:
-// scrolling the body to a heading's place makes that section current, and the
-// highlight follows down and back as the reader scrolls.
+// scrolling a heading onto the reading line lights its mark, the accent follows
+// down the article, and back at the top the lead above the first section lights
+// nothing again.
 func TestRSSReaderSectionsFollowScroll(t *testing.T) {
 	a, w, tt := rssRailTestWindow(t)
 	blocks := a.SelectedRSSArticle().Blocks
@@ -1339,10 +1362,15 @@ func TestRSSReaderSectionsFollowScroll(t *testing.T) {
 	if w.rssReader.scroll.MaxY <= 0 {
 		t.Fatalf("the article does not scroll in the shipped window: MaxY = %v", w.rssReader.scroll.MaxY)
 	}
-	if w.rssReader.active != 0 {
-		t.Fatalf("at rest the current section = %d, want 0", w.rssReader.active)
+	rail := rssReaderTickRail(t, tt)
+	marks := rssReaderSectionMarks(t, rail, len(sections))
+	if w.rssReader.active != -1 {
+		t.Fatalf("at rest the current section = %d, want none above the first section", w.rssReader.active)
 	}
-	for _, want := range []int{1, 2} {
+	if accent, ok := rssPaintedAccentMark(tt, rail); ok {
+		t.Fatalf("at rest an accent mark is painted at %v, want none", accent)
+	}
+	for _, want := range []int{0, 1, 2} {
 		target := rssBlockScrollY(w.rssReader.blocks, w.rssReader.viewport, w.rssReader.scroll.Y, sections[want])
 		if target > w.rssReader.scroll.MaxY {
 			t.Fatalf("section %d's heading needs a %v scroll, past the body's %v", want, target, w.rssReader.scroll.MaxY)
@@ -1353,14 +1381,22 @@ func TestRSSReaderSectionsFollowScroll(t *testing.T) {
 		if w.rssReader.active != want {
 			t.Fatalf("with section %d's heading on the reading line the current section = %d", want, w.rssReader.active)
 		}
+		accent := rssAccentMark(t, tt, rail)
+		mark := marks[rssTickBucket(want, len(sections), len(marks))]
+		if !closeTo(accent.Y+accent.H/2, mark.Y+mark.H/2, 0.5) {
+			t.Fatalf("section %d paints the accent at %v, want its mark at %v", want, accent.Y+accent.H/2, mark.Y+mark.H/2)
+		}
 		saveRSSTickScreenshot(t, tt, fmt.Sprintf("03-scrolled-section-%d.png", want))
 	}
-	// Back to the top: the first section is current again.
+	// Back to the top: the lead above the first heading is current again.
 	w.rssReader.scroll.Y = 0
 	tt.Frame()
 	tt.Frame()
-	if w.rssReader.active != 0 {
-		t.Fatalf("back at the top the current section = %d, want 0", w.rssReader.active)
+	if w.rssReader.active != -1 {
+		t.Fatalf("back at the top the current section = %d, want none above the first section", w.rssReader.active)
+	}
+	if accent, ok := rssPaintedAccentMark(tt, rail); ok {
+		t.Fatalf("back at the top an accent mark is painted at %v, want none", accent)
 	}
 }
 
@@ -1605,6 +1641,51 @@ func TestRSSReaderSectionPreview(t *testing.T) {
 	tt.Frame()
 }
 
+// TestRSSReaderSectionPreviewWithoutProse checks a section that opens with
+// something other than a paragraph: its bubble keeps the heading's line alone,
+// while a section that opens with prose keeps the brief's two body lines.
+func TestRSSReaderSectionPreviewWithoutProse(t *testing.T) {
+	blocks := []core.ArticleBlock{
+		{Type: core.BlockHeading, Level: 1, Text: "A Note on Marks"},
+		{Type: core.BlockParagraph, Text: "A standfirst introduces the piece before its first section starts."},
+		{Type: core.BlockHeading, Level: 2, Text: "A Section of Code"},
+		{Type: core.BlockCode, Language: "go", Text: "type Mark struct {\n\tSection int\n}"},
+		{Type: core.BlockHeading, Level: 2, Text: "A Section of Prose"},
+		{Type: core.BlockParagraph, Text: "A section that opens with prose fills the two lines the preview asks for."},
+	}
+	_, _, tt := rssReaderScopedWindow(t, core.RSSArticle{
+		ID: "art-preview-prose", Title: "Preview Without Prose",
+		Link: "https://feeds.example.com/prose", IsFullText: true, Blocks: blocks,
+	})
+	rail := rssReaderTickRail(t, tt)
+	marks := rssReaderSectionMarks(t, rail, 2)
+	if len(marks) != 2 {
+		t.Fatalf("%d marks for the article's two sections, want 2", len(marks))
+	}
+	titleOnly := 2*mui.Space(2) + 2*mui.Hairline + mui.PopoverTitle.LineHeight
+	withProse := titleOnly + mui.Space(0.5) + float32(rssPreviewLines)*mui.PopoverBody.LineHeight
+	for _, tc := range []struct {
+		name string
+		mark ui.Rect
+		want float32
+	}{
+		{"a section that opens with code", marks[0], titleOnly},
+		{"a section that opens with prose", marks[1], withProse},
+	} {
+		tt.Move(tc.mark.X+tc.mark.W/2, tc.mark.Y+tc.mark.H/2)
+		tt.Frame()
+		tt.Advance(mui.MotionPopover + 20*time.Millisecond)
+		tt.Frame()
+		bubble, ok := tt.AccessByRole(ui.RoleGroup, "Section preview")
+		if !ok {
+			t.Fatalf("%s: no preview in %v", tc.name, tt.Texts())
+		}
+		if !closeTo(bubble.Bounds.H, tc.want, 0.5) {
+			t.Fatalf("%s: the preview is %v tall, want %v", tc.name, bubble.Bounds.H, tc.want)
+		}
+	}
+}
+
 // TestRSSReaderSectionRailMerges covers a body the rail cannot keep apart: the
 // marks merge, each stands for the sections it gathers, and a click on one takes
 // the reader to the first of them.
@@ -1735,6 +1816,12 @@ func TestRSSReaderSectionRailAbsent(t *testing.T) {
 			{Type: core.BlockHeading, Level: 2, Text: "The Only Section"},
 			{Type: core.BlockParagraph, Text: "One section is enough structure for one mark, and its words are the mark's preview."},
 		}
+		// Enough prose that the one heading can be lifted onto the reading line
+		// when its mark is clicked.
+		for range 10 {
+			blocks = append(blocks, core.ArticleBlock{Type: core.BlockParagraph,
+				Text: "A paragraph of prose gives the short piece enough body that its one section's heading can reach the reading line when the mark is clicked."})
+		}
 		_, w, tt := rssReaderScopedWindow(t, core.RSSArticle{
 			ID: "art-one-section", Title: "One Section", Link: "https://feeds.example.com/one", IsFullText: true, Blocks: blocks,
 		})
@@ -1748,8 +1835,8 @@ func TestRSSReaderSectionRailAbsent(t *testing.T) {
 		if got, want := marks[0].Y+marks[0].H/2, rail.Y+rail.H/2; !closeTo(got, want, 0.5) {
 			t.Fatalf("the only mark's middle is %v, want the lane's %v", got, want)
 		}
-		if w.rssReader.active != 0 {
-			t.Fatalf("the current section = %d, want the only one", w.rssReader.active)
+		if w.rssReader.active != -1 {
+			t.Fatalf("above the only heading the current section = %d, want none", w.rssReader.active)
 		}
 		tt.Move(marks[0].X+marks[0].W/2, marks[0].Y+marks[0].H/2)
 		tt.Frame()
@@ -1762,8 +1849,8 @@ func TestRSSReaderSectionRailAbsent(t *testing.T) {
 		if _, ok := rssTextIn(tt, preview.Bounds, "The Only Section"); !ok {
 			t.Fatalf("the preview does not name the section, texts = %v", tt.Texts())
 		}
-		// Clicking it takes the body to its own heading, which is already the
-		// section being read.
+		// Clicking it takes the body to its own heading; once the heading lands
+		// on the reading line, that section is the one being read.
 		tt.ClickAt(marks[0].X+marks[0].W/2, marks[0].Y+marks[0].H/2)
 		tt.Frame()
 		settleRSSReaderScroll(t, tt, w)
@@ -1827,9 +1914,21 @@ func rssTextIn(tt *ui.Tester, box ui.Rect, text string) (ui.Rect, bool) {
 // proof of which one the reader grew.
 func rssAccentMark(t *testing.T, tt *ui.Tester, lane ui.Rect) ui.Rect {
 	t.Helper()
+	mark, ok := rssPaintedAccentMark(tt, lane)
+	if !ok {
+		t.Fatal("the rail painted no accent mark")
+	}
+	return mark
+}
+
+// rssPaintedAccentMark is the accent ink the last frame painted in the lane, and
+// whether it painted any: a rail with no current section paints none, so the
+// lane's pixels are the only proof that the lead above the first section lights
+// nothing.
+func rssPaintedAccentMark(tt *ui.Tester, lane ui.Rect) (ui.Rect, bool) {
 	img := tt.Image()
 	if img == nil {
-		t.Fatal("no frame to read the rail from")
+		return ui.Rect{}, false
 	}
 	left := int(lane.X+lane.W) - int(rssTickInsetX) - int(rssTickActiveW)
 	right := int(lane.X + lane.W)
@@ -1847,9 +1946,9 @@ func rssAccentMark(t *testing.T, tt *ui.Tester, lane ui.Rect) ui.Rect {
 		}
 	}
 	if top < 0 {
-		t.Fatal("the rail painted no accent mark")
+		return ui.Rect{}, false
 	}
-	return ui.Rect{X: lane.X, Y: float32(top), W: lane.W, H: float32(bottom - top + 1)}
+	return ui.Rect{X: lane.X, Y: float32(top), W: lane.W, H: float32(bottom - top + 1)}, true
 }
 
 // settleRSSReaderScroll advances the tester's clock until the body's glide

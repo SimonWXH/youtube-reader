@@ -487,12 +487,13 @@ func rssTickIndexAt(rail ui.Rect, count int, viewportH, x, y float32) int {
 	return clampInt(int((y-first)/rssTickPitch+0.5), 0, count-1)
 }
 
-// rssActiveBlock returns the block the reading line falls in: one line below
-// the viewport's top, the block whose top last passed that line is the one
-// being read, so at the article's top the first block is active and scrolling
-// advances the bar as each block reaches the line. Bounds are window
-// coordinates ordered top to bottom, and blocks the frame has not laid out yet
-// (zero height) are skipped. A body with no blocks returns -1.
+// rssActiveBlock returns the current section: the level-2 heading whose top
+// last passed the reading line, one line below the viewport's top. It is asked
+// only about rssSectionBounds, so its bounds are level-2 headings in window
+// coordinates ordered top to bottom, and headings the frame has not laid out
+// yet (zero height) are skipped. Until a heading reaches the line - the lead
+// above the first section - there is no current section, and it returns -1, as
+// it does for a body without headings.
 func rssActiveBlock(bounds []ui.Rect, viewport ui.Rect) int {
 	if len(bounds) == 0 || viewport.H <= 0 {
 		return -1
@@ -507,9 +508,6 @@ func rssActiveBlock(bounds []ui.Rect, viewport ui.Rect) int {
 			break
 		}
 		active = i
-	}
-	if active < 0 {
-		active = 0
 	}
 	return active
 }
@@ -546,13 +544,17 @@ func rssTickRects(rail ui.Rect, count, active, hover int, viewportH float32) []u
 
 // rssPreviewHeight is the room the hover preview keeps: its padding and
 // border, the section heading's line, and the lines of the paragraph below it.
+// A section that opens with something other than a paragraph has no body line
+// at all, so its bubble keeps the heading alone rather than two blank lines.
 // The preview places itself by that room rather than by what its own text
 // measures, so its top stays put as the pointer moves from a section whose
 // paragraph fills both lines to one whose words fill a single line.
 func rssPreviewHeight(lines int) float32 {
-	lines = max(lines, 1)
-	return 2*mui.Space(2) + 2*mui.Hairline + mui.PopoverTitle.LineHeight +
-		mui.Space(0.5) + float32(lines)*mui.PopoverBody.LineHeight
+	height := 2*mui.Space(2) + 2*mui.Hairline + mui.PopoverTitle.LineHeight
+	if lines > 0 {
+		height += mui.Space(0.5) + float32(lines)*mui.PopoverBody.LineHeight
+	}
+	return height
 }
 
 // rssPreviewRect places the hover preview in the rail's own coordinates: its
@@ -1630,12 +1632,16 @@ func (w *Window) rssTickPreview(c *ui.Context, t mui.Tokens, blocks []core.Artic
 	}
 	heading := blocks[sections[section]]
 	words := ""
+	lines := 0
 	if prose := rssSectionProse(blocks, sections[section]); prose >= 0 {
 		words = rssPreviewWords(blocks[prose], rssPreviewRunes)
+		if words != "" {
+			lines = rssPreviewLines
+		}
 	}
 	zh := strings.HasPrefix(strings.ToLower(c.Locale()), "zh")
 	r := rssPreviewRect(st.rail, marks[st.hover], rssPreviewWidth,
-		rssPreviewHeight(rssPreviewLines), rssPreviewGap, rssPreviewMargin)
+		rssPreviewHeight(lines), rssPreviewGap, rssPreviewMargin)
 	bubble := ui.Column(c.Key("rss-tick-preview")).Absolute().Left(r.X).Top(r.Y).Width(r.W).Height(r.H).
 		Padding(mui.Space(2)).Gap(mui.Space(0.5)).Radius(mui.RadiusCard).
 		Background(t.Surface).Border(mui.Hairline, t.Border).
