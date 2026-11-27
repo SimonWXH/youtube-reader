@@ -80,8 +80,8 @@ type WorkspaceState struct {
 	// RSSList holds the virtualized article list's row measurement and scroll anchor.
 	RSSList ui.ListState
 	// Reader is the RSS reading view's place: the open article, where its body
-	// is scrolled, and its paragraph rail. Switching pages keeps it, so coming
-	// back to an article returns to the paragraph being read.
+	// is scrolled, and its section rail. Switching pages keeps it, so coming
+	// back to an article returns to the section being read.
 	Reader rssReaderState
 }
 
