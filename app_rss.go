@@ -309,7 +309,9 @@ func (a *App) RenameRSSGroup(id, newName string) error {
 	return a.ReloadRSS()
 }
 
-// DeleteRSSGroup removes an RSS group from the store and ungroups any feeds that belonged to it.
+// DeleteRSSGroup removes an RSS group from the store and ungroups every feed it
+// held - the ones its own FeedIDs name and the ones whose GroupIDs name the
+// group - so no feed is left pointing at a group the sidebar no longer draws.
 func (a *App) DeleteRSSGroup(id string) error {
 	if a.Store != nil {
 		ctx := context.Background()
