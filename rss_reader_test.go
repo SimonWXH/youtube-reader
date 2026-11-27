@@ -1770,6 +1770,24 @@ func TestRSSReaderSectionRailMerges(t *testing.T) {
 			accent.Y+accent.H/2, rssTickBucket(section, len(sections), count), want.Y+want.H/2,
 			section, len(sections), count)
 	}
+	// A smaller window changes the lane's height, and the marks and band follow
+	// it in the same frame: the accent sits on the mark the current section
+	// maps to under the new count.
+	tt.SetSize(1280, 700)
+	tt.Frame()
+	shorter := rssReaderTickRail(t, tt)
+	shorterCount := rssTickCount(len(sections), shorter.H)
+	if shorterCount >= count {
+		t.Fatalf("the shorter window shows %d marks, want fewer than the %d it showed", shorterCount, count)
+	}
+	shorterMarks := rssReaderSectionMarks(t, shorter, len(sections))
+	accent = rssAccentMark(t, tt, shorter)
+	want = shorterMarks[rssTickBucket(section, len(sections), shorterCount)]
+	if !closeTo(accent.Y+accent.H/2, want.Y+want.H/2, 0.5) {
+		t.Fatalf("after the resize the current mark is painted at %v, want mark %d at %v (section %d of %d in %d marks)",
+			accent.Y+accent.H/2, rssTickBucket(section, len(sections), shorterCount), want.Y+want.H/2,
+			section, len(sections), shorterCount)
+	}
 	saveRSSTickScreenshot(t, tt, "08-merged-click.png")
 }
 
@@ -1917,6 +1935,67 @@ func TestRSSReaderSectionRailAbsent(t *testing.T) {
 		if !closeTo(accent.Y+accent.H/2, marks[0].Y+marks[0].H/2, 0.5) || accent.H != rssTickActiveH {
 			t.Fatalf("after an overscroll the accent is %v tall at %v, want mark 0 at %v",
 				accent.H, accent.Y+accent.H/2, marks[0].Y+marks[0].H/2)
+		}
+	})
+
+	t.Run("article grows past the viewport", func(t *testing.T) {
+		prose := "The reading column carries enough words here that the page fills the screen at the default size and no more. One step up in type has to scroll it, and the rail is the only part of the page that says which section the reader is in."
+		blocks := []core.ArticleBlock{
+			{Type: core.BlockHeading, Level: 1, Text: "A Piece on Screens"},
+			{Type: core.BlockParagraph, Text: "A standfirst that fits with the two sections below it, until the type grows."},
+			{Type: core.BlockHeading, Level: 2, Text: "The First Section"},
+		}
+		for range 2 {
+			blocks = append(blocks, core.ArticleBlock{Type: core.BlockParagraph, Text: prose})
+		}
+		blocks = append(blocks, core.ArticleBlock{Type: core.BlockHeading, Level: 2, Text: "The Second Section"})
+		for range 2 {
+			blocks = append(blocks, core.ArticleBlock{Type: core.BlockParagraph, Text: prose})
+		}
+		_, w, tt := rssReaderScopedWindow(t, core.RSSArticle{
+			ID: "art-grows", Title: "A Piece on Screens", Link: "https://feeds.example.com/grows", IsFullText: true, Blocks: blocks,
+		})
+		if w.rssReader.scroll.MaxY != 0 {
+			t.Fatalf("the fixture scrolls %v pt at the default size; this case needs it to fit", w.rssReader.scroll.MaxY)
+		}
+		rail := rssReaderTickRail(t, tt)
+		marks := rssReaderSectionMarks(t, rail, 2)
+		accent := rssAccentMark(t, tt, rail)
+		if !closeTo(accent.Y+accent.H/2, marks[0].Y+marks[0].H/2, 0.5) {
+			t.Fatalf("the fitting article accents %v, want mark 0 at %v", accent.Y+accent.H/2, marks[0].Y+marks[0].H/2)
+		}
+		// One step up and the page scrolls, so the whole-article case ends and
+		// the lead above the first heading takes no accent, in the frame the
+		// click settles without asking for another.
+		if err := tt.Click(rssTextSizeStepLabel(2, mui.ArticleSizes[2], false)); err != nil {
+			t.Fatalf("choose the large step: %v", err)
+		}
+		tt.Frame()
+		rail = rssReaderTickRail(t, tt)
+		if w.rssReader.scroll.MaxY == 0 {
+			t.Fatalf("the article still fits after the large step; this case needs it to scroll")
+		}
+		if mark, ok := rssPaintedAccentMark(tt, rail); ok {
+			t.Fatalf("the grown body accents %v while the reading line is in the lead, want none", mark)
+		}
+		// Scrolling the first heading onto the line lights its mark again.
+		tt.Frame()
+		rail = rssReaderTickRail(t, tt)
+		sections := rssSections(blocks)
+		target := rssBlockScrollY(w.rssReader.blocks, w.rssReader.viewport, w.rssReader.scroll.Y, sections[0])
+		if target > w.rssReader.scroll.MaxY {
+			t.Fatalf("the first heading needs a %v scroll, past the body's %v", target, w.rssReader.scroll.MaxY)
+		}
+		w.rssReader.scroll.Y = target
+		tt.Frame()
+		tt.Frame()
+		if w.rssReader.active != 0 {
+			t.Fatalf("with the first heading on the line the current section = %d, want 0", w.rssReader.active)
+		}
+		marks = rssReaderSectionMarks(t, rail, 2)
+		accent = rssAccentMark(t, tt, rail)
+		if !closeTo(accent.Y+accent.H/2, marks[0].Y+marks[0].H/2, 0.5) {
+			t.Fatalf("the grown body accents %v, want mark 0 at %v", accent.Y+accent.H/2, marks[0].Y+marks[0].H/2)
 		}
 	})
 }

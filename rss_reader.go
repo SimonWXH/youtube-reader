@@ -99,9 +99,14 @@ type rssReaderState struct {
 	// viewport is the scrolling body's window bounds as the last frame laid
 	// it out.
 	viewport ui.Rect
-	// rail is the section rail's window bounds as the last frame painted it,
-	// which a click reads the marks from before this frame's layout.
-	rail ui.Rect
+	// rail is the section rail's box as the last painted frame laid it out,
+	// with tickHeight and tickCount: the height its band and marks were
+	// measured against and how many marks it drew. A hover, a click and the
+	// preview read exactly the marks that frame painted, so a resize or a size
+	// change never maps the pointer onto the previous frame's rail.
+	rail       ui.Rect
+	tickHeight float32
+	tickCount  int
 	// active is the current section: the last level-2 heading above the
 	// reading line, or the first section when the whole body fits the viewport,
 	// and -1 while a scrollable body's line is still in the lead or the body has
@@ -1318,23 +1323,6 @@ func (w *Window) rssReaderBody(c *ui.Context, t mui.Tokens, art core.RSSArticle,
 	})
 	st.viewport = body.LayoutBounds()
 	st.blocks = bounds
-	sections := rssSectionBounds(blocks, bounds)
-	st.active = rssActiveBlock(sections, st.viewport)
-	if st.active < 0 && st.scroll.MaxY == 0 && len(sections) > 0 {
-		// The body fits the viewport, so the whole article is on screen and no
-		// scroll can lift a heading to the line: its first section is current.
-		st.active = 0
-	}
-	if st.jumping {
-		// A mark's click reads its section before the body has glided there:
-		// its mark stays grown until the scroll arrives and the reading line
-		// takes over, so the highlight never sweeps back on the way.
-		if st.scroll.Scrolling() && st.jump >= 0 && st.jump < len(sections) {
-			st.active = st.jump
-		} else {
-			st.jumping = false
-		}
-	}
 }
 
 // rssReaderBlocks is the body the reader draws for an article: its parsed
@@ -1563,13 +1551,15 @@ func rssLinkHost(link string) string {
 // body's height, not the whole window's - so its marks and the track they sit
 // in are measured against the stretch of text they describe. The lane is
 // painted, not built per mark, so a long article costs one draw call per frame:
-// the pointer's place in the lane names the mark.
+// the pointer's place in the lane names the mark. The current section, the band
+// and the marks are worked out as the lane is painted, from the frame's own
+// height and scroll range, so a resize or a size change never paints the
+// previous frame's rail.
 func (w *Window) rssTickRail(c *ui.Context, t mui.Tokens, blocks []core.ArticleBlock) {
 	st := &w.rssReader
 	st.hover = -1
 	sections := rssSections(blocks)
-	count := rssTickCount(len(sections), st.viewport.H)
-	if count <= 0 {
+	if len(sections) == 0 {
 		// An article with no level-2 heading has no structure to map. The lane
 		// still holds its width, which the reading column's maths is built on,
 		// but it is a spacer rather than a rail: nothing is drawn, nothing is
@@ -1579,25 +1569,51 @@ func (w *Window) rssTickRail(c *ui.Context, t mui.Tokens, blocks []core.ArticleB
 	}
 	rail := ui.Column(c.Key("rss-ticks")).Width(rssTickRailWidth).Shrink(0).
 		Role(ui.RoleGroup).Label("Reading position")
-	// The pointer's place is the last frame's: the lane it was over is the one
-	// the marks were laid in then, and the frame that follows a move rebuilds
-	// from it.
-	if x, y, over := rail.PointerPosition(); over {
-		st.hover = rssTickIndexAt(st.rail, count, st.viewport.H, st.rail.X+x, st.rail.Y+y)
+	// The pointer's place is the last painted frame's: the lane, the height and
+	// the marks it drew are the ones the pointer was over.
+	if st.tickCount > 0 {
+		if x, y, over := rail.PointerPosition(); over {
+			st.hover = rssTickIndexAt(st.rail, st.tickCount, st.tickHeight, st.rail.X+x, st.rail.Y+y)
+		}
 	}
 	if st.hover >= 0 && rail.Clicked() {
-		w.jumpToTick(blocks, sections, count)
+		w.jumpToTick(blocks, sections, st.tickCount)
 	}
-	// The current section is a place in the article, its mark a place on the
-	// rail: a merged mark carries the section it gathers, so the accent goes on
-	// the mark that section maps to rather than on a mark with its number.
-	active := rssTickBucket(st.active, len(sections), count)
 	rail.Draw(func(p *ui.Painter, r ui.Rect) {
+		// The lane is as tall as the reading area, and the body's scroll range
+		// is this frame's by the time the lane is painted, so the current
+		// section and the band are both worked out from this frame's numbers.
 		st.rail = r
-		for i, tick := range rssTickRects(r, count, active, st.hover, st.viewport.H) {
+		st.tickHeight = r.H
+		count := rssTickCount(len(sections), r.H)
+		st.tickCount = count
+		bounds := rssSectionBounds(blocks, st.blocks)
+		active := rssActiveBlock(bounds, r)
+		if active < 0 && st.scroll.MaxY == 0 {
+			// The body fits the viewport, so the whole article is on screen and
+			// no scroll can lift a heading to the line: its first section is
+			// current.
+			active = 0
+		}
+		if st.jumping {
+			// A mark's click reads its section before the body has glided there:
+			// its mark stays grown until the scroll arrives and the reading line
+			// takes over, so the highlight never sweeps back on the way.
+			if st.scroll.Scrolling() && st.jump >= 0 && st.jump < len(bounds) {
+				active = st.jump
+			} else {
+				st.jumping = false
+			}
+		}
+		st.active = active
+		// The current section is a place in the article, its mark a place on the
+		// rail: a merged mark carries the section it gathers, so the accent goes
+		// on the mark that section maps to rather than on a mark with its number.
+		mark := rssTickBucket(active, len(sections), count)
+		for i, tick := range rssTickRects(r, count, mark, st.hover, r.H) {
 			color := t.Border
 			switch i {
-			case active:
+			case mark:
 				color = t.Accent
 			case st.hover:
 				color = t.Muted
@@ -1607,7 +1623,7 @@ func (w *Window) rssTickRail(c *ui.Context, t mui.Tokens, blocks []core.ArticleB
 	})
 	if st.hover >= 0 {
 		rail.Children(func() {
-			w.rssTickPreview(c, t, blocks, sections, count, active)
+			w.rssTickPreview(c, t, blocks, sections, st.tickCount, st.active)
 		})
 	}
 }
@@ -1642,7 +1658,7 @@ func (w *Window) rssTickPreview(c *ui.Context, t mui.Tokens, blocks []core.Artic
 	if section < 0 || section >= len(sections) || sections[section] >= len(blocks) {
 		return
 	}
-	marks := rssTickRects(st.rail, count, active, st.hover, st.viewport.H)
+	marks := rssTickRects(st.rail, count, active, st.hover, st.tickHeight)
 	if st.hover >= len(marks) {
 		return
 	}
