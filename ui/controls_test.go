@@ -245,9 +245,6 @@ func TestSidebarFeedRowMatchesChannelHeightAndRoundedSquareIcon(t *testing.T) {
 		}
 	}
 
-	// Verify the feed row's 24x24 rounded-square icon keeps a flat top border
-	// past the 6 pt corner radius (unlike a 24 pt circle whose top edge curves
-	// away from y=0 by x=7), while its 13 pt label starts after the 24 pt icon.
 	// Verify the feed row's 24x24 rounded-square icon keeps a flat top/bottom/side
 	// border past the 6 pt corner radius (unlike a 24 pt circle) and sits in
 	// its 24 pt slot before the 8 pt gap and 13 pt label.
