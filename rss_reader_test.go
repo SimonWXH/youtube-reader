@@ -1858,6 +1858,58 @@ func TestRSSReaderSectionRailAbsent(t *testing.T) {
 			t.Fatalf("the only mark's click: current section = %d, jumping = %v", w.rssReader.active, w.rssReader.jumping)
 		}
 	})
+
+	t.Run("article fits the viewport", func(t *testing.T) {
+		blocks := []core.ArticleBlock{
+			{Type: core.BlockHeading, Level: 1, Text: "A Short Piece"},
+			{Type: core.BlockParagraph, Text: "A standfirst short enough to leave the whole article on one screen."},
+			{Type: core.BlockHeading, Level: 2, Text: "The First Section"},
+			{Type: core.BlockParagraph, Text: "One short section of prose."},
+			{Type: core.BlockHeading, Level: 2, Text: "The Second Section"},
+			{Type: core.BlockParagraph, Text: "Another short section of prose, still on the same screen."},
+		}
+		_, w, tt := rssReaderScopedWindow(t, core.RSSArticle{
+			ID: "art-fits", Title: "A Short Piece", Link: "https://feeds.example.com/fits", IsFullText: true, Blocks: blocks,
+		})
+		if w.rssReader.scroll.MaxY != 0 {
+			t.Fatalf("the fixture scrolls %v pt, want an article that fits the viewport", w.rssReader.scroll.MaxY)
+		}
+		rail := rssReaderTickRail(t, tt)
+		marks := rssReaderSectionMarks(t, rail, 2)
+		if len(marks) != 2 {
+			t.Fatalf("%d marks for the article's two sections, want 2", len(marks))
+		}
+		// The whole article is on screen, so no scroll can lift a heading to the
+		// reading line and the first section is the one being read from entry.
+		if w.rssReader.active != 0 {
+			t.Fatalf("a fitting article's current section = %d, want its first", w.rssReader.active)
+		}
+		accent := rssAccentMark(t, tt, rail)
+		if !closeTo(accent.Y+accent.H/2, marks[0].Y+marks[0].H/2, 0.5) || accent.H != rssTickActiveH {
+			t.Fatalf("the fitting article accents %v tall at %v, want mark 0 at %v",
+				accent.H, accent.Y+accent.H/2, marks[0].Y+marks[0].H/2)
+		}
+		// An offset past the body's range leaves it where it is: the body never
+		// moves, and the first mark stays the only accented one.
+		top := w.rssReader.blocks[0].Y
+		w.rssReader.scroll.Y = 10000
+		tt.Frame()
+		tt.Frame()
+		if w.rssReader.scroll.Y != 0 {
+			t.Fatalf("a fitting body scrolled to %v", w.rssReader.scroll.Y)
+		}
+		if got := w.rssReader.blocks[0].Y; got != top {
+			t.Fatalf("a fitting body moved from %v to %v", top, got)
+		}
+		if w.rssReader.active != 0 {
+			t.Fatalf("after an overscroll the current section = %d, want the first", w.rssReader.active)
+		}
+		accent = rssAccentMark(t, tt, rail)
+		if !closeTo(accent.Y+accent.H/2, marks[0].Y+marks[0].H/2, 0.5) || accent.H != rssTickActiveH {
+			t.Fatalf("after an overscroll the accent is %v tall at %v, want mark 0 at %v",
+				accent.H, accent.Y+accent.H/2, marks[0].Y+marks[0].H/2)
+		}
+	})
 }
 
 // openRSSReaderTickArticle opens the fixture's full-text article in the reader

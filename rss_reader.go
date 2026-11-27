@@ -100,7 +100,10 @@ type rssReaderState struct {
 	// rail is the section rail's window bounds as the last frame painted it,
 	// which a click reads the marks from before this frame's layout.
 	rail ui.Rect
-	// active is the section index at the reading line, -1 with no section.
+	// active is the current section: the last level-2 heading above the
+	// reading line, or the first section when the whole body fits the viewport,
+	// and -1 while a scrollable body's line is still in the lead or the body has
+	// no sections at all.
 	active int
 	// hover is the mark under the pointer, -1 for none, and the section it
 	// stands for is the one a click reads.
@@ -493,7 +496,10 @@ func rssTickIndexAt(rail ui.Rect, count int, viewportH, x, y float32) int {
 // coordinates ordered top to bottom, and headings the frame has not laid out
 // yet (zero height) are skipped. Until a heading reaches the line - the lead
 // above the first section - there is no current section, and it returns -1, as
-// it does for a body without headings.
+// it does for a body without headings. A body that fits the viewport can never
+// move a heading onto the line, so the body's own scroll range adds that case:
+// the reader names the first section current, while a body that scrolls keeps
+// this -1 until the line reaches the first heading.
 func rssActiveBlock(bounds []ui.Rect, viewport ui.Rect) int {
 	if len(bounds) == 0 || viewport.H <= 0 {
 		return -1
@@ -544,10 +550,12 @@ func rssTickRects(rail ui.Rect, count, active, hover int, viewportH float32) []u
 
 // rssPreviewHeight is the room the hover preview keeps: its padding and
 // border, the section heading's line, and the lines of the paragraph below it.
-// A section that opens with something other than a paragraph has no body line
-// at all, so its bubble keeps the heading alone rather than two blank lines.
-// The preview places itself by that room rather than by what its own text
-// measures, so its top stays put as the pointer moves from a section whose
+// A section with no paragraph before the next level-2 heading - or one whose
+// paragraph holds no words - gets no body line, so its bubble keeps the heading
+// alone rather than two blank lines; a section that opens with a quote, code
+// block or list but turns to prose before the next heading still gets its two
+// lines. The preview places itself by that room rather than by what its own
+// text measures, so its top stays put as the pointer moves from a section whose
 // paragraph fills both lines to one whose words fill a single line.
 func rssPreviewHeight(lines int) float32 {
 	height := 2*mui.Space(2) + 2*mui.Hairline + mui.PopoverTitle.LineHeight
@@ -1309,6 +1317,11 @@ func (w *Window) rssReaderBody(c *ui.Context, t mui.Tokens, art core.RSSArticle,
 	st.blocks = bounds
 	sections := rssSectionBounds(blocks, bounds)
 	st.active = rssActiveBlock(sections, st.viewport)
+	if st.active < 0 && st.scroll.MaxY == 0 && len(sections) > 0 {
+		// The body fits the viewport, so the whole article is on screen and no
+		// scroll can lift a heading to the line: its first section is current.
+		st.active = 0
+	}
 	if st.jumping {
 		// A mark's click reads its section before the body has glided there:
 		// its mark stays grown until the scroll arrives and the reading line
