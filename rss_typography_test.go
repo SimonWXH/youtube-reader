@@ -118,15 +118,15 @@ func TestRSSTextSizeControlStepsAndPersists(t *testing.T) {
 func TestRSSReadingScaleRedrawsTheBody(t *testing.T) {
 	_, w, tt := rssReaderTestWindow(t)
 	openRSSReaderTickArticle(t, tt)
-	if len(w.rssReader.ticks) < 2 {
+	if len(w.rssReader.blocks) < 2 {
 		t.Fatal("the body laid out no blocks")
 	}
 	// The shipped default window lays the reader out at 618 pt: 1280 less the
 	// 260 pt sidebar, the 400 pt list, and two 1 pt dividers. Its 24 pt
-	// paragraph rail and 24 pt gutters leave a 546 pt column, under the 680 cap.
+	// section rail and 24 pt gutters leave a 546 pt column, under the 680 cap.
 	column := float32(1280 - 260 - 1 - 400 - 1 - 24 - 2*24)
 	paragraph := func() (height, width float32) {
-		return w.rssReader.ticks[1].H, w.rssReader.ticks[1].W
+		return w.rssReader.blocks[1].H, w.rssReader.blocks[1].W
 	}
 	var heights []float32
 	for _, size := range []float32{13, 15, 17} {
@@ -185,12 +185,12 @@ func TestRSSReadingColumnNarrowsWithTheWindow(t *testing.T) {
 	if got := w.rssLayout.readerWidth; got != 320 {
 		t.Fatalf("the minimum window lays the reader out at %v pt, want its 320 pt minimum", got)
 	}
-	// The reader's 24 pt paragraph rail and 24 pt gutters leave its column.
+	// The reader's 24 pt section rail and 24 pt gutters leave its column.
 	want := float32(320 - 24 - 2*24)
 	if want >= 680 {
 		t.Fatalf("the narrow window leaves a %v pt column, want under the 680 pt cap", want)
 	}
-	for i, block := range w.rssReader.ticks {
+	for i, block := range w.rssReader.blocks {
 		if block.W != want {
 			t.Fatalf("block %d is %v wide, want the %v pt narrowed column", i, block.W, want)
 		}
@@ -508,12 +508,12 @@ func TestRSSHeadingLevelsRenderDistinctly(t *testing.T) {
 			if got := w.readingType().Body.Size; got != tc.size {
 				t.Fatalf("the reader draws at %v pt, want %v", got, tc.size)
 			}
-			if len(w.rssReader.ticks) != len(blocks) {
-				t.Fatalf("%d blocks laid out for %d in the body", len(w.rssReader.ticks), len(blocks))
+			if len(w.rssReader.blocks) != len(blocks) {
+				t.Fatalf("%d blocks laid out for %d in the body", len(w.rssReader.blocks), len(blocks))
 			}
 			img := tt.Image()
 			var widths [6]float32
-			for i, box := range w.rssReader.ticks {
+			for i, box := range w.rssReader.blocks {
 				ink := rssBlockInk(img, box)
 				if ink.W <= 0 || ink.H <= 0 {
 					t.Fatalf("block %d at %v painted nothing", i, box)
