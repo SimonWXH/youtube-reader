@@ -33,8 +33,9 @@ var dockIcons = []struct {
 }
 
 // dockIconHexes are the colours the four active glyphs are specified to paint,
-// per appearance (0 light, 1 dark), taken from the icon set's spec rather than
-// from the theme: the tokens and the painted pixels both answer to these, so a
+// per appearance (0 light, 1 dark). Video, Read Later and WeChat Notes take
+// their colours from the icon set's spec, and RSS takes the product decision
+// to paint #2bb24c in both appearances; neither source reads the theme, so a
 // swapped or mistyped token cannot satisfy itself.
 var dockIconHexes = map[mui.WorkspaceIconKind][2]string{
 	mui.WorkspaceIconVideos:      {"#ff0033", "#ff5b74"},
@@ -216,11 +217,11 @@ func dockRowBounds(tt *ui.Tester) (ui.Rect, bool) {
 	return ui.Rect{}, false
 }
 
-// TestWorkspaceDockRSSColourSurvivesDarkMode checks the RSS glyph uses #2bb24c
-// in both appearances, keeps at least 3:1 contrast on the dark sidebar, and
-// documents the explicit light-sidebar exception for the captain-selected brand
-// colour (#2bb24c on #f1f1ee measures ~2.45:1, guarded by a 2.4:1 floor).
-func TestWorkspaceDockRSSColourSurvivesDarkMode(t *testing.T) {
+// TestWorkspaceDockRSSColourInBothAppearances checks the RSS glyph uses
+// #2bb24c in both appearances, keeps at least 3:1 contrast on the dark sidebar,
+// and documents the explicit light-sidebar exception for the captain-selected
+// brand colour (#2bb24c on #f1f1ee measures ~2.45:1, guarded by a 2.4:1 floor).
+func TestWorkspaceDockRSSColourInBothAppearances(t *testing.T) {
 	light := mui.NewTokens(nil, false)
 	if got, want := light.WorkspaceRSS, dockIconColour(mui.WorkspaceIconRSS, false); got != want {
 		t.Fatalf("light RSS token = %v, want %v", got, want)
