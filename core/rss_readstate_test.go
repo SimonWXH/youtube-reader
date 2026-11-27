@@ -223,6 +223,68 @@ func TestRSSMarkingOneArticleWritesItsRecord(t *testing.T) {
 	}
 }
 
+// TestRSSMarkingAnArticleAlreadyInItsStateKeepsItsStamp covers the no-op touch
+// on the single-article path: this device's record is written, while the row's
+// read and update stamps stay where the last real change left them, mirroring
+// the bulk pass.
+func TestRSSMarkingAnArticleAlreadyInItsStateKeepsItsStamp(t *testing.T) {
+	ctx := context.Background()
+	store, path := rssReadStateStore(t)
+	now := time.Now().UnixMilli()
+	if err := store.SaveRSSFeed(ctx, RSSFeed{ID: "feed-settled", FeedURL: "https://feeds.example.com/settled.xml", Title: "Settled", UpdatedAt: now}); err != nil {
+		t.Fatalf("save the feed: %v", err)
+	}
+	if err := store.SaveRSSArticles(ctx, []RSSArticle{
+		{
+			ID: "art-read-settled", FeedID: "feed-settled", Title: "Read and settled",
+			Link: "https://feeds.example.com/settled/0", Snippet: "A snippet.",
+			PublishedAt: time.Now().Add(-time.Hour).Format(time.RFC3339),
+			Read:        true, ReadAt: now - 5000, UpdatedAt: now - 5000,
+		},
+		{
+			ID: "art-unread-settled", FeedID: "feed-settled", Title: "Unread and settled",
+			Link: "https://feeds.example.com/settled/1", Snippet: "A snippet.",
+			PublishedAt: time.Now().Add(-2 * time.Hour).Format(time.RFC3339),
+			UpdatedAt:   now - 4000,
+		},
+	}); err != nil {
+		t.Fatalf("save the articles: %v", err)
+	}
+
+	for _, tc := range []struct {
+		id            string
+		read          bool
+		wantReadAt    int64
+		wantUpdatedAt int64
+	}{
+		{id: "art-read-settled", read: true, wantReadAt: now - 5000, wantUpdatedAt: now - 5000},
+		{id: "art-unread-settled", read: false, wantReadAt: 0, wantUpdatedAt: now - 4000},
+	} {
+		seeded := rssCommittedTransactions(t, path)
+		if err := store.MarkRSSArticleRead(ctx, "device-mac", tc.id, tc.read, now+1); err != nil {
+			t.Fatalf("touch %q: %v", tc.id, err)
+		}
+		if got := rssCommittedTransactions(t, path) - seeded; got != 1 {
+			t.Fatalf("touching %q committed %d transactions, want the one record write", tc.id, got)
+		}
+		stored, err := store.GetRSSArticle(ctx, tc.id)
+		if err != nil || stored == nil {
+			t.Fatalf("read %q back: %v", tc.id, err)
+		}
+		if stored.Read != tc.read || stored.ReadAt != tc.wantReadAt || stored.UpdatedAt != tc.wantUpdatedAt {
+			t.Fatalf("touching %q changed a settled row: %+v", tc.id, stored)
+		}
+		records, err := store.RSSReadStates(ctx)
+		if err != nil {
+			t.Fatalf("read the read vector: %v", err)
+		}
+		rec, ok := records[tc.id]["device-mac"]
+		if !ok || rec.Read != tc.read || rec.UpdatedAt != now+1 {
+			t.Fatalf("%q recorded %+v, want read=%v at %d", tc.id, rec, tc.read, now+1)
+		}
+	}
+}
+
 // TestRSSBulkScopeCoversOnlyItsFeeds checks the scope means what it says: a
 // folder action leaves the feeds outside it alone, and a folder that holds no
 // feed reaches no article at all.

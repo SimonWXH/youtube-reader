@@ -154,13 +154,15 @@ func TestRSSOpeningAnArticleMarksItReadOnceAndKeepsItRead(t *testing.T) {
 
 	// Opening it again is not a fresh state change, and it is certainly not a
 	// way back to unread. What it writes is this device's read record, so the
-	// stored state and the counts stay where they are.
+	// stored state, the read stamp and the counts stay where they are.
+	firstReadAt := art.ReadAt
+	time.Sleep(5 * time.Millisecond)
 	reopening := transactions()
 	unreadTotal := a.RSSTotalUnread
 	tt.ClickAt(row.X+row.W/2, row.Y+row.H/2)
 	tt.Frame()
-	if art := a.SelectedRSSArticle(); art == nil || !art.Read {
-		t.Fatalf("re-opening the article put it back to unread: %+v", art)
+	if art := a.SelectedRSSArticle(); art == nil || !art.Read || art.ReadAt != firstReadAt {
+		t.Fatalf("re-opening a read article moved its read state or stamp: %+v, want read at %d", art, firstReadAt)
 	}
 	if a.RSSTotalUnread != unreadTotal {
 		t.Fatalf("re-opening a read article moved the unread total from %d to %d", unreadTotal, a.RSSTotalUnread)
@@ -169,7 +171,7 @@ func TestRSSOpeningAnArticleMarksItReadOnceAndKeepsItRead(t *testing.T) {
 		t.Fatalf("re-opening a read article committed %d transactions, want the one record write", got)
 	}
 	stored, err = a.Store.GetRSSArticle(ctx, "art-reader")
-	if err != nil || stored == nil || !stored.Read || stored.ReadAt != art.ReadAt {
+	if err != nil || stored == nil || !stored.Read || stored.ReadAt != firstReadAt {
 		t.Fatalf("re-opening moved the stored read state: %v %+v", err, stored)
 	}
 
@@ -765,5 +767,8 @@ func TestRSSOpeningAPreviouslyReadArticleRecordsIt(t *testing.T) {
 	stored, err := a.Store.GetRSSArticle(ctx, "art-legacy")
 	if err != nil || stored == nil || !stored.Read {
 		t.Fatalf("the store lost the read state: %v %+v", err, stored)
+	}
+	if stored.ReadAt != now-1000 || stored.UpdatedAt != now-1000 {
+		t.Fatalf("opening the already read article moved its stamps to read_at=%d updated_at=%d, want %d", stored.ReadAt, stored.UpdatedAt, now-1000)
 	}
 }

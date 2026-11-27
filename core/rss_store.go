@@ -517,15 +517,17 @@ func rssReadRecordStatements(deviceID string, ids []string, read bool, now int64
 }
 
 // MarkRSSArticleRead updates the read state of an article and records it as this
-// device's read state in the same transaction.
+// device's read state in the same transaction. A row already in the asked-for
+// state keeps its read and update stamps, so touching an article again records
+// the state without moving when it was marked read.
 func (s *Store) MarkRSSArticleRead(ctx context.Context, deviceID, id string, read bool, now int64) error {
 	readAt := int64(0)
 	if read {
 		readAt = now
 	}
 	stmts := []sqlite.Statement{{
-		SQL:  `UPDATE rss_articles SET read = ?, read_at = ?, updated_at = ? WHERE id = ?`,
-		Args: []any{boolInt(read), readAt, now, id},
+		SQL:  `UPDATE rss_articles SET read = ?, read_at = ?, updated_at = ? WHERE read = ? AND id = ?`,
+		Args: []any{boolInt(read), readAt, now, boolInt(!read), id},
 	}}
 	stmts = append(stmts, rssReadRecordStatements(deviceID, []string{id}, read, now)...)
 	_, err := s.db.Transaction(ctx, stmts)

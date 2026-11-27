@@ -1988,8 +1988,8 @@ func (a *App) OpenRSSArticle(id string) error {
 // MarkRSSArticleRead marks an article as read or unread in the store and in-memory.
 // Every pass also writes this device's read record for the article, so a library
 // written before that record existed gains it the next time the reader touches
-// the article, while an article already in the asked-for state keeps its row and
-// the counters stay where they are.
+// the article, while an article already in the asked-for state keeps its row,
+// its read stamp and the counters stay where they are.
 func (a *App) MarkRSSArticleRead(id string, read bool) error {
 	now := time.Now().UnixMilli()
 	if a.Store != nil {
@@ -1998,23 +1998,21 @@ func (a *App) MarkRSSArticleRead(id string, read bool) error {
 		}
 	}
 	for i := range a.RSSArticles {
-		if a.RSSArticles[i].ID == id {
-			a.RSSArticles[i].Read = read
-			if read {
-				a.RSSArticles[i].ReadAt = now
-			} else {
-				a.RSSArticles[i].ReadAt = 0
-			}
-			a.RSSArticles[i].UpdatedAt = now
-			break
+		if a.RSSArticles[i].ID != id || a.RSSArticles[i].Read == read {
+			continue
 		}
+		a.RSSArticles[i].Read = read
+		a.RSSArticles[i].ReadAt = 0
+		if read {
+			a.RSSArticles[i].ReadAt = now
+		}
+		a.RSSArticles[i].UpdatedAt = now
 	}
-	if a.selectedRSSCache != nil && a.selectedRSSCache.ID == id {
+	if a.selectedRSSCache != nil && a.selectedRSSCache.ID == id && a.selectedRSSCache.Read != read {
 		a.selectedRSSCache.Read = read
+		a.selectedRSSCache.ReadAt = 0
 		if read {
 			a.selectedRSSCache.ReadAt = now
-		} else {
-			a.selectedRSSCache.ReadAt = 0
 		}
 		a.selectedRSSCache.UpdatedAt = now
 	}
