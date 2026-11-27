@@ -574,8 +574,8 @@ func TestWorkspaceDockTooltipAnchoredBelowSlot(t *testing.T) {
 				if !ok {
 					t.Fatalf("%s: tooltip not shown after hover delay", icon.id)
 				}
-				if !tt.HasText(want) {
-					t.Fatalf("%s: tooltip text %q missing in %v", icon.id, want, tt.Texts())
+				if tip.Name != want {
+					t.Fatalf("%s: tooltip reads %q, want the workspace name %q", icon.id, tip.Name, want)
 				}
 				if tip.Bounds.Y < slot.Y+slot.H {
 					t.Fatalf("%s: tooltip at %+v did not open below slot %+v", icon.id, tip.Bounds, slot)
