@@ -33,7 +33,9 @@ func TestRSSReaderActionGroupIsSixIcons(t *testing.T) {
 	a, w, tt := rssReaderTestWindow(t)
 	openRSSReaderFullTextArticle(t, tt)
 
-	want := []string{"Mark as Read (M)", "Star article (S)", "Show Original", "Share", "Open in Browser", "Refetch"}
+	// Opening the article marked it read, so the read control names the state
+	// it would move the article back to.
+	want := []string{"Mark as Unread (M)", "Star article (S)", "Show Original", "Share", "Open in Browser", "Refetch"}
 	if got := rssHeaderActionNames(t, tt); !slices.Equal(got, want) {
 		t.Fatalf("header actions = %q, want %q", got, want)
 	}
@@ -116,7 +118,9 @@ func TestRSSReaderActionGroupIsSixIcons(t *testing.T) {
 	_ = w
 
 	// The Chinese group carries the same six controls in the same order, named
-	// in the reader's language.
+	// in the reader's language. The open article is the linkless one a test set
+	// on the reader without opening it, so it is still unread and the control
+	// offers the read.
 	tt.SetLocale("zh")
 	tt.Frame()
 	zhWant := []string{"标记为已读 (M)", "标星 (S)", "显示原文", "分享", "在浏览器中打开", "重新抓取"}
@@ -349,7 +353,7 @@ func TestRSSReaderLinklessArticleActions(t *testing.T) {
 		tt.ClickAt(row.X+row.W/2, row.Y+row.H/2)
 		tt.Frame()
 
-		for _, name := range []string{"Mark as Read (M)", "Star article (S)", "Fetch Full Text", "Share", "Open in Browser", "Refetch"} {
+		for _, name := range []string{"Mark as Unread (M)", "Star article (S)", "Fetch Full Text", "Share", "Open in Browser", "Refetch"} {
 			if info := rssHeaderAction(t, tt, name); info.Disabled {
 				t.Fatalf("%s is disabled on an article with a link", name)
 			}
@@ -366,28 +370,22 @@ func TestRSSReaderLinklessArticleActions(t *testing.T) {
 // reads.
 func TestRSSReaderReadToggleFlipsAndPersists(t *testing.T) {
 	a, w, tt := rssReaderTestWindow(t)
+	before := a.RSSTotalUnread
 	openRSSReaderFullTextArticle(t, tt)
 
-	if a.SelectedRSSArticle().Read {
-		t.Fatal("the seeded article starts read")
-	}
-	before := a.RSSTotalUnread
-	clickRSSHeaderAction(t, tt, "Mark as Read (M)")
-
+	// Opening the article is what marked it read, and the control named the
+	// state it would move back to.
 	if !a.SelectedRSSArticle().Read {
-		t.Fatal("the read toggle did not mark the article read")
+		t.Fatal("opening the article left it unread")
 	}
 	if got := a.RSSTotalUnread; got != before-1 {
-		t.Fatalf("total unread = %d after marking one read, want %d", got, before-1)
+		t.Fatalf("total unread = %d after opening one article, want %d", got, before-1)
 	}
 	if _, ok := tt.AccessByRole(ui.RoleButton, "Mark as Unread (M)"); !ok {
 		t.Fatalf("the toggle did not take the read state's name: %q", rssHeaderActionNames(t, tt))
 	}
-	if got := a.SelectedRSSArticleID; got != "art-reader" {
-		t.Fatalf("the toggle moved the selection to %q", got)
-	}
 
-	// The store keeps what the toggle wrote, so the next read of the article
+	// The store keeps what opening wrote, so the next read of the article
 	// finds it read.
 	stored, err := a.Store.GetRSSArticle(context.Background(), "art-reader")
 	if err != nil || stored == nil {
@@ -397,13 +395,20 @@ func TestRSSReaderReadToggleFlipsAndPersists(t *testing.T) {
 		t.Fatal("the store kept the article unread")
 	}
 
-	// A second press flips it back, and the count returns with it.
+	// The control flips it back, and the count returns with it.
 	clickRSSHeaderAction(t, tt, "Mark as Unread (M)")
 	if a.SelectedRSSArticle().Read {
 		t.Fatal("the read toggle did not mark the article unread again")
 	}
 	if got := a.RSSTotalUnread; got != before {
 		t.Fatalf("total unread = %d after flipping back, want %d", got, before)
+	}
+	if _, ok := tt.AccessByRole(ui.RoleButton, "Mark as Read (M)"); !ok {
+		t.Fatalf("the toggle did not name the unread state: %q", rssHeaderActionNames(t, tt))
+	}
+	clickRSSHeaderAction(t, tt, "Mark as Read (M)")
+	if !a.SelectedRSSArticle().Read {
+		t.Fatal("the read toggle did not mark the article read again")
 	}
 	_ = w
 }
@@ -453,17 +458,18 @@ func TestRSSReaderActionsTakeTheKeyboard(t *testing.T) {
 			t.Fatalf("Tab never reached %q", name)
 		}
 	}
-	// The read toggle ran by keyboard behaves exactly as its click does.
+	// The read toggle ran by keyboard behaves exactly as its click does:
+	// opening the article marked it read, so Return puts it back to unread.
 	for range 200 {
-		if rssHeaderAction(t, tt, "Mark as Read (M)").Focused {
+		if rssHeaderAction(t, tt, "Mark as Unread (M)").Focused {
 			break
 		}
 		tt.Key(0, ui.KeyTab)
 	}
 	tt.Key(0, ui.KeyEnter)
 	tt.Frame()
-	if !a.SelectedRSSArticle().Read {
-		t.Fatal("Return on the read toggle did not mark the article read")
+	if a.SelectedRSSArticle().Read {
+		t.Fatal("Return on the read toggle did not mark the article unread")
 	}
 }
 

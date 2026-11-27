@@ -1016,9 +1016,10 @@ func TestRSSReaderViewRendersArticle(t *testing.T) {
 	}
 	// The action group is NetNewsWire's six icons, in its order: the read
 	// toggle, the star, the original/full-text toggle, share, open in browser,
-	// and the refresh.
+	// and the refresh. Opening the article marked it read, so the toggle names
+	// the state it would move it back to.
 	if got, want := rssHeaderActionNames(t, tt), []string{
-		"Mark as Read (M)", "Star article (S)", "Show Original", "Share", "Open in Browser", "Refetch",
+		"Mark as Unread (M)", "Star article (S)", "Show Original", "Share", "Open in Browser", "Refetch",
 	}; !slices.Equal(got, want) {
 		t.Fatalf("header actions = %q, want %q", got, want)
 	}
@@ -2401,7 +2402,7 @@ func TestRSSReaderBilingualHeader(t *testing.T) {
 		t.Errorf("Chinese reader is missing the original link, texts = %v", tt.Texts())
 	}
 	if got, want := rssHeaderActionNames(t, tt), []string{
-		"标记为已读 (M)", "标星 (S)", "显示原文", "分享", "在浏览器中打开", "重新抓取",
+		"标记为未读 (M)", "标星 (S)", "显示原文", "分享", "在浏览器中打开", "重新抓取",
 	}; !slices.Equal(got, want) {
 		t.Fatalf("Chinese header actions = %q, want %q", got, want)
 	}
@@ -2409,7 +2410,7 @@ func TestRSSReaderBilingualHeader(t *testing.T) {
 	tt.SetLocale("en")
 	tt.Frame()
 	if got, want := rssHeaderActionNames(t, tt), []string{
-		"Mark as Read (M)", "Star article (S)", "Show Original", "Share", "Open in Browser", "Refetch",
+		"Mark as Unread (M)", "Star article (S)", "Show Original", "Share", "Open in Browser", "Refetch",
 	}; !slices.Equal(got, want) {
 		t.Fatalf("reader did not return to English: actions = %q, want %q", got, want)
 	}

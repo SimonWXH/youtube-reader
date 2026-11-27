@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,14 @@ type App struct {
 	SelectedRSSArticleID string
 	selectedRSSCache     *core.RSSArticle
 
+	// rssUnreadListed is the membership the unread-only article column shows,
+	// and rssUnreadView names the view it was taken for. Reading an article
+	// never rewrites it: the set is rebuilt when the destination, the Unread
+	// filter or the library changes, so an opened article keeps its row and the
+	// keyboard can always step back the way it came.
+	rssUnreadListed map[string]bool
+	rssUnreadView   string
+
 	Selected        string
 	Search          string
 	ChannelFilter   string
@@ -55,6 +64,11 @@ type App struct {
 	LastNotified       []core.NotificationPlan
 	LastSyncWrite      time.Time
 	SaveSyncCalls      int
+
+	// RSCCountReloads counts how many times the RSS unread and starred
+	// totals were refreshed. A bulk read-state action may refresh them once,
+	// and this is what holds it to that.
+	RSCCountReloads int
 
 	// BackfillCursors is where each channel's history paging stands, by channel
 	// ID: a channel the map does not name has never loaded its history, and an
@@ -346,6 +360,9 @@ func (a *App) SelectDestination(destination string) {
 		a.BackfillErr = ""
 	}
 	a.Selected = destination
+	// The unread column's frozen membership belongs to the destination it was
+	// taken for, so arriving at a destination takes its own set afresh.
+	a.rssUnreadListed = nil
 	_, _ = a.updateSettings(func(s *core.Settings) bool {
 		if s.LastSelectedDestination == destination {
 			return false
@@ -1735,6 +1752,52 @@ func (a *App) clockNow() time.Time {
 	return time.Now()
 }
 
+// rssUnreadViewKey names the view whose unread membership is frozen: the
+// destination the sidebar has selected plus the Unread filter's own state.
+func (a *App) rssUnreadViewKey() string {
+	return a.Selected + "|" + strconv.FormatBool(a.UnreadOnly)
+}
+
+// rssUnreadMembership returns the article IDs the unread-only column lists.
+//
+// The set is taken when the view changes - a different destination, the Unread
+// filter going on or off, or the library reloading - and reading never rewrites
+// it: an article opened, starred or marked read keeps its row until the view is
+// rebuilt. That is what lets the article column behave like a reading list
+// rather than a shifting one, so J and K step back the way they came, while the
+// unread counts still follow every article's state as it changes.
+func (a *App) rssUnreadMembership() map[string]bool {
+	view := a.rssUnreadViewKey()
+	if a.rssUnreadListed != nil && a.rssUnreadView == view {
+		return a.rssUnreadListed
+	}
+	listed := make(map[string]bool, len(a.RSSArticles))
+	for i := range a.RSSArticles {
+		if !a.RSSArticles[i].Read {
+			listed[a.RSSArticles[i].ID] = true
+		}
+	}
+	a.rssUnreadListed = listed
+	a.rssUnreadView = view
+	return listed
+}
+
+// mergeRSSUnreadMembership keeps the unread column's frozen rows and adds the
+// articles the library has gained since the set was taken. A view that changed
+// while the reload ran has its set taken afresh instead, because the reader did
+// change what the column shows.
+func (a *App) mergeRSSUnreadMembership() {
+	if a.rssUnreadListed == nil || a.rssUnreadView != a.rssUnreadViewKey() {
+		a.rssUnreadListed = nil
+		return
+	}
+	for i := range a.RSSArticles {
+		if !a.RSSArticles[i].Read {
+			a.rssUnreadListed[a.RSSArticles[i].ID] = true
+		}
+	}
+}
+
 // rssDestinationArticles is the selected destination's own articles, before
 // the search and unread filters: the rows a destination holds in its own
 // right. The article list and the column's empty state share it, so a
@@ -1744,6 +1807,9 @@ type rssDestinationArticles struct {
 	todayOnly    bool
 	todayCutoff  time.Time
 	unreadForced bool
+	// unreadListed is the frozen membership the unread destination lists, so
+	// its rows and its count stay the same set while the reader reads.
+	unreadListed map[string]bool
 	allowedFeeds map[string]bool
 }
 
@@ -1758,6 +1824,7 @@ func (a *App) rssDestination() rssDestinationArticles {
 		d.todayOnly = true
 	case selected == "all" || selected == "":
 		d.unreadForced = true
+		d.unreadListed = a.rssUnreadMembership()
 	case strings.HasPrefix(selected, "feed:"):
 		d.allowedFeeds = map[string]bool{strings.TrimPrefix(selected, "feed:"): true}
 	case strings.HasPrefix(selected, "group:"):
@@ -1785,7 +1852,7 @@ func (d rssDestinationArticles) owns(art core.RSSArticle) bool {
 		return false
 	case d.todayOnly && !rssPublishedWithin(art, d.todayCutoff):
 		return false
-	case d.unreadForced && art.Read:
+	case d.unreadListed != nil && !d.unreadListed[art.ID]:
 		return false
 	case d.allowedFeeds != nil && !d.allowedFeeds[art.FeedID]:
 		return false
@@ -1820,6 +1887,10 @@ func (a *App) VisibleRSSArticles() []core.RSSArticle {
 	destination := a.rssDestination()
 
 	q := strings.TrimSpace(strings.ToLower(a.Search))
+	var unreadListed map[string]bool
+	if a.UnreadOnly {
+		unreadListed = a.rssUnreadMembership()
+	}
 	var feedTitles map[string]string
 	if q != "" {
 		feedTitles = make(map[string]string, len(a.RSSFeeds))
@@ -1833,7 +1904,7 @@ func (a *App) VisibleRSSArticles() []core.RSSArticle {
 		if !destination.owns(art) {
 			continue
 		}
-		if a.UnreadOnly && art.Read {
+		if unreadListed != nil && !unreadListed[art.ID] {
 			continue
 		}
 		if q != "" {
@@ -1895,7 +1966,9 @@ func (a *App) SelectedRSSArticle() *core.RSSArticle {
 	return nil
 }
 
-// SelectRSSArticle selects an article by ID.
+// SelectRSSArticle selects an article by ID and leaves its read state alone.
+// This is the path a restored selection takes: pointing the reader at an
+// article nobody chose is not opening it, so it marks nothing read.
 func (a *App) SelectRSSArticle(id string) {
 	if a.SelectedRSSArticleID != id {
 		a.selectedRSSCache = nil
@@ -1903,11 +1976,39 @@ func (a *App) SelectRSSArticle(id string) {
 	a.SelectedRSSArticleID = id
 }
 
+// OpenRSSArticle selects an article the reader chose - a click, a Return, a
+// step through the column - and marks it read. Opening is the reader's own act,
+// so only this path writes read state, and SelectRSSArticle stays the way to
+// show an article without touching it.
+func (a *App) OpenRSSArticle(id string) error {
+	a.SelectRSSArticle(id)
+	return a.MarkRSSArticleRead(id, true)
+}
+
+// rssArticleState returns the read state the reader holds for one article, from
+// the summary column it lists or the article the reader has open.
+func (a *App) rssArticleState(id string) (read bool, known bool) {
+	for i := range a.RSSArticles {
+		if a.RSSArticles[i].ID == id {
+			return a.RSSArticles[i].Read, true
+		}
+	}
+	if a.selectedRSSCache != nil && a.selectedRSSCache.ID == id {
+		return a.selectedRSSCache.Read, true
+	}
+	return false, false
+}
+
 // MarkRSSArticleRead marks an article as read or unread in the store and in-memory.
+// An article already in the asked-for state is left untouched: re-opening a read
+// article keeps it read instead of writing it again, and the counters do not move.
 func (a *App) MarkRSSArticleRead(id string, read bool) error {
+	if current, known := a.rssArticleState(id); known && current == read {
+		return nil
+	}
 	now := time.Now().UnixMilli()
 	if a.Store != nil {
-		if err := a.Store.MarkRSSArticleRead(context.Background(), id, read, now); err != nil {
+		if err := a.Store.MarkRSSArticleRead(context.Background(), a.DeviceID, id, read, now); err != nil {
 			return err
 		}
 	}
@@ -1934,6 +2035,93 @@ func (a *App) MarkRSSArticleRead(id string, read bool) error {
 	}
 	a.reloadRSSCounts()
 	return nil
+}
+
+// RSSBulkReadScope returns the reads a bulk read-state action covers for the
+// destination the sidebar has selected: a feed's own articles, every article of
+// the feeds a group holds, and the whole library for a smart feed - Today, All
+// Unread and Starred are views over the library rather than sources, so marking
+// one of them read means the library.
+func (a *App) RSSBulkReadScope() core.RSSReadScope {
+	selected := a.Selected
+	switch {
+	case strings.HasPrefix(selected, "feed:"):
+		return core.RSSReadScope{FeedIDs: []string{strings.TrimPrefix(selected, "feed:")}}
+	case strings.HasPrefix(selected, "group:"):
+		return core.RSSReadScope{FeedIDs: a.RSSGroupFeedIDs(strings.TrimPrefix(selected, "group:"))}
+	}
+	return core.RSSReadScope{EveryFeed: true}
+}
+
+// RSSGroupFeedIDs returns the IDs of every feed a group holds: the ones it
+// lists, and the ones whose own membership names it, which is the pair the
+// sidebar draws under the group and so the pair a group action covers.
+func (a *App) RSSGroupFeedIDs(groupID string) []string {
+	outs := []string{}
+	seen := map[string]bool{}
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			outs = append(outs, id)
+		}
+	}
+	for _, g := range a.RSSGroups {
+		if g.ID != groupID {
+			continue
+		}
+		for _, id := range g.FeedIDs {
+			add(id)
+		}
+	}
+	for _, f := range a.RSSFeeds {
+		if slices.Contains(f.GroupIDs, groupID) {
+			add(f.ID)
+		}
+	}
+	return outs
+}
+
+// MarkRSSReadScope moves every article the scope covers into state read, or
+// back into unread, and reports how many articles changed.
+//
+// The whole action is one store transaction followed by one refresh of the
+// unread counters, so a feed of thousands of articles costs the reader one pass
+// rather than one write and one count per article. The rows in memory follow
+// the same scope by feed, which touches only the rows the store wrote, and no
+// article body is loaded: the list keeps its on-demand paging.
+func (a *App) MarkRSSReadScope(sc core.RSSReadScope, read bool) (int, error) {
+	if a.Store == nil {
+		return 0, nil
+	}
+	now := time.Now().UnixMilli()
+	changed, err := a.Store.MarkRSSArticlesRead(context.Background(), sc, a.DeviceID, read, now)
+	if err != nil {
+		return 0, err
+	}
+	if changed == 0 {
+		return 0, nil
+	}
+	for i := range a.RSSArticles {
+		if !sc.Covers(a.RSSArticles[i].FeedID) || a.RSSArticles[i].Read == read {
+			continue
+		}
+		a.RSSArticles[i].Read = read
+		a.RSSArticles[i].ReadAt = 0
+		if read {
+			a.RSSArticles[i].ReadAt = now
+		}
+		a.RSSArticles[i].UpdatedAt = now
+	}
+	if a.selectedRSSCache != nil && sc.Covers(a.selectedRSSCache.FeedID) && a.selectedRSSCache.Read != read {
+		a.selectedRSSCache.Read = read
+		a.selectedRSSCache.ReadAt = 0
+		if read {
+			a.selectedRSSCache.ReadAt = now
+		}
+		a.selectedRSSCache.UpdatedAt = now
+	}
+	a.reloadRSSCounts()
+	return int(changed), nil
 }
 
 // SetRSSArticleStarred marks an article as starred or unstarred in the store

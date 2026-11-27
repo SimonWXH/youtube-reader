@@ -248,7 +248,7 @@ func TestAppRSSFailureStateAndUnreadCounts(t *testing.T) {
 	}
 
 	// Mark art1 read: count drops to 1
-	if err := a.Store.MarkRSSArticleRead(ctx, art1.ID, true, time.Now().UnixMilli()); err != nil {
+	if err := a.Store.MarkRSSArticleRead(ctx, a.DeviceID, art1.ID, true, time.Now().UnixMilli()); err != nil {
 		t.Fatalf("MarkRSSArticleRead failed: %v", err)
 	}
 	if err := a.ReloadRSS(); err != nil {

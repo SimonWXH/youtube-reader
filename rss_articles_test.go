@@ -6,6 +6,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -387,7 +388,9 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 		t.Errorf("unread dot missing for unread article art-1")
 	}
 
-	// 5. Click an article item to select it
+	// 5. Clicking an article item opens it in the reader, which marks it read:
+	// the header count follows, the row keeps its place in the column it was
+	// opened from, and its unread dot goes.
 	artBox, ok := tt.Find("Quantum Computing Advances")
 	if !ok {
 		t.Fatal("could not find Quantum Computing Advances item")
@@ -402,19 +405,46 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 	if len(selectedObserverCalls) == 0 || selectedObserverCalls[len(selectedObserverCalls)-1] != "art-1" {
 		t.Fatalf("expected onRSSArticleSelected to be called with 'art-1', got %v", selectedObserverCalls)
 	}
+	if art := a.SelectedRSSArticle(); art == nil || !art.Read {
+		t.Fatalf("opening the article left it unread: %+v", art)
+	}
+	if got := a.RSSUnreadCount(""); got != 1 {
+		t.Fatalf("unread count after opening one article = %d, want 1", got)
+	}
+	if !tt.HasText("1 unread") {
+		t.Fatalf("header should show '1 unread' after opening an article: texts = %v", tt.Texts())
+	}
+	if _, ok := tt.Find("Unread: Quantum Computing Advances"); ok {
+		t.Error("the read article still shows its unread dot")
+	}
+	if _, ok := tt.AccessByRole(ui.RoleButton, "Mark as Unread (M)"); !ok {
+		t.Fatalf("the reader's read control does not show the read state: %v", rssHeaderActionNames(t, tt))
+	}
+	listed := false
+	for _, art := range a.VisibleRSSArticles() {
+		if art.ID == "art-1" {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Error("the article left the column it was opened from")
+	}
 
-	// 6. Keyboard navigation walks the unread list: Arrow Down moves to art-3,
-	// which is the last unread row, and Arrow Up comes back to art-1
+	// 6. Keyboard navigation walks the column: Arrow Down moves to art-3, which
+	// is opened and marked read too, and Arrow Up comes back to art-1
 	tt.Key(0, ui.KeyDown)
 	tt.Frame()
 	if a.SelectedRSSArticleID != "art-3" {
 		t.Fatalf("after KeyDown, SelectedRSSArticleID = %q, want 'art-3'", a.SelectedRSSArticleID)
 	}
+	if got := a.RSSUnreadCount(""); got != 0 {
+		t.Fatalf("unread count after opening the second article = %d, want 0", got)
+	}
 
 	tt.Key(0, ui.KeyDown)
 	tt.Frame()
 	if a.SelectedRSSArticleID != "art-3" {
-		t.Fatalf("KeyDown past the last unread row chose %q, want 'art-3'", a.SelectedRSSArticleID)
+		t.Fatalf("KeyDown past the last row chose %q, want 'art-3'", a.SelectedRSSArticleID)
 	}
 
 	tt.Key(0, ui.KeyUp)
@@ -423,9 +453,14 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 		t.Fatalf("after KeyUp, SelectedRSSArticleID = %q, want 'art-1'", a.SelectedRSSArticleID)
 	}
 
-	// 7. The unread dot is a status indicator: clicking its area selects the row
-	// and leaves the article unread.
-	unreadCountBefore := a.RSSUnreadCount("")
+	// 7. The unread dot is a status indicator, not a control of its own: M puts
+	// the open article back to unread so the dot returns, and clicking the dot's
+	// area selects the row like any other click, which opens and marks it read.
+	tt.Key(0, ui.KeyM)
+	tt.Frame()
+	if _, ok := tt.Find("Unread: Quantum Computing Advances"); !ok {
+		t.Fatalf("the article M returned to unread shows no unread dot: %v", tt.Texts())
+	}
 	if err := tt.Click("Unread: Quantum Computing Advances"); err != nil {
 		t.Fatalf("click unread dot area: %v", err)
 	}
@@ -433,56 +468,63 @@ func TestRSSArticlesUIInteraction(t *testing.T) {
 	if a.SelectedRSSArticleID != "art-1" {
 		t.Fatalf("clicking the dot area should select art-1, SelectedRSSArticleID = %q", a.SelectedRSSArticleID)
 	}
-	if got := a.RSSUnreadCount(""); got != unreadCountBefore {
-		t.Fatalf("clicking the dot must not mark the article read, unread count = %d, want %d", got, unreadCountBefore)
+	if got := a.RSSUnreadCount(""); got != 0 {
+		t.Fatalf("clicking the dot's row opens and marks the article read, unread count = %d, want 0", got)
 	}
 
-	// 8. Context menu right-click marks the article read, which takes it out of
-	// the All Unread column while the reader keeps it open
+	// 8. The row's menu flips the state of the row it names, and the row keeps
+	// its place in the All Unread column either way.
 	if err := tt.RightClick("Quantum Computing Advances"); err != nil {
 		t.Fatalf("right-click article row: %v", err)
 	}
-	if err := tt.ChooseMenuItem("Mark as Read"); err != nil {
-		t.Fatalf("choose 'Mark as Read': %v", err)
+	if items := tt.Menu(); !slices.Contains(items, "Mark as Unread") {
+		t.Fatalf("the read row's menu %q has no unread entry", items)
+	}
+	if err := tt.ChooseMenuItem("Mark as Unread"); err != nil {
+		t.Fatalf("choose 'Mark as Unread': %v", err)
 	}
 	tt.Frame()
 	storedMenu, err := a.Store.GetRSSArticle(ctx, "art-1")
-	if err != nil || storedMenu == nil || !storedMenu.Read {
-		t.Fatalf("art-1 should be marked read via context menu: %v %+v", err, storedMenu)
+	if err != nil || storedMenu == nil || storedMenu.Read {
+		t.Fatalf("art-1 should be marked unread via context menu: %v %+v", err, storedMenu)
 	}
-	if got := a.RSSUnreadCount(""); got != unreadCountBefore-1 {
-		t.Fatalf("unread count after context-menu read = %d, want %d", got, unreadCountBefore-1)
+	if got := a.RSSUnreadCount(""); got != 1 {
+		t.Fatalf("unread count after the menu marked it unread = %d, want 1", got)
 	}
 	if !tt.HasText("1 unread") {
-		t.Fatalf("header should show '1 unread' after context-menu read: texts = %v", tt.Texts())
+		t.Fatalf("header should show '1 unread' after the menu's unread: texts = %v", tt.Texts())
 	}
+	listed = false
 	for _, art := range a.VisibleRSSArticles() {
 		if art.ID == "art-1" {
-			t.Errorf("the read article is still listed under All Unread: %+v", art)
+			listed = true
 		}
 	}
-	if _, ok := tt.Find("Unread: Quantum Computing Advances"); ok {
-		t.Errorf("the read article's unread dot is still drawn")
+	if !listed {
+		t.Error("the article left the column the menu flipped it in")
+	}
+	if _, ok := tt.Find("Unread: Quantum Computing Advances"); !ok {
+		t.Error("the article the menu marked unread shows no unread dot")
 	}
 	if a.SelectedRSSArticleID != "art-1" {
-		t.Fatalf("marking the open article read moved the selection to %q", a.SelectedRSSArticleID)
+		t.Fatalf("marking the open article unread moved the selection to %q", a.SelectedRSSArticleID)
 	}
 
-	// 9. The reader's toggle marks the still-open article unread again, and it
-	// returns to the column
-	if err := tt.Click("Mark as Unread (M)"); err != nil {
+	// 9. The reader's own control marks the still-open article read again, and
+	// the dot and the count follow it without the row moving.
+	if err := tt.Click("Mark as Read (M)"); err != nil {
 		t.Fatalf("click the reader's read toggle: %v", err)
 	}
 	tt.Frame()
 	storedMenu, err = a.Store.GetRSSArticle(ctx, "art-1")
-	if err != nil || storedMenu == nil || storedMenu.Read {
-		t.Fatalf("art-1 should be marked unread via the reader toggle: %v %+v", err, storedMenu)
+	if err != nil || storedMenu == nil || !storedMenu.Read {
+		t.Fatalf("art-1 should be marked read via the reader control: %v %+v", err, storedMenu)
 	}
-	if !tt.HasText("2 unread") {
-		t.Fatalf("header should restore '2 unread': texts = %v", tt.Texts())
+	if got := a.RSSUnreadCount(""); got != 0 {
+		t.Fatalf("unread count after the reader marked it read = %d, want 0", got)
 	}
-	if _, ok := tt.Find("Unread: Quantum Computing Advances"); !ok {
-		t.Errorf("the unread article should return to the All Unread column")
+	if _, ok := tt.Find("Unread: Quantum Computing Advances"); ok {
+		t.Error("the read article still shows its unread dot")
 	}
 
 	// 10. Search filtering in UI
@@ -833,29 +875,14 @@ func TestRSSScenariosEndToEnd(t *testing.T) {
 
 	// Scenario 4: Marking articles read/unread and database persistence
 	t.Run("Scenario 4: Marking articles read/unread and database persistence", func(t *testing.T) {
-		initialUnread := a.RSSUnreadCount("")
-		if initialUnread != 3 {
-			t.Fatalf("initial unread count = %d, want 3", initialUnread)
+		// Scenario 3 opened three articles, which marked them read: SQLite keeps
+		// that, and the rows stay in the column they were read from.
+		if count := a.RSSUnreadCount(""); count != 0 {
+			t.Fatalf("unread count after opening three articles = %d, want 0", count)
 		}
-
-		if err := tt.RightClick("Go 1.25 Runtime Scheduler and Memory Management Enhancements"); err != nil {
-			t.Fatalf("right-click article row: %v", err)
+		if !tt.HasText("0 unread") {
+			t.Errorf("header should show '0 unread', texts = %v", tt.Texts())
 		}
-		if err := tt.ChooseMenuItem("Mark as Read"); err != nil {
-			t.Fatalf("choose 'Mark as Read': %v", err)
-		}
-		tt.Frame()
-
-		if count := a.RSSUnreadCount(""); count != 2 {
-			t.Fatalf("after marking read, in-memory unread count = %d, want 2", count)
-		}
-		if !tt.HasText("2 unread") {
-			t.Errorf("header should show '2 unread', texts = %v", tt.Texts())
-		}
-		if a.SelectedRSSArticleID != "art-103" {
-			t.Fatalf("marking the open article read moved the selection to %q", a.SelectedRSSArticleID)
-		}
-
 		stored, err := a.Store.GetRSSArticle(ctx, "art-103")
 		if err != nil || stored == nil {
 			t.Fatalf("failed to retrieve art-103 from sqlite store: %v", err)
@@ -864,17 +891,48 @@ func TestRSSScenariosEndToEnd(t *testing.T) {
 			t.Errorf("store did not persist Read=true and ReadAt > 0: %+v", stored)
 		}
 
-		if err := tt.Click("Mark as Unread (M)"); err != nil {
-			t.Fatalf("click the reader's read toggle: %v", err)
+		// The row's own menu puts it back to unread: the store, the count and
+		// the row's dot all follow, and the row keeps its place.
+		if err := tt.RightClick("Go 1.25 Runtime Scheduler and Memory Management Enhancements"); err != nil {
+			t.Fatalf("right-click article row: %v", err)
+		}
+		if err := tt.ChooseMenuItem("Mark as Unread"); err != nil {
+			t.Fatalf("choose 'Mark as Unread': %v", err)
 		}
 		tt.Frame()
 
+		if count := a.RSSUnreadCount(""); count != 1 {
+			t.Fatalf("after marking unread, in-memory unread count = %d, want 1", count)
+		}
+		if !tt.HasText("1 unread") {
+			t.Errorf("header should show '1 unread', texts = %v", tt.Texts())
+		}
+		if a.SelectedRSSArticleID != "art-103" {
+			t.Fatalf("marking the open article unread moved the selection to %q", a.SelectedRSSArticleID)
+		}
 		storedUnread, err := a.Store.GetRSSArticle(ctx, "art-103")
 		if err != nil || storedUnread == nil || storedUnread.Read {
-			t.Fatalf("store did not persist Read=false after the toggle: %v %+v", err, storedUnread)
+			t.Fatalf("store did not persist Read=false after the menu: %v %+v", err, storedUnread)
 		}
-		if !tt.HasText("3 unread") {
-			t.Errorf("header should restore '3 unread', texts = %v", tt.Texts())
+		if _, ok := tt.Find("Unread: Go 1.25 Runtime Scheduler and Memory Management Enhancements"); !ok {
+			t.Errorf("the article the menu marked unread shows no unread dot")
+		}
+
+		// The reader's own control marks the open article read again, and the
+		// count and the store return with it.
+		if err := tt.Click("Mark as Read (M)"); err != nil {
+			t.Fatalf("click the reader's read toggle: %v", err)
+		}
+		tt.Frame()
+		if count := a.RSSUnreadCount(""); count != 0 {
+			t.Fatalf("after the reader marked it read, unread count = %d, want 0", count)
+		}
+		storedRead, err := a.Store.GetRSSArticle(ctx, "art-103")
+		if err != nil || storedRead == nil || !storedRead.Read || storedRead.ReadAt == 0 {
+			t.Fatalf("store did not persist Read=true after the toggle: %v %+v", err, storedRead)
+		}
+		if _, ok := tt.Find("Unread: Go 1.25 Runtime Scheduler and Memory Management Enhancements"); ok {
+			t.Errorf("the read article still shows its unread dot")
 		}
 
 		saveEvidenceScreenshot(t, tt, "scenario4_mark_read_and_unread_state.png")

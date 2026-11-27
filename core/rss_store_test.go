@@ -217,7 +217,7 @@ func TestRSSStoreArticleIdempotencyPreservesReadAndStarred(t *testing.T) {
 	// User marks article as read and starred
 	readTime := now + 1000
 	starTime := now + 2000
-	if err := store.MarkRSSArticleRead(ctx, artID, true, readTime); err != nil {
+	if err := store.MarkRSSArticleRead(ctx, "device-test", artID, true, readTime); err != nil {
 		t.Fatalf("MarkRSSArticleRead failed: %v", err)
 	}
 	if err := store.SetRSSArticleStarred(ctx, artID, true, starTime); err != nil {
@@ -725,7 +725,7 @@ func TestDeleteRSSFeedSoftDeleteArticles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := store.MarkRSSArticleRead(ctx, "art:test-softdel:unstarred", true, now); err != nil {
+	if err := store.MarkRSSArticleRead(ctx, "device-test", "art:test-softdel:unstarred", true, now); err != nil {
 		t.Fatal(err)
 	}
 

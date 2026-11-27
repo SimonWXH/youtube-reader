@@ -98,6 +98,10 @@ func (a *App) ReloadRSS() error {
 	a.RSSGroups = orderRSSGroups(groups, a.settingsSnapshot().RSSGroupOrder)
 	a.RSSArticles = articles
 	a.selectedRSSCache = nil
+	// A reload follows a fetch settling or a refresh rather than the reader
+	// changing the view, so the unread column keeps the rows it already has and
+	// gains the articles the library has gained.
+	a.mergeRSSUnreadMembership()
 	a.reloadRSSCounts()
 	return nil
 }
@@ -109,6 +113,7 @@ func (a *App) reloadRSSCounts() {
 	if a.Store == nil {
 		return
 	}
+	a.RSCCountReloads++
 	ctx := context.Background()
 	unreadMap, _ := a.Store.RSSUnreadCounts(ctx)
 	if unreadMap == nil {

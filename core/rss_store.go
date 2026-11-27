@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -481,20 +482,207 @@ func rowToArticleSummary(r []any) RSSArticle {
 	return a
 }
 
-// MarkRSSArticleRead updates the read state of an article.
-func (s *Store) MarkRSSArticleRead(ctx context.Context, id string, read bool, now int64) error {
+// rssReadRecordChunk is how many read records one statement writes: well inside
+// SQLite's bound-parameter limit, and large enough that a feed of thousands of
+// articles records its state in a handful of statements rather than one per
+// article.
+const rssReadRecordChunk = 200
+
+// rssReadRecordStatements returns the statements that record ids as read (or
+// unread) on deviceID, in RSSSyncState.ReadStates' own shape: one record per
+// article per device, carrying the state and when it was written. They are
+// appended to the caller's transaction, so an article's row and this device's
+// record of its state are always written together and can never disagree - a
+// later sync therefore cannot bring the article back as unread. The bulk pass
+// records its rows with one INSERT..SELECT instead, so it needs no id list at
+// all.
+func rssReadRecordStatements(deviceID string, ids []string, read bool, now int64) []sqlite.Statement {
+	stmts := make([]sqlite.Statement, 0, (len(ids)+rssReadRecordChunk-1)/rssReadRecordChunk)
+	for start := 0; start < len(ids); start += rssReadRecordChunk {
+		end := min(start+rssReadRecordChunk, len(ids))
+		values := make([]string, 0, end-start)
+		args := make([]any, 0, 4*(end-start))
+		for _, id := range ids[start:end] {
+			values = append(values, "(?,?,?,?)")
+			args = append(args, id, deviceID, boolInt(read), now)
+		}
+		stmts = append(stmts, sqlite.Statement{
+			SQL: `INSERT INTO rss_read_states(article_id, device_id, read, updated_at) VALUES ` +
+				strings.Join(values, ",") +
+				` ON CONFLICT(article_id, device_id) DO UPDATE SET read = excluded.read, updated_at = excluded.updated_at`,
+			Args: args,
+		})
+	}
+	return stmts
+}
+
+// MarkRSSArticleRead updates the read state of an article and records it as this
+// device's read state in the same transaction.
+func (s *Store) MarkRSSArticleRead(ctx context.Context, deviceID, id string, read bool, now int64) error {
 	readAt := int64(0)
 	if read {
 		readAt = now
 	}
-	_, err := s.db.Execute(ctx, `UPDATE rss_articles SET read = ?, read_at = ?, updated_at = ? WHERE id = ?`, boolInt(read), readAt, now, id)
+	stmts := []sqlite.Statement{{
+		SQL:  `UPDATE rss_articles SET read = ?, read_at = ?, updated_at = ? WHERE id = ?`,
+		Args: []any{boolInt(read), readAt, now, id},
+	}}
+	stmts = append(stmts, rssReadRecordStatements(deviceID, []string{id}, read, now)...)
+	_, err := s.db.Transaction(ctx, stmts)
 	return err
 }
 
-// MarkFeedArticlesRead marks all unread articles of a feed as read.
-func (s *Store) MarkFeedArticlesRead(ctx context.Context, feedID string, now int64) error {
-	_, err := s.db.Execute(ctx, `UPDATE rss_articles SET read = 1, read_at = ?, updated_at = ? WHERE feed_id = ? AND read = 0`, now, now, feedID)
-	return err
+// RSSReadStates returns the read vector this store holds, in RSSSyncState's own
+// shape: article ID -> device ID -> record. It is device-local state today, and
+// this is the shape a sync transport would publish or merge.
+func (s *Store) RSSReadStates(ctx context.Context) (map[string]map[string]RSSReadRecord, error) {
+	rows, err := s.db.Query(ctx, `SELECT article_id, device_id, read, updated_at FROM rss_read_states`)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]map[string]RSSReadRecord, len(rows.Values))
+	for _, r := range rows.Values {
+		articleID, _ := r[0].(string)
+		deviceID, _ := r[1].(string)
+		if articleID == "" || deviceID == "" {
+			continue
+		}
+		if out[articleID] == nil {
+			out[articleID] = make(map[string]RSSReadRecord)
+		}
+		updatedAt, _ := int64FromAny(r[3])
+		out[articleID][deviceID] = RSSReadRecord{
+			ArticleID: articleID,
+			DeviceID:  deviceID,
+			Read:      intFromAnyBool(r[2]),
+			UpdatedAt: updatedAt,
+		}
+	}
+	return out, nil
+}
+
+// RSSReadScope names the articles a bulk read-state change covers: the feeds it
+// lists, or every article in the library when EveryFeed is set. The window is a
+// scope rather than a list of articles, so the largest feed in the library costs
+// the same statement count as the smallest.
+type RSSReadScope struct {
+	EveryFeed bool
+	FeedIDs   []string
+}
+
+// where renders the scope as a predicate over rss_articles and its arguments. A
+// scope that names no feed matches nothing, so a group whose feeds have all gone
+// changes no row instead of quietly reaching the whole library.
+func (sc RSSReadScope) where() (string, []any) {
+	if sc.EveryFeed {
+		return "1", nil
+	}
+	if len(sc.FeedIDs) == 0 {
+		return "0", nil
+	}
+	marks := make([]string, len(sc.FeedIDs))
+	args := make([]any, len(sc.FeedIDs))
+	for i, id := range sc.FeedIDs {
+		marks[i] = "?"
+		args[i] = id
+	}
+	return "feed_id IN (" + strings.Join(marks, ",") + ")", args
+}
+
+// Covers reports whether a feed is inside the scope. It is the in-memory mirror
+// of where, so the app updates the same rows the store wrote.
+func (sc RSSReadScope) Covers(feedID string) bool {
+	if sc.EveryFeed {
+		return true
+	}
+	return slices.Contains(sc.FeedIDs, feedID)
+}
+
+// rssReadScopeChunk is how many feed IDs one statement of a bulk read-state
+// pass may name: well inside SQLite's bound-parameter limit, so a library with
+// hundreds of feeds still needs a handful of statements in one transaction
+// rather than a statement per feed.
+const rssReadScopeChunk = 200
+
+// chunks splits the scope into pieces small enough to bind in one statement. A
+// scope of the whole library, or of no feed, is a single piece.
+func (sc RSSReadScope) chunks() []RSSReadScope {
+	if sc.EveryFeed || len(sc.FeedIDs) <= rssReadScopeChunk {
+		return []RSSReadScope{sc}
+	}
+	out := make([]RSSReadScope, 0, (len(sc.FeedIDs)+rssReadScopeChunk-1)/rssReadScopeChunk)
+	for start := 0; start < len(sc.FeedIDs); start += rssReadScopeChunk {
+		end := min(start+rssReadScopeChunk, len(sc.FeedIDs))
+		out = append(out, RSSReadScope{FeedIDs: sc.FeedIDs[start:end]})
+	}
+	return out
+}
+
+// MarkRSSArticlesRead moves every article in sc into state read, or back into
+// unread, in one transaction, and reports how many articles changed.
+//
+// The transaction holds both halves of the change: one UPDATE for the rows in
+// the state they are leaving, and the read vector's records for exactly those
+// rows, selected by the same predicate. Nothing between them can see a
+// different row set, so this device's record of an article's state and the
+// article itself can never disagree - a later sync therefore cannot bring the
+// article back as unread. A feed of 3026 articles costs one statement each
+// rather than 3026 of them, and only row state is read or written, so no
+// article body is ever loaded to mark it read.
+func (s *Store) MarkRSSArticlesRead(ctx context.Context, sc RSSReadScope, deviceID string, read bool, now int64) (int64, error) {
+	leaving, err := s.rssScopeHasArticles(ctx, sc, !read)
+	if err != nil {
+		return 0, err
+	}
+	if !leaving {
+		return 0, nil
+	}
+
+	readAt := int64(0)
+	if read {
+		readAt = now
+	}
+	var stmts []sqlite.Statement
+	var updateAt []int
+	for _, chunk := range sc.chunks() {
+		where, whereArgs := chunk.where()
+		// The record is written for the rows the UPDATE below changes, chosen
+		// by the very state the UPDATE leaves: both run in the same transaction,
+		// so they cover the same articles.
+		stmts = append(stmts, sqlite.Statement{
+			SQL: `INSERT INTO rss_read_states(article_id, device_id, read, updated_at)
+				SELECT id, ?, ?, ? FROM rss_articles WHERE read = ? AND ` + where + `
+				ON CONFLICT(article_id, device_id) DO UPDATE SET read = excluded.read, updated_at = excluded.updated_at`,
+			Args: append([]any{deviceID, boolInt(read), now, boolInt(!read)}, whereArgs...),
+		})
+		updateAt = append(updateAt, len(stmts))
+		stmts = append(stmts, sqlite.Statement{
+			SQL:  `UPDATE rss_articles SET read = ?, read_at = ?, updated_at = ? WHERE read = ? AND ` + where,
+			Args: append([]any{boolInt(read), readAt, now, boolInt(!read)}, whereArgs...),
+		})
+	}
+	results, err := s.db.Transaction(ctx, stmts)
+	if err != nil {
+		return 0, err
+	}
+	changed := int64(0)
+	for _, at := range updateAt {
+		changed += results[at].Changes
+	}
+	return changed, nil
+}
+
+// rssScopeHasArticles reports whether the scope holds an article in the state a
+// pass would move: read when the pass would mark unread, unread when it would
+// mark read. A scope with nothing to move writes no transaction at all.
+func (s *Store) rssScopeHasArticles(ctx context.Context, sc RSSReadScope, state bool) (bool, error) {
+	where, whereArgs := sc.where()
+	rows, err := s.db.Query(ctx, `SELECT 1 FROM rss_articles WHERE read = ? AND `+where+` LIMIT 1`,
+		append([]any{boolInt(state)}, whereArgs...)...)
+	if err != nil {
+		return false, err
+	}
+	return len(rows.Values) > 0, nil
 }
 
 // SetRSSArticleStarred updates the starred/favorite state of an article.

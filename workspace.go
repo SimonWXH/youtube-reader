@@ -886,13 +886,18 @@ func (w *Window) rssArticleItemRow(c *ui.Context, t mui.Tokens, art core.RSSArti
 	}
 }
 
-// selectRSSArticle selects the article by ID, updating app state and firing observer.
-// Opening an article also starts its full-text fetch when the feed asks for it.
+// selectRSSArticle opens the article the reader chose - a click, Return, or a
+// step through the column: the row loads in the reader, its full-text fetch
+// starts when the feed asks for it, and the article is marked read. A selection
+// restored without a reader's act goes through App.SelectRSSArticle instead and
+// marks nothing.
 func (w *Window) selectRSSArticle(id string) {
 	if w.app == nil {
 		return
 	}
-	w.app.SelectRSSArticle(id)
+	if err := w.app.OpenRSSArticle(id); err != nil {
+		w.toast(nil, "Couldn't update the read state", true)
+	}
 	art := w.app.SelectedRSSArticle()
 	if art != nil {
 		w.openRSSFullText(*art)
