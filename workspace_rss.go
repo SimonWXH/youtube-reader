@@ -429,7 +429,7 @@ func (w *Window) rssGroupSection(c *ui.Context, t mui.Tokens, g core.RSSGroup, i
 	// Calculate group unread count
 	groupUnread := 0
 	if w.app != nil {
-		for _, fid := range g.FeedIDs {
+		for _, fid := range w.app.RSSGroupFeedIDs(g.ID) {
 			groupUnread += w.app.RSSUnreadMap[fid]
 		}
 	}
@@ -509,15 +509,8 @@ func (w *Window) rssGroupSection(c *ui.Context, t mui.Tokens, g core.RSSGroup, i
 
 			// Render member feeds
 			feedsInGroup := make([]core.RSSFeed, 0, len(g.FeedIDs))
-			for _, fid := range g.FeedIDs {
-				f := w.app.RSSFeedByID(fid)
-				if f.ID != "" {
-					feedsInGroup = append(feedsInGroup, f)
-				}
-			}
-			// Include any feeds whose GroupIDs contains g.ID but not yet in g.FeedIDs
-			for _, f := range w.app.RSSFeeds {
-				if slices.Contains(f.GroupIDs, g.ID) && !slices.Contains(g.FeedIDs, f.ID) {
+			for _, fid := range w.app.RSSGroupFeedIDs(g.ID) {
+				if f := w.app.RSSFeedByID(fid); f.ID != "" {
 					feedsInGroup = append(feedsInGroup, f)
 				}
 			}

@@ -782,3 +782,135 @@ func TestRSSOpeningAPreviouslyReadArticleRecordsIt(t *testing.T) {
 		t.Fatalf("opening the already read article moved its stamps to read_at=%d updated_at=%d, want %d", stored.ReadAt, stored.UpdatedAt, now-1000)
 	}
 }
+
+// rssFolderScopeFixture seeds a folder the sidebar draws wider than its own
+// FeedIDs: one feed it lists, one that names it only through its own GroupIDs,
+// one that belongs to another folder, and one that belongs to no folder.
+func rssFolderScopeFixture(t *testing.T) (*App, *Window, *ui.Tester) {
+	t.Helper()
+	stubNetImages(t)
+	a := newTestApp(t, t.TempDir())
+	t.Cleanup(func() { a.Close() })
+	ctx := context.Background()
+	now := time.Now().UnixMilli()
+
+	for _, g := range []core.RSSGroup{
+		{ID: "group-shelf", Name: "Shelf", FeedIDs: []string{"feed-a"}, UpdatedAt: now},
+		{ID: "group-other", Name: "Other", FeedIDs: []string{"feed-a", "feed-c"}, UpdatedAt: now},
+	} {
+		if err := a.Store.SaveRSSGroup(ctx, g); err != nil {
+			t.Fatalf("save folder %q: %v", g.ID, err)
+		}
+	}
+	feeds := []core.RSSFeed{
+		{ID: "feed-a", FeedURL: "https://feeds.example.com/a.xml", Title: "Feed A", GroupIDs: []string{"group-shelf", "group-other"}, UpdatedAt: now},
+		{ID: "feed-b", FeedURL: "https://feeds.example.com/b.xml", Title: "Feed B", GroupIDs: []string{"group-shelf"}, UpdatedAt: now},
+		{ID: "feed-c", FeedURL: "https://feeds.example.com/c.xml", Title: "Feed C", GroupIDs: []string{"group-other"}, UpdatedAt: now},
+		{ID: "feed-d", FeedURL: "https://feeds.example.com/d.xml", Title: "Feed D", UpdatedAt: now},
+	}
+	for _, f := range feeds {
+		if err := a.Store.SaveRSSFeed(ctx, f); err != nil {
+			t.Fatalf("save feed %q: %v", f.ID, err)
+		}
+	}
+	articles := make([]core.RSSArticle, 0, 9)
+	for _, seeded := range []struct {
+		feedID string
+		count  int
+	}{{"feed-a", 2}, {"feed-b", 3}, {"feed-c", 2}, {"feed-d", 2}} {
+		for i := 0; i < seeded.count; i++ {
+			articles = append(articles, core.RSSArticle{
+				ID:          fmt.Sprintf("art-%s-%d", seeded.feedID, i),
+				FeedID:      seeded.feedID,
+				Title:       fmt.Sprintf("%s story %d", seeded.feedID, i),
+				Link:        fmt.Sprintf("https://feeds.example.com/%s/%d", seeded.feedID, i),
+				PublishedAt: time.Now().Add(-time.Duration(len(articles)+1) * time.Hour).Format(time.RFC3339),
+				Snippet:     "A snippet long enough to fill both summary lines of the row.",
+				UpdatedAt:   now,
+			})
+		}
+	}
+	if err := a.Store.SaveRSSArticles(ctx, articles); err != nil {
+		t.Fatalf("save articles: %v", err)
+	}
+	if err := a.ReloadRSS(); err != nil {
+		t.Fatalf("reload rss: %v", err)
+	}
+
+	w := &Window{app: a, selectedIndex: new(int)}
+	w.selectWorkspace(WorkspaceRSS)
+	tt := ui.NewTester(w.shell, 1280, 808)
+	tt.Frame()
+	a.SelectDestination("group:group-shelf")
+	tt.Frame()
+	return a, w, tt
+}
+
+// TestRSSFolderBulkReadMatchesTheFolderDestination covers the folder's one
+// definition of its feeds: the folder lists, counts and marks the same feeds the
+// sidebar draws under it, and no feed outside it is touched.
+func TestRSSFolderBulkReadMatchesTheFolderDestination(t *testing.T) {
+	a, w, tt := rssFolderScopeFixture(t)
+	ctx := context.Background()
+	transactions := rssAppTransactions(t, a)
+
+	// The fixture's shelf holds feed-a's two articles and feed-b's three.
+	const shelfUnread = 5
+	visible := a.VisibleRSSArticles()
+	if len(visible) != shelfUnread {
+		t.Fatalf("the folder lists %d articles, want the %d of its feeds", len(visible), shelfUnread)
+	}
+	if got := a.RSSDestinationArticleCount(); got != shelfUnread {
+		t.Fatalf("the folder destination counts %d articles, want %d", got, shelfUnread)
+	}
+	if got := w.rssSelectionUnreadCount(); got != shelfUnread {
+		t.Fatalf("the column header counts %d unread articles, want %d", got, shelfUnread)
+	}
+	if !tt.HasText(fmt.Sprintf("%d unread", shelfUnread)) {
+		t.Fatalf("the column header does not show %d unread: %v", shelfUnread, tt.Texts())
+	}
+	if _, ok := tt.Find(fmt.Sprint(shelfUnread)); !ok {
+		t.Fatalf("the folder row does not show its %d unread articles: %v", shelfUnread, tt.Texts())
+	}
+
+	inside := make(map[string]bool, len(visible))
+	for _, art := range visible {
+		inside[art.ID] = true
+	}
+
+	before := transactions()
+	a.RSCCountReloads = 0
+	if err := tt.RightClick("Shelf"); err != nil {
+		t.Fatalf("open the folder's menu: %v", err)
+	}
+	if err := tt.ChooseMenuItem("Mark All Read"); err != nil {
+		t.Fatalf("choose the folder's read entry: %v", err)
+	}
+	tt.Frame()
+
+	if got := transactions() - before; got != 1 {
+		t.Fatalf("the folder's read action committed %d transactions, want 1", got)
+	}
+	if a.RSCCountReloads != 1 {
+		t.Fatalf("the folder's read action refreshed the unread counters %d times, want once", a.RSCCountReloads)
+	}
+	if !tt.HasText(fmt.Sprintf("Marked %d articles as read", shelfUnread)) {
+		t.Fatalf("the confirmation does not name the folder's %d articles: %v", shelfUnread, tt.Texts())
+	}
+
+	stored, err := a.Store.ListRSSArticleSummaries(ctx, core.RSSArticleFilter{})
+	if err != nil {
+		t.Fatalf("list the library: %v", err)
+	}
+	if len(stored) != 9 {
+		t.Fatalf("the store holds %d articles, want the fixture's 9", len(stored))
+	}
+	for _, art := range stored {
+		if want := inside[art.ID]; art.Read != want {
+			t.Fatalf("article %q reads %v after the folder action, want %v", art.ID, art.Read, want)
+		}
+	}
+	if a.RSSTotalUnread != 4 {
+		t.Fatalf("the unread total = %d after the folder's read, want the 4 outside it", a.RSSTotalUnread)
+	}
+}

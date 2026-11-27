@@ -605,15 +605,9 @@ func (w *Window) rssSelectionUnreadCount() int {
 		return w.app.RSSUnreadCount(fid)
 	}
 	if strings.HasPrefix(selected, "group:") {
-		gid := strings.TrimPrefix(selected, "group:")
 		allowed := make(map[string]bool)
-		for _, g := range w.app.RSSGroups {
-			if g.ID == gid {
-				for _, fid := range g.FeedIDs {
-					allowed[fid] = true
-				}
-				break
-			}
+		for _, fid := range w.app.RSSGroupFeedIDs(strings.TrimPrefix(selected, "group:")) {
+			allowed[fid] = true
 		}
 		cnt := 0
 		for _, art := range w.app.RSSArticles {

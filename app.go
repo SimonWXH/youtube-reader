@@ -1829,14 +1829,8 @@ func (a *App) rssDestination() rssDestinationArticles {
 		d.allowedFeeds = map[string]bool{strings.TrimPrefix(selected, "feed:"): true}
 	case strings.HasPrefix(selected, "group:"):
 		d.allowedFeeds = map[string]bool{}
-		gid := strings.TrimPrefix(selected, "group:")
-		for _, g := range a.RSSGroups {
-			if g.ID == gid {
-				for _, fid := range g.FeedIDs {
-					d.allowedFeeds[fid] = true
-				}
-				break
-			}
+		for _, fid := range a.RSSGroupFeedIDs(strings.TrimPrefix(selected, "group:")) {
+			d.allowedFeeds[fid] = true
 		}
 	}
 	if d.todayOnly {
@@ -2041,9 +2035,10 @@ func (a *App) RSSBulkReadScope() core.RSSReadScope {
 	return core.RSSReadScope{ArticleIDs: ids}
 }
 
-// RSSGroupFeedIDs returns the IDs of every feed a group holds: the ones it
-// lists, and the ones whose own membership names it, which is the pair the
-// sidebar draws under the group and so the pair a group action covers.
+// RSSGroupFeedIDs returns the IDs of every feed a folder holds: the ones it
+// lists, plus the ones whose own membership names it. It is the folder's one
+// definition of its feeds, so the sidebar's drawn members, the folder
+// destination's article list and counts, and a folder action all use it.
 func (a *App) RSSGroupFeedIDs(groupID string) []string {
 	outs := []string{}
 	seen := map[string]bool{}
