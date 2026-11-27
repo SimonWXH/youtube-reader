@@ -7,9 +7,9 @@ import (
 )
 
 // FeedIcon renders a subscription feed's icon at the size a feed row gives
-// it: the feed's own picture in a compact rounded square, as NetNewsWire's
-// feed list draws favicons, and the same deterministic monogram in every other
-// state so the slot never shows a blank square.
+// it: the feed's own picture in a rounded square, matching the channel avatar's
+// footprint, and the same deterministic monogram in every other state so the
+// slot never shows a blank square.
 func FeedIcon(c *ui.Context, tokens Tokens, url, title string, size float32) {
 	mediaTile(c, tokens, url, title, size, size/4)
 }

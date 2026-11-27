@@ -377,7 +377,7 @@ func (w *Window) sidebarWorkspaceDock(c *ui.Context, t mui.Tokens) {
 					Radius(th.Space(1.25)).
 					Background(tipFill).
 					TextColor(tipText).
-					FontSize(tipFontSize - 1).
+					FontSize(tipFontSize-1).
 					Shadow(0, 2, 8, 0, ui.RGBA(0, 0, 0, 0.2)).
 					AttachTo(slot, ui.AnchorBottom, ui.AnchorTop).
 					Margin(th.Space(1.5), 0, 0, 0).

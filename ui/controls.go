@@ -57,7 +57,7 @@ type SidebarRow struct {
 	Count          string
 	Symbol         string // SF Symbol name for the leading navigation glyph
 	Channel        bool   // show a channel avatar instead of a glyph
-	Feed           bool   // show a subscription feed's compact icon instead of a glyph
+	Feed           bool   // show a subscription feed's rounded-square icon instead of a glyph
 	Avatar         string // the channel's or feed's picture URL; empty draws a monogram
 	Fold           bool   // this row folds the rows below it
 	Expanded       bool   // the fold is open, so the chevron points down
