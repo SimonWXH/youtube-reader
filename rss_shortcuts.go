@@ -73,8 +73,8 @@ func (w *Window) rssToggleOpenArticleStar(c *ui.Context) {
 
 // rssMarkDestinationRead marks every article the selected destination covers
 // read: a feed's own articles, a folder's feeds' articles, or - at a smart feed
-// such as Today or All Unread, whose filter is a view over the library - the
-// whole library.
+// such as Today, All Unread or Starred, whose filter is a view over the library
+// - exactly the articles the column is showing.
 func (w *Window) rssMarkDestinationRead(c *ui.Context) {
 	if w.app == nil || w.activeWorkspaceName() != WorkspaceRSS || c.ShortcutRepeated() {
 		return

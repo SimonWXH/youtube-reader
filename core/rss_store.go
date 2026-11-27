@@ -561,59 +561,68 @@ func (s *Store) RSSReadStates(ctx context.Context) (map[string]map[string]RSSRea
 	return out, nil
 }
 
-// RSSReadScope names the articles a bulk read-state change covers: the feeds it
-// lists, or every article in the library when EveryFeed is set. The window is a
-// scope rather than a list of articles, so the largest feed in the library costs
-// the same statement count as the smallest.
+// RSSReadScope names the articles a bulk read-state change covers: either the
+// articles of the feeds it lists, or the articles their own IDs name. The
+// window is a scope rather than a list of rows to write one at a time, so the
+// largest feed in the library costs the same statement count as the smallest.
 type RSSReadScope struct {
-	EveryFeed bool
-	FeedIDs   []string
+	FeedIDs    []string
+	ArticleIDs []string
 }
 
-// where renders the scope as a predicate over rss_articles and its arguments. A
-// scope that names no feed matches nothing, so a group whose feeds have all gone
-// changes no row instead of quietly reaching the whole library.
+// where renders the scope as a predicate over rss_articles and its arguments,
+// restricted to the feeds the reader still holds so an unsubscribed feed's
+// invisible articles are never written or counted. A scope that names no feed
+// and no article matches nothing, so a group whose feeds have all gone changes
+// no row instead of quietly reaching the whole library.
 func (sc RSSReadScope) where() (string, []any) {
-	if sc.EveryFeed {
-		return "1", nil
+	ids, column := sc.FeedIDs, "feed_id"
+	if len(sc.ArticleIDs) > 0 {
+		ids, column = sc.ArticleIDs, "id"
 	}
-	if len(sc.FeedIDs) == 0 {
+	if len(ids) == 0 {
 		return "0", nil
 	}
-	marks := make([]string, len(sc.FeedIDs))
-	args := make([]any, len(sc.FeedIDs))
-	for i, id := range sc.FeedIDs {
+	marks := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
 		marks[i] = "?"
 		args[i] = id
 	}
-	return "feed_id IN (" + strings.Join(marks, ",") + ")", args
+	return column + " IN (" + strings.Join(marks, ",") + `) AND feed_id NOT IN (SELECT id FROM rss_feeds WHERE deleted = 1)`, args
 }
 
-// Covers reports whether a feed is inside the scope. It is the in-memory mirror
-// of where, so the app updates the same rows the store wrote.
-func (sc RSSReadScope) Covers(feedID string) bool {
-	if sc.EveryFeed {
-		return true
+// Covers reports whether an article is inside the scope. It is the in-memory
+// mirror of where, so the app updates the same rows the store wrote.
+func (sc RSSReadScope) Covers(articleID, feedID string) bool {
+	if len(sc.ArticleIDs) > 0 {
+		return slices.Contains(sc.ArticleIDs, articleID)
 	}
 	return slices.Contains(sc.FeedIDs, feedID)
 }
 
-// rssReadScopeChunk is how many feed IDs one statement of a bulk read-state
-// pass may name: well inside SQLite's bound-parameter limit, so a library with
-// hundreds of feeds still needs a handful of statements in one transaction
-// rather than a statement per feed.
+// rssReadScopeChunk is how many IDs one statement of a bulk read-state pass
+// may name: well inside SQLite's bound-parameter limit, so a library with
+// hundreds of feeds, or a smart feed holding thousands of articles, still needs
+// a handful of statements in one transaction rather than a statement per row.
 const rssReadScopeChunk = 200
 
 // chunks splits the scope into pieces small enough to bind in one statement. A
-// scope of the whole library, or of no feed, is a single piece.
+// scope of no feed and no article is a single piece.
 func (sc RSSReadScope) chunks() []RSSReadScope {
-	if sc.EveryFeed || len(sc.FeedIDs) <= rssReadScopeChunk {
+	ids := sc.FeedIDs
+	piece := func(part []string) RSSReadScope { return RSSReadScope{FeedIDs: part} }
+	if len(sc.ArticleIDs) > 0 {
+		ids = sc.ArticleIDs
+		piece = func(part []string) RSSReadScope { return RSSReadScope{ArticleIDs: part} }
+	}
+	if len(ids) <= rssReadScopeChunk {
 		return []RSSReadScope{sc}
 	}
-	out := make([]RSSReadScope, 0, (len(sc.FeedIDs)+rssReadScopeChunk-1)/rssReadScopeChunk)
-	for start := 0; start < len(sc.FeedIDs); start += rssReadScopeChunk {
-		end := min(start+rssReadScopeChunk, len(sc.FeedIDs))
-		out = append(out, RSSReadScope{FeedIDs: sc.FeedIDs[start:end]})
+	out := make([]RSSReadScope, 0, (len(ids)+rssReadScopeChunk-1)/rssReadScopeChunk)
+	for start := 0; start < len(ids); start += rssReadScopeChunk {
+		end := min(start+rssReadScopeChunk, len(ids))
+		out = append(out, piece(ids[start:end]))
 	}
 	return out
 }
@@ -621,20 +630,21 @@ func (sc RSSReadScope) chunks() []RSSReadScope {
 // MarkRSSArticlesRead moves every article in sc into state read, or back into
 // unread, in one transaction, and reports how many articles changed.
 //
-// The transaction holds both halves of the change: one UPDATE for the rows in
-// the state they are leaving, and the read vector's records for exactly those
-// rows, selected by the same predicate. Nothing between them can see a
-// different row set, so this device's record of an article's state and the
-// article itself can never disagree - a later sync therefore cannot bring the
-// article back as unread. A feed of 3026 articles costs one statement each
-// rather than 3026 of them, and only row state is read or written, so no
-// article body is ever loaded to mark it read.
+// The transaction holds both halves of the change: this device's record of the
+// scope's articles and one UPDATE for the rows in the state they are leaving.
+// Nothing between them can see a different row set, so this device's record of
+// an article's state and the article itself can never disagree - a later sync
+// therefore cannot bring the article back as unread. The record covers the
+// whole scope, so an article that is already in the asked-for state still gains
+// its record while its row and the counts stay where they are. A feed of 3026
+// articles costs one statement per chunk rather than 3026 of them, and only row
+// state is read or written, so no article body is ever loaded to mark it read.
 func (s *Store) MarkRSSArticlesRead(ctx context.Context, sc RSSReadScope, deviceID string, read bool, now int64) (int64, error) {
-	leaving, err := s.rssScopeHasArticles(ctx, sc, !read)
+	held, err := s.rssScopeHoldsArticles(ctx, sc)
 	if err != nil {
 		return 0, err
 	}
-	if !leaving {
+	if !held {
 		return 0, nil
 	}
 
@@ -646,14 +656,11 @@ func (s *Store) MarkRSSArticlesRead(ctx context.Context, sc RSSReadScope, device
 	var updateAt []int
 	for _, chunk := range sc.chunks() {
 		where, whereArgs := chunk.where()
-		// The record is written for the rows the UPDATE below changes, chosen
-		// by the very state the UPDATE leaves: both run in the same transaction,
-		// so they cover the same articles.
 		stmts = append(stmts, sqlite.Statement{
 			SQL: `INSERT INTO rss_read_states(article_id, device_id, read, updated_at)
-				SELECT id, ?, ?, ? FROM rss_articles WHERE read = ? AND ` + where + `
+				SELECT id, ?, ?, ? FROM rss_articles WHERE ` + where + `
 				ON CONFLICT(article_id, device_id) DO UPDATE SET read = excluded.read, updated_at = excluded.updated_at`,
-			Args: append([]any{deviceID, boolInt(read), now, boolInt(!read)}, whereArgs...),
+			Args: append([]any{deviceID, boolInt(read), now}, whereArgs...),
 		})
 		updateAt = append(updateAt, len(stmts))
 		stmts = append(stmts, sqlite.Statement{
@@ -672,13 +679,12 @@ func (s *Store) MarkRSSArticlesRead(ctx context.Context, sc RSSReadScope, device
 	return changed, nil
 }
 
-// rssScopeHasArticles reports whether the scope holds an article in the state a
-// pass would move: read when the pass would mark unread, unread when it would
-// mark read. A scope with nothing to move writes no transaction at all.
-func (s *Store) rssScopeHasArticles(ctx context.Context, sc RSSReadScope, state bool) (bool, error) {
+// rssScopeHoldsArticles reports whether the scope holds any article at all. A
+// scope with nothing in it writes no transaction, while a scope already in the
+// asked-for state still records this device's state for its articles.
+func (s *Store) rssScopeHoldsArticles(ctx context.Context, sc RSSReadScope) (bool, error) {
 	where, whereArgs := sc.where()
-	rows, err := s.db.Query(ctx, `SELECT 1 FROM rss_articles WHERE read = ? AND `+where+` LIMIT 1`,
-		append([]any{boolInt(state)}, whereArgs...)...)
+	rows, err := s.db.Query(ctx, `SELECT 1 FROM rss_articles WHERE `+where+` LIMIT 1`, whereArgs...)
 	if err != nil {
 		return false, err
 	}

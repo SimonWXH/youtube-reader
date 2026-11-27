@@ -1985,27 +1985,12 @@ func (a *App) OpenRSSArticle(id string) error {
 	return a.MarkRSSArticleRead(id, true)
 }
 
-// rssArticleState returns the read state the reader holds for one article, from
-// the summary column it lists or the article the reader has open.
-func (a *App) rssArticleState(id string) (read bool, known bool) {
-	for i := range a.RSSArticles {
-		if a.RSSArticles[i].ID == id {
-			return a.RSSArticles[i].Read, true
-		}
-	}
-	if a.selectedRSSCache != nil && a.selectedRSSCache.ID == id {
-		return a.selectedRSSCache.Read, true
-	}
-	return false, false
-}
-
 // MarkRSSArticleRead marks an article as read or unread in the store and in-memory.
-// An article already in the asked-for state is left untouched: re-opening a read
-// article keeps it read instead of writing it again, and the counters do not move.
+// Every pass also writes this device's read record for the article, so a library
+// written before that record existed gains it the next time the reader touches
+// the article, while an article already in the asked-for state keeps its row and
+// the counters stay where they are.
 func (a *App) MarkRSSArticleRead(id string, read bool) error {
-	if current, known := a.rssArticleState(id); known && current == read {
-		return nil
-	}
 	now := time.Now().UnixMilli()
 	if a.Store != nil {
 		if err := a.Store.MarkRSSArticleRead(context.Background(), a.DeviceID, id, read, now); err != nil {
@@ -2039,9 +2024,9 @@ func (a *App) MarkRSSArticleRead(id string, read bool) error {
 
 // RSSBulkReadScope returns the reads a bulk read-state action covers for the
 // destination the sidebar has selected: a feed's own articles, every article of
-// the feeds a group holds, and the whole library for a smart feed - Today, All
-// Unread and Starred are views over the library rather than sources, so marking
-// one of them read means the library.
+// the feeds a group holds, and - for a smart feed such as Today, All Unread or
+// Starred, which is a view over the library rather than a source - exactly the
+// articles the column is showing. No destination reaches the whole library.
 func (a *App) RSSBulkReadScope() core.RSSReadScope {
 	selected := a.Selected
 	switch {
@@ -2050,7 +2035,12 @@ func (a *App) RSSBulkReadScope() core.RSSReadScope {
 	case strings.HasPrefix(selected, "group:"):
 		return core.RSSReadScope{FeedIDs: a.RSSGroupFeedIDs(strings.TrimPrefix(selected, "group:"))}
 	}
-	return core.RSSReadScope{EveryFeed: true}
+	visible := a.VisibleRSSArticles()
+	ids := make([]string, 0, len(visible))
+	for _, art := range visible {
+		ids = append(ids, art.ID)
+	}
+	return core.RSSReadScope{ArticleIDs: ids}
 }
 
 // RSSGroupFeedIDs returns the IDs of every feed a group holds: the ones it
@@ -2087,8 +2077,8 @@ func (a *App) RSSGroupFeedIDs(groupID string) []string {
 // The whole action is one store transaction followed by one refresh of the
 // unread counters, so a feed of thousands of articles costs the reader one pass
 // rather than one write and one count per article. The rows in memory follow
-// the same scope by feed, which touches only the rows the store wrote, and no
-// article body is loaded: the list keeps its on-demand paging.
+// the same scope, which touches only the rows the store wrote, and no article
+// body is loaded: the list keeps its on-demand paging.
 func (a *App) MarkRSSReadScope(sc core.RSSReadScope, read bool) (int, error) {
 	if a.Store == nil {
 		return 0, nil
@@ -2102,7 +2092,7 @@ func (a *App) MarkRSSReadScope(sc core.RSSReadScope, read bool) (int, error) {
 		return 0, nil
 	}
 	for i := range a.RSSArticles {
-		if !sc.Covers(a.RSSArticles[i].FeedID) || a.RSSArticles[i].Read == read {
+		if !sc.Covers(a.RSSArticles[i].ID, a.RSSArticles[i].FeedID) || a.RSSArticles[i].Read == read {
 			continue
 		}
 		a.RSSArticles[i].Read = read
@@ -2112,7 +2102,7 @@ func (a *App) MarkRSSReadScope(sc core.RSSReadScope, read bool) (int, error) {
 		}
 		a.RSSArticles[i].UpdatedAt = now
 	}
-	if a.selectedRSSCache != nil && sc.Covers(a.selectedRSSCache.FeedID) && a.selectedRSSCache.Read != read {
+	if a.selectedRSSCache != nil && sc.Covers(a.selectedRSSCache.ID, a.selectedRSSCache.FeedID) && a.selectedRSSCache.Read != read {
 		a.selectedRSSCache.Read = read
 		a.selectedRSSCache.ReadAt = 0
 		if read {

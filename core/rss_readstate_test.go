@@ -129,7 +129,10 @@ func TestRSSBulkMarkReadIsOneTransactionForTheLargestFeed(t *testing.T) {
 		}
 	}
 
-	// A second pass has nothing left to change, so it commits nothing at all.
+	// The record covers the whole scope, so a pass over articles that are
+	// already read still gains their records while their rows stay put, and a
+	// feed marked read before the record existed is completed the next time it
+	// is marked.
 	settled := rssCommittedTransactions(t, path)
 	changed, err = store.MarkRSSArticlesRead(ctx, RSSReadScope{FeedIDs: []string{"feed-big"}}, "device-mac", true, markAt+1)
 	if err != nil {
@@ -138,8 +141,15 @@ func TestRSSBulkMarkReadIsOneTransactionForTheLargestFeed(t *testing.T) {
 	if changed != 0 {
 		t.Fatalf("the second pass changed %d articles, want none", changed)
 	}
-	if got := rssCommittedTransactions(t, path) - settled; got != 0 {
-		t.Fatalf("the second pass committed %d transactions, want none", got)
+	if got := rssCommittedTransactions(t, path) - settled; got != 1 {
+		t.Fatalf("the second pass committed %d transactions, want the one record write", got)
+	}
+	records, err = store.RSSReadStates(ctx)
+	if err != nil {
+		t.Fatalf("read the read vector again: %v", err)
+	}
+	if len(records) != rssBigFeed {
+		t.Fatalf("the read vector holds %d articles after a settled pass, want %d", len(records), rssBigFeed)
 	}
 }
 
@@ -152,7 +162,7 @@ func TestRSSBulkMarkUnreadWritesTheRecord(t *testing.T) {
 	now := time.Now().UnixMilli()
 	ids := seedRSSReadStateFeed(t, store, "feed-big", 12, now)
 
-	if _, err := store.MarkRSSArticlesRead(ctx, RSSReadScope{EveryFeed: true}, "device-mac", true, now); err != nil {
+	if _, err := store.MarkRSSArticlesRead(ctx, RSSReadScope{FeedIDs: []string{"feed-big"}}, "device-mac", true, now); err != nil {
 		t.Fatalf("mark the library read: %v", err)
 	}
 	seeded := rssCommittedTransactions(t, path)
@@ -265,7 +275,7 @@ func TestRSSBulkMarkReadKeepsBodiesAndPaging(t *testing.T) {
 	now := time.Now().UnixMilli()
 	ids := seedRSSReadStateFeed(t, store, "feed-bodies", 4, now)
 
-	if _, err := store.MarkRSSArticlesRead(ctx, RSSReadScope{EveryFeed: true}, "device-mac", true, now+1); err != nil {
+	if _, err := store.MarkRSSArticlesRead(ctx, RSSReadScope{FeedIDs: []string{"feed-bodies"}}, "device-mac", true, now+1); err != nil {
 		t.Fatalf("mark the library read: %v", err)
 	}
 	for _, id := range ids {
@@ -290,5 +300,167 @@ func TestRSSBulkMarkReadKeepsBodiesAndPaging(t *testing.T) {
 		if summary.ContentHTML != "" {
 			t.Fatalf("a summary list loaded a body: %+v", summary)
 		}
+	}
+}
+
+// TestRSSBulkArticleScopeMarksOnlyTheNamedArticles covers the article-ID form of
+// the scope a smart feed uses: the pass reaches the named articles and nothing
+// else, in one transaction, and records each of them on this device.
+func TestRSSBulkArticleScopeMarksOnlyTheNamedArticles(t *testing.T) {
+	ctx := context.Background()
+	store, path := rssReadStateStore(t)
+	now := time.Now().UnixMilli()
+	named := seedRSSReadStateFeed(t, store, "feed-today", 3, now)
+	outside := seedRSSReadStateFeed(t, store, "feed-old", 2, now)
+
+	scope := RSSReadScope{ArticleIDs: []string{named[0], named[2]}}
+	seeded := rssCommittedTransactions(t, path)
+	changed, err := store.MarkRSSArticlesRead(ctx, scope, "device-mac", true, now+1)
+	if err != nil {
+		t.Fatalf("mark the named articles read: %v", err)
+	}
+	if changed != 2 {
+		t.Fatalf("the pass changed %d articles, want the 2 it named", changed)
+	}
+	if got := rssCommittedTransactions(t, path) - seeded; got != 1 {
+		t.Fatalf("marking the named articles read committed %d transactions, want 1", got)
+	}
+
+	for _, id := range append([]string{named[1]}, outside...) {
+		stored, err := store.GetRSSArticle(ctx, id)
+		if err != nil || stored == nil {
+			t.Fatalf("read %q back: %v", id, err)
+		}
+		if stored.Read {
+			t.Fatalf("an article the scope did not name is read: %q", id)
+		}
+	}
+	records, err := store.RSSReadStates(ctx)
+	if err != nil {
+		t.Fatalf("read the read vector: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("the read vector holds %d articles, want the 2 the scope named", len(records))
+	}
+	for _, id := range []string{named[0], named[2]} {
+		if rec, ok := records[id]["device-mac"]; !ok || !rec.Read {
+			t.Fatalf("named article %q recorded %+v, want read", id, rec)
+		}
+	}
+	if _, ok := records[named[1]]; ok {
+		t.Fatalf("the pass recorded an article outside the scope: %q", named[1])
+	}
+}
+
+// TestRSSBulkReadSkipsUnsubscribedFeeds covers the library's own visibility
+// guard: a feed the reader unsubscribed from keeps its articles, but no bulk
+// pass counts or writes them.
+func TestRSSBulkReadSkipsUnsubscribedFeeds(t *testing.T) {
+	ctx := context.Background()
+	store, path := rssReadStateStore(t)
+	now := time.Now().UnixMilli()
+	kept := seedRSSReadStateFeed(t, store, "feed-kept", 2, now)
+	gone := seedRSSReadStateFeed(t, store, "feed-gone", 2, now)
+	if err := store.DeleteRSSFeed(ctx, "feed-gone", false); err != nil {
+		t.Fatalf("unsubscribe from the feed: %v", err)
+	}
+
+	seeded := rssCommittedTransactions(t, path)
+	changed, err := store.MarkRSSArticlesRead(ctx, RSSReadScope{FeedIDs: []string{"feed-kept", "feed-gone"}}, "device-mac", true, now+1)
+	if err != nil {
+		t.Fatalf("mark the library read: %v", err)
+	}
+	if changed != int64(len(kept)) {
+		t.Fatalf("the pass changed %d articles, want the %d of the subscribed feed", changed, len(kept))
+	}
+	if got := rssCommittedTransactions(t, path) - seeded; got != 1 {
+		t.Fatalf("the pass committed %d transactions, want 1", got)
+	}
+	for _, id := range gone {
+		stored, err := store.GetRSSArticle(ctx, id)
+		if err != nil || stored == nil {
+			t.Fatalf("read %q back: %v", id, err)
+		}
+		if stored.Read {
+			t.Fatalf("the pass marked the unsubscribed feed's article %q read", id)
+		}
+	}
+
+	// A scope that names the unsubscribed feed alone, by feed or by article,
+	// reaches nothing and commits nothing.
+	for _, scope := range []RSSReadScope{
+		{FeedIDs: []string{"feed-gone"}},
+		{ArticleIDs: []string{gone[0]}},
+	} {
+		settled := rssCommittedTransactions(t, path)
+		changed, err := store.MarkRSSArticlesRead(ctx, scope, "device-mac", true, now+2)
+		if err != nil {
+			t.Fatalf("mark an unsubscribed feed's scope read: %v", err)
+		}
+		if changed != 0 {
+			t.Fatalf("the scope changed %d articles, want none", changed)
+		}
+		if got := rssCommittedTransactions(t, path) - settled; got != 0 {
+			t.Fatalf("the scope committed %d transactions, want none", got)
+		}
+	}
+}
+
+// TestRSSBulkMarkReadRecordsArticlesThatWereAlreadyRead covers a library
+// written before the read vector existed: articles read in their row and with
+// no record gain this device's record when their feed is marked read again, and
+// the stored state survives a reopen.
+func TestRSSBulkMarkReadRecordsArticlesThatWereAlreadyRead(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "videos.sqlite")
+	store, err := OpenStore(ctx, path)
+	if err != nil {
+		t.Fatalf("OpenStore failed: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+	now := time.Now().UnixMilli()
+	if err := store.SaveRSSFeed(ctx, RSSFeed{ID: "feed-legacy", FeedURL: "https://feeds.example.com/legacy.xml", Title: "Legacy", UpdatedAt: now}); err != nil {
+		t.Fatalf("save the feed: %v", err)
+	}
+	// SaveRSSArticles keeps an article's read state without writing a record,
+	// which is the shape a library written before the vector holds.
+	if err := store.SaveRSSArticles(ctx, []RSSArticle{{
+		ID: "art-legacy", FeedID: "feed-legacy", Title: "Already read",
+		Link: "https://feeds.example.com/legacy/0", Snippet: "A snippet.",
+		PublishedAt: time.Now().Add(-time.Hour).Format(time.RFC3339),
+		Read:        true, ReadAt: now - 1000, UpdatedAt: now - 1000,
+	}}); err != nil {
+		t.Fatalf("save the article: %v", err)
+	}
+	if records, err := store.RSSReadStates(ctx); err != nil || len(records) != 0 {
+		t.Fatalf("the saved library already holds read records: %v %v", records, err)
+	}
+
+	changed, err := store.MarkRSSArticlesRead(ctx, RSSReadScope{FeedIDs: []string{"feed-legacy"}}, "device-mac", true, now+1)
+	if err != nil {
+		t.Fatalf("mark the feed read: %v", err)
+	}
+	if changed != 0 {
+		t.Fatalf("the pass changed %d articles, want none", changed)
+	}
+	records, err := store.RSSReadStates(ctx)
+	if err != nil {
+		t.Fatalf("read the read vector: %v", err)
+	}
+	if rec, ok := records["art-legacy"]["device-mac"]; !ok || !rec.Read || rec.UpdatedAt != now+1 {
+		t.Fatalf("the already read article recorded %+v, want read at %d", rec, now+1)
+	}
+
+	reopened, err := OpenStore(ctx, path)
+	if err != nil {
+		t.Fatalf("reopen the store: %v", err)
+	}
+	t.Cleanup(func() { reopened.Close() })
+	stored, err := reopened.GetRSSArticle(ctx, "art-legacy")
+	if err != nil || stored == nil || !stored.Read {
+		t.Fatalf("the reopened store lost the read state: %v %+v", err, stored)
+	}
+	if stored.ReadAt != now-1000 {
+		t.Fatalf("the pass moved the read stamp of an already read article to %d, want %d", stored.ReadAt, now-1000)
 	}
 }

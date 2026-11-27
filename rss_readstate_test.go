@@ -152,16 +152,25 @@ func TestRSSOpeningAnArticleMarksItReadOnceAndKeepsItRead(t *testing.T) {
 		t.Fatalf("opening one article committed %d transactions, want 1", got)
 	}
 
-	// Opening it again is not a fresh write, and it is certainly not a way back
-	// to unread.
+	// Opening it again is not a fresh state change, and it is certainly not a
+	// way back to unread. What it writes is this device's read record, so the
+	// stored state and the counts stay where they are.
 	reopening := transactions()
+	unreadTotal := a.RSSTotalUnread
 	tt.ClickAt(row.X+row.W/2, row.Y+row.H/2)
 	tt.Frame()
 	if art := a.SelectedRSSArticle(); art == nil || !art.Read {
 		t.Fatalf("re-opening the article put it back to unread: %+v", art)
 	}
-	if got := transactions() - reopening; got != 0 {
-		t.Fatalf("re-opening a read article committed %d transactions, want none", got)
+	if a.RSSTotalUnread != unreadTotal {
+		t.Fatalf("re-opening a read article moved the unread total from %d to %d", unreadTotal, a.RSSTotalUnread)
+	}
+	if got := transactions() - reopening; got != 1 {
+		t.Fatalf("re-opening a read article committed %d transactions, want the one record write", got)
+	}
+	stored, err = a.Store.GetRSSArticle(ctx, "art-reader")
+	if err != nil || stored == nil || !stored.Read || stored.ReadAt != art.ReadAt {
+		t.Fatalf("re-opening moved the stored read state: %v %+v", err, stored)
 	}
 
 	// Leaving the workspace and coming back, and reloading the library from
@@ -417,8 +426,8 @@ func TestRSSFeedMenuOffersBothReadActions(t *testing.T) {
 }
 
 // TestRSSShiftCmdUMarksTheScopeRead checks the shortcut's scope follows the
-// selected destination: a feed, then a folder, then the whole library for a
-// smart feed.
+// selected destination: a feed, then a folder, then the articles a smart feed's
+// column is showing.
 func TestRSSShiftCmdUMarksTheScopeRead(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
@@ -562,9 +571,9 @@ func TestRSSBulkMarkReadLoadsNoArticleBodies(t *testing.T) {
 	bodyBytes := uint64(len(body)) * uint64(count)
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	changed, err := a.MarkRSSReadScope(core.RSSReadScope{EveryFeed: true}, true)
+	changed, err := a.MarkRSSReadScope(core.RSSReadScope{FeedIDs: []string{feed.ID}}, true)
 	if err != nil {
-		t.Fatalf("mark the library read: %v", err)
+		t.Fatalf("mark the feed read: %v", err)
 	}
 	runtime.ReadMemStats(&after)
 
@@ -578,5 +587,183 @@ func TestRSSBulkMarkReadLoadsNoArticleBodies(t *testing.T) {
 	stored, err := a.Store.GetRSSArticle(ctx, "art-heavy-00000")
 	if err != nil || stored == nil || stored.ContentHTML != body {
 		t.Fatalf("the read pass did not keep the article's body: %v", err)
+	}
+}
+
+// rssSmartBulkWindow seeds one feed whose articles sit on both sides of Today's
+// window, two of them starred, and returns a window whose clock is pinned so the
+// two smart feeds hold different lists.
+func rssSmartBulkWindow(t *testing.T) (*App, *Window, *ui.Tester) {
+	t.Helper()
+	stubNetImages(t)
+	a := newTestApp(t, t.TempDir())
+	t.Cleanup(func() { a.Close() })
+	ctx := context.Background()
+	now := time.Date(2026, time.December, 1, 9, 0, 0, 0, time.Local)
+
+	feed := core.RSSFeed{
+		ID: "feed-smart", FeedURL: "https://feeds.example.com/smart.xml",
+		Title: "Smart Feed", UpdatedAt: now.UnixMilli(),
+	}
+	if err := a.Store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatalf("save the feed: %v", err)
+	}
+	seeded := []struct {
+		id      string
+		age     time.Duration
+		starred bool
+	}{
+		{id: "art-now-1", age: time.Hour},
+		{id: "art-now-2", age: 2 * time.Hour},
+		{id: "art-now-starred", age: 3 * time.Hour, starred: true},
+		{id: "art-old", age: 30 * time.Hour},
+		{id: "art-old-starred", age: 40 * time.Hour, starred: true},
+	}
+	articles := make([]core.RSSArticle, 0, len(seeded))
+	for _, tc := range seeded {
+		articles = append(articles, core.RSSArticle{
+			ID:          tc.id,
+			FeedID:      feed.ID,
+			Title:       tc.id,
+			Link:        "https://feeds.example.com/" + tc.id,
+			PublishedAt: now.Add(-tc.age).Format(time.RFC3339),
+			Snippet:     tc.id + " summary",
+			Starred:     tc.starred,
+			StarredAt:   now.UnixMilli(),
+			UpdatedAt:   now.UnixMilli(),
+		})
+	}
+	if err := a.Store.SaveRSSArticles(ctx, articles); err != nil {
+		t.Fatalf("save the articles: %v", err)
+	}
+	a.now = func() time.Time { return now }
+	if err := a.ReloadRSS(); err != nil {
+		t.Fatalf("reload rss: %v", err)
+	}
+
+	w := &Window{app: a, selectedIndex: new(int)}
+	w.selectWorkspace(WorkspaceRSS)
+	tt := ui.NewTester(w.shell, 1280, 808)
+	tt.Frame()
+	return a, w, tt
+}
+
+// TestRSSShiftCmdUOnASmartFeedMarksOnlyTheColumn covers the smart-feed scope: the
+// shortcut marks the articles the column is showing and never the rest of the
+// library, in one transaction and with one counter refresh.
+func TestRSSShiftCmdUOnASmartFeedMarksOnlyTheColumn(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		destination string
+		wantRead    []string
+		wantUnread  []string
+	}{
+		{
+			name: "today", destination: todayDestination,
+			wantRead:   []string{"art-now-1", "art-now-2", "art-now-starred"},
+			wantUnread: []string{"art-old", "art-old-starred"},
+		},
+		{
+			name: "starred", destination: "starred",
+			wantRead:   []string{"art-now-starred", "art-old-starred"},
+			wantUnread: []string{"art-now-1", "art-now-2", "art-old"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, _, tt := rssSmartBulkWindow(t)
+			a.Selected = tc.destination
+			tt.Frame()
+
+			transactions := rssAppTransactions(t, a)
+			if got := len(a.VisibleRSSArticles()); got != len(tc.wantRead) {
+				t.Fatalf("the %s column lists %d articles, want the %d it should mark", tc.name, got, len(tc.wantRead))
+			}
+
+			before := transactions()
+			a.RSCCountReloads = 0
+			tt.Key(ui.Cmd|ui.Shift, ui.KeyU)
+			tt.Frame()
+
+			if got := transactions() - before; got != 1 {
+				t.Fatalf("the shortcut committed %d transactions, want 1", got)
+			}
+			if a.RSCCountReloads != 1 {
+				t.Fatalf("the shortcut refreshed the unread counters %d times, want once", a.RSCCountReloads)
+			}
+			if !tt.HasText(fmt.Sprintf("Marked %d articles as read", len(tc.wantRead))) {
+				t.Fatalf("the confirmation does not name the column's %d articles: %v", len(tc.wantRead), tt.Texts())
+			}
+			ctx := context.Background()
+			for _, id := range tc.wantRead {
+				stored, err := a.Store.GetRSSArticle(ctx, id)
+				if err != nil || stored == nil || !stored.Read {
+					t.Fatalf("the column's article %q is not read: %v %+v", id, err, stored)
+				}
+			}
+			for _, id := range tc.wantUnread {
+				stored, err := a.Store.GetRSSArticle(ctx, id)
+				if err != nil || stored == nil {
+					t.Fatalf("read %q back: %v", id, err)
+				}
+				if stored.Read {
+					t.Fatalf("the shortcut marked article %q read, which the column never showed", id)
+				}
+			}
+			if a.RSSTotalUnread != len(tc.wantUnread) {
+				t.Fatalf("the unread total = %d, want the %d articles outside the column", a.RSSTotalUnread, len(tc.wantUnread))
+			}
+		})
+	}
+}
+
+// TestRSSOpeningAPreviouslyReadArticleRecordsIt covers a library written before
+// the read vector existed: an article read in its row but with no record gains
+// this device's record the next time the reader opens it, and stays read.
+func TestRSSOpeningAPreviouslyReadArticleRecordsIt(t *testing.T) {
+	a := newTestApp(t, t.TempDir())
+	t.Cleanup(func() { a.Close() })
+	ctx := context.Background()
+	now := time.Now().UnixMilli()
+
+	feed := core.RSSFeed{ID: "feed-legacy", FeedURL: "https://feeds.example.com/legacy.xml", Title: "Legacy", UpdatedAt: now}
+	if err := a.Store.SaveRSSFeed(ctx, feed); err != nil {
+		t.Fatalf("save the feed: %v", err)
+	}
+	if err := a.Store.SaveRSSArticles(ctx, []core.RSSArticle{{
+		ID: "art-legacy", FeedID: feed.ID, Title: "Already read",
+		Link:        "https://feeds.example.com/legacy/0",
+		PublishedAt: time.Now().Add(-time.Hour).Format(time.RFC3339),
+		Snippet:     "A snippet long enough to fill both summary lines of the row.",
+		Read:        true, ReadAt: now - 1000, UpdatedAt: now - 1000,
+	}}); err != nil {
+		t.Fatalf("save the article: %v", err)
+	}
+	if err := a.ReloadRSS(); err != nil {
+		t.Fatalf("reload rss: %v", err)
+	}
+	if records, err := a.Store.RSSReadStates(ctx); err != nil || len(records) != 0 {
+		t.Fatalf("the saved library already holds read records: %v %v", records, err)
+	}
+
+	unreadTotal := a.RSSTotalUnread
+	if err := a.OpenRSSArticle("art-legacy"); err != nil {
+		t.Fatalf("open the article: %v", err)
+	}
+	records, err := a.Store.RSSReadStates(ctx)
+	if err != nil {
+		t.Fatalf("read the read vector: %v", err)
+	}
+	if rec, ok := records["art-legacy"][a.DeviceID]; !ok || !rec.Read {
+		t.Fatalf("opening the already read article recorded %+v, want read on %q", rec, a.DeviceID)
+	}
+	if art := a.SelectedRSSArticle(); art == nil || !art.Read {
+		t.Fatalf("opening the already read article put it back to unread: %+v", art)
+	}
+	if a.RSSTotalUnread != unreadTotal {
+		t.Fatalf("opening an already read article moved the unread total from %d to %d", unreadTotal, a.RSSTotalUnread)
+	}
+	stored, err := a.Store.GetRSSArticle(ctx, "art-legacy")
+	if err != nil || stored == nil || !stored.Read {
+		t.Fatalf("the store lost the read state: %v %+v", err, stored)
 	}
 }
