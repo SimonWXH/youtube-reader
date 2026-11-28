@@ -23,6 +23,7 @@ The rules below are settled decisions for this repository, not suggestions. Foll
 - `make dmg`: packages the signed bundle and an `/Applications` symlink into a compressed disk image.
 - `make run`: builds the app bundle and launches it via `open`.
 - `make clean`: removes `dist/` and the staged helper binary.
+- Local signing identity: ad-hoc signatures change on every build, causing macOS to treat each reinstall as a new background item and re-prompt that `ytreader-helper` can run in the background. Signing with a stable local self-signed Code Signing certificate (CN `YouTube Reader Local Signing`) lets macOS recognize reinstalls as the same program; CI, other clones without that certificate, and public release DMGs remain ad-hoc signed. On a new development machine, create that certificate in the local keychain first (see `README.md` build instructions).
 
 ## Local app delivery
 
