@@ -59,7 +59,7 @@ if [ -n "$requested_identity" ] && [ "$requested_identity" != "-" ]; then
 			exit 1
 		else
 			mode="ad-hoc-fallback"
-			fallback_reason="no code signing identity matching \"$requested_identity\" in keychain"
+			fallback_reason="no keychain code signing identity matches $requested_identity"
 		fi
 	else
 		mode="ad-hoc-fallback"
@@ -72,10 +72,10 @@ case "$mode" in
 		echo "Signing $bundle: mode=$mode identity=\"$resolved_name\" sha1=$resolved_hash invocation=nested-then-bundle (no --deep)"
 		;;
 	ad-hoc-fallback)
-		echo "Signing $bundle: mode=$mode identity=- requested=\"$requested_identity\" reason=\"$fallback_reason\" invocation=nested-then-bundle (no --deep)"
+		echo "Signing $bundle: ad-hoc signed (identity -), no stable identity matched requested=\"$requested_identity\" reason=\"$fallback_reason\" invocation=nested-then-bundle (no --deep)"
 		;;
 	*)
-		echo "Signing $bundle: mode=$mode identity=- invocation=nested-then-bundle (no --deep)"
+		echo "Signing $bundle: ad-hoc signed (identity -, ad-hoc requested explicitly) invocation=nested-then-bundle (no --deep)"
 		;;
 esac
 

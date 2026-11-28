@@ -18,7 +18,7 @@ make dmg
 make dmg-path
 ```
 
-`make build` runs `Scripts/build-helper.sh` to build the standalone helper into `resources/darwin`, compiles the app, and signs `dist/darwin-arm64/YouTube Reader.app` ad hoc with `codesign --force --sign -`. `make dmg` packages that signed bundle and an `/Applications` symlink into a compressed UDZO disk image with `hdiutil`, and `make dmg-path` prints the image path. The build is ad hoc signed and not notarized; there is no Developer ID, Team ID, or stapler step.
+`make build` runs `Scripts/build-helper.sh` to build the standalone helper into `resources/darwin`, compiles the app, and signs `dist/darwin-arm64/YouTube Reader.app` through `Scripts/sign-app.sh`: it uses the local stable signing identity when `SIGN_IDENTITY` (default `YouTube Reader Local Signing`) matches one installed in the keychain, and falls back to ad-hoc signing with `codesign --force --sign -` when it does not. `make dmg` packages that signed bundle and an `/Applications` symlink into a compressed UDZO disk image with `hdiutil`, and `make dmg-path` prints the image path. The build is signed locally, ad hoc on CI and on any machine without the identity, and not notarized; there is no Developer ID, Team ID, or stapler step.
 
 ## Installation
 
