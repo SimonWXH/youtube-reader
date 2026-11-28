@@ -4,13 +4,13 @@
 # falls back to ad-hoc signing (-) on CI runners or machines without the cert.
 set -eu
 
-if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
-	echo "usage: $0 <app-bundle> [identity]" >&2
+if [ "$#" -ne 1 ]; then
+	echo "usage: $0 <app-bundle>" >&2
 	exit 2
 fi
 
 bundle=$1
-requested_identity=${2:-${SIGN_IDENTITY:-YouTube Reader Local Signing}}
+requested_identity=${SIGN_IDENTITY:-YouTube Reader Local Signing}
 codesign_bin=${CODESIGN:-codesign}
 security_bin=${SECURITY:-security}
 helper_id=${HELPER_BUNDLE_ID:-com.simon.youtubereader.helper}
