@@ -1,9 +1,9 @@
 # Build, test, and package YouTube Reader.
 #
-# MyGo compiles and signs the app bundle. This Makefile then applies the same
-# simple ad-hoc signing scheme as CopyQmac and packages the disk image with
-# hdiutil. There is no Developer ID, Team ID, notarization, stapler, or Xcode
-# project involved.
+# MyGo compiles and initially packages the app bundle with ad-hoc signing.
+# Scripts/sign-app.sh then signs nested binaries first and re-signs the bundle
+# with SIGN_IDENTITY when present in the keychain, falling back to ad-hoc (-).
+# There is no Developer ID, Team ID, notarization, stapler, or Xcode project.
 
 APP_NAME     := YouTube Reader
 SLUG         := youtube-reader
@@ -16,19 +16,22 @@ DMG          := $(OUT_DIR)/$(SLUG)-$(VERSION)-$(ARCH).dmg
 
 GO           ?= go
 CODESIGN     ?= codesign
+SECURITY     ?= security
+SIGN_IDENTITY ?= YouTube Reader Local Signing
 
 .PHONY: all build test dmg dmg-path run clean
 
 all: build
 
-## Build the helper into resources/darwin, compile the app, then re-sign the
-## bundle ad hoc with the minimal command CopyQmac uses. -skip-dmg leaves DMG
+## Build the helper into resources/darwin, compile the app, then sign nested
+## binaries and the bundle via Scripts/sign-app.sh (using SIGN_IDENTITY when
+## available in the keychain, or falling back to ad-hoc). -skip-dmg leaves DMG
 ## packaging to the dmg target so the image is built with staging and a UDZO
 ## image.
 build:
 	@GO="$(GO)" Scripts/build-helper.sh
 	$(GO) tool mygo build -platform $(PLATFORM) -skip-dmg -skip-notarize -sign -
-	@$(CODESIGN) --force --sign - "$(BUNDLE)"
+	@CODESIGN="$(CODESIGN)" SECURITY="$(SECURITY)" SIGN_IDENTITY="$(SIGN_IDENTITY)" Scripts/sign-app.sh "$(BUNDLE)"
 	@echo "Built $(BUNDLE)"
 
 test:
