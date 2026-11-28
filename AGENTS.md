@@ -18,7 +18,7 @@ The rules below are settled decisions for this repository, not suggestions. Foll
 ## Build, test, and package (macOS)
 
 - Built with the MyGo toolchain and macOS Command Line Tools; there is no Xcode project.
-- `make build`: compiles the helper into `resources/darwin`, builds the app with `mygo build`, and ad-hoc signs `dist/darwin-arm64/YouTube Reader.app`.
+- `make build`: compiles the helper into `resources/darwin`, builds the app with `mygo build`, and signs `dist/darwin-arm64/YouTube Reader.app` via `Scripts/sign-app.sh` (using the `SIGN_IDENTITY` identity when installed, or ad-hoc fallback).
 - `make test`: `go vet ./...` and `go test ./...`.
 - `make dmg`: packages the signed bundle and an `/Applications` symlink into a compressed disk image.
 - `make run`: builds the app bundle and launches it via `open`.
